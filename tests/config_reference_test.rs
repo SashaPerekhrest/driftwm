@@ -348,16 +348,15 @@ fn documented_actions() -> BTreeSet<String> {
 fn keybinding_actions_are_all_documented() {
     // Sample-parse: each canonical sample must parse cleanly, proving every
     // const entry names a real action (a bad action surfaces as a warning).
-    let mut toml = String::from("[keybindings]\n");
-    for (i, (_, sample)) in ACTION_NAMES.iter().enumerate() {
-        toml.push_str(&format!("\"ctrl+F{}\" = \"{sample}\"\n", i + 1));
+    for (name, sample) in ACTION_NAMES {
+        let toml = format!("[keybindings]\n\"ctrl+F1\" = \"{sample}\"\n");
+        let (_, warnings) = Config::from_toml_collect(&toml)
+            .unwrap_or_else(|e| panic!("sample binding for {name} failed to parse: {e}\n\n{toml}"));
+        assert!(
+            warnings.is_empty(),
+            "sample binding for {name} produced warnings:\n{warnings:#?}\n\n{toml}"
+        );
     }
-    let (_, warnings) = Config::from_toml_collect(&toml)
-        .unwrap_or_else(|e| panic!("sample action bindings failed to parse: {e}\n\n{toml}"));
-    assert!(
-        warnings.is_empty(),
-        "sample action bindings produced warnings:\n{warnings:#?}\n\n{toml}"
-    );
 
     // `none` is the unbind sentinel handled outside `parse_action`, but it is a
     // documented, bindable value, so it belongs in the catalog.

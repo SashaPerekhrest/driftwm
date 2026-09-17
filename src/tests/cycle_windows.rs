@@ -10,11 +10,11 @@
 
 use driftwm::config::Action;
 use smithay::desktop::Window;
-use smithay::utils::SERIAL_COUNTER;
+use smithay::utils::{Point, SERIAL_COUNTER};
 
-use crate::state::NavZoom;
+use crate::state::{NavZoom, StageWindow};
 
-use super::{Fixture, client::ClientId, map_window, window_by_app_id};
+use super::{Fixture, client::ClientId, map_window, settle, window_by_app_id};
 
 /// Map toplevels a, b, c on a fresh client; focus history ends [c, b, a].
 /// Returns the client so callers can map more windows.
@@ -41,7 +41,8 @@ fn held_cycle_step(f: &mut Fixture) {
     if let Some(target) = f.state().stage.cycle_step(false, anchor.as_ref()) {
         let window = target.client().expect("cycle target is a client").clone();
         f.state().cycle_navigating = true;
-        f.state().navigate_to_window(&window, NavZoom::Keep);
+        f.state()
+            .reveal_element(&StageWindow::Client(window), NavZoom::Keep);
         f.state().cycle_navigating = false;
     }
 }
@@ -193,5 +194,70 @@ fn mapping_a_window_during_cycle_commits_the_selection() {
         history.get(1).and_then(|w| w.client()),
         Some(&selected),
         "the selection committed just under the new window, not lost"
+    );
+}
+
+/// A step onto a window already fully on screen moves focus without moving
+/// the view, and that focus change runs inside the cycle-navigating mark, so
+/// a held session survives it; the modifier release still commits.
+#[test]
+fn a_fully_visible_step_holds_the_camera_and_the_session() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    three_windows(&mut f);
+    settle(&mut f);
+    let win_b = window_by_app_id(&mut f, "b").unwrap();
+    assert!(
+        f.state().window_fully_in_viewport(&win_b),
+        "precondition: b is fully on screen"
+    );
+    let camera = f.state().camera();
+
+    held_cycle_step(&mut f);
+
+    assert_eq!(f.state().focused_window(), Some(win_b.clone()));
+    assert_eq!(f.state().camera_target(), None, "no pan was armed");
+    assert_eq!(f.state().camera(), camera, "and the camera stayed put");
+    assert!(
+        f.state().stage.cycle_state().is_some(),
+        "the focus-only step kept the held session open"
+    );
+
+    f.state().end_cycle();
+    assert_eq!(
+        f.state()
+            .stage
+            .focus_history()
+            .first()
+            .and_then(|w| w.client()),
+        Some(&win_b),
+        "the release commits the selection"
+    );
+}
+
+/// A step onto a window off screen still pans it in.
+#[test]
+fn an_off_screen_step_still_pans_in() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    three_windows(&mut f);
+    let win_b = window_by_app_id(&mut f, "b").unwrap();
+    f.state().map_window(
+        StageWindow::Client(win_b.clone()),
+        Point::from((6000, 6000)),
+        false,
+    );
+    settle(&mut f);
+
+    cycle_forward(&mut f);
+
+    assert_eq!(f.state().focused_window(), Some(win_b.clone()));
+    assert!(f.state().camera_target().is_some(), "the step armed a pan");
+    settle(&mut f);
+    assert!(
+        f.state().window_fully_in_viewport(&win_b),
+        "b is on screen once the pan lands"
     );
 }

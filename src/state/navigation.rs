@@ -97,6 +97,19 @@ impl DriftWm {
         }
     }
 
+    /// Focus + raise a stage element, panning the camera to it only when it
+    /// isn't already fully on screen — the reveal shape (`msg focus`,
+    /// click-to-navigate, activation), as opposed to the centering navigations,
+    /// which always park. `zoom` applies to the pan alone.
+    pub fn reveal_element(&mut self, element: &StageWindow, zoom: NavZoom) {
+        if self.window_fully_in_viewport(element) {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            self.raise_and_focus_element(element, serial);
+        } else {
+            self.navigate_to_element(element, zoom);
+        }
+    }
+
     /// As `navigate_to_window`, but pans `output`'s camera instead of the
     /// active one. Lets xdg-activation reveal a window on the monitor it
     /// already lives on rather than dragging the active monitor's camera

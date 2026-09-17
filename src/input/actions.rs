@@ -26,10 +26,11 @@ enum NavTarget {
 }
 
 impl DriftWm {
-    /// The cone search behind `center-nearest`: the nearest canvas element or
-    /// `navigation.anchors` point in `dir`, measured from the focused element
-    /// while it is fully in view (or from the fullscreen window the action
-    /// just exited), otherwise from the viewport center.
+    /// The cone search behind `center-nearest` and `focus-nearest`: the
+    /// nearest canvas element or `navigation.anchors` point in `dir`, measured
+    /// from the focused element while it is fully in view (or from the
+    /// fullscreen window the action just exited), otherwise from the viewport
+    /// center.
     fn nearest_in_direction(
         &self,
         dir: &Direction,
@@ -277,6 +278,13 @@ impl DriftWm {
                     None => {}
                 }
             }
+            Action::FocusNearest(dir) => {
+                match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
+                    Some(NavTarget::Window(elem)) => self.reveal_element(&elem, NavZoom::Keep),
+                    Some(NavTarget::Anchor(p)) => self.center_on_anchor(p),
+                    None => {}
+                }
+            }
             Action::CycleWindows { backward } => {
                 // The active output's fullscreen was already exited above (not
                 // allowlisted), so any fullscreen entry the stage skips is on
@@ -295,7 +303,7 @@ impl DriftWm {
                 // Mark the focus change this navigate causes as cycle-initiated so
                 // `focus_changed` freezes the history instead of committing.
                 self.cycle_navigating = true;
-                self.navigate_to_window(&window, NavZoom::Keep);
+                self.reveal_element(&StageWindow::Client(window), NavZoom::Keep);
                 self.cycle_navigating = false;
                 // A truly modifier-less fire (gesture, bare wheel, IPC) has no key
                 // release to end the session, so each fire is a single step with a

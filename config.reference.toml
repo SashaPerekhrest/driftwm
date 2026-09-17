@@ -408,6 +408,7 @@
 # #   center-window           — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 # #   focus-center            — focus the window under the pointer and bring it there too + reset zoom; same fill exception
 # #   center-nearest <dir>    — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
+# #   focus-nearest <dir>     — focus the nearest window in direction; the camera follows only if it isn't fully on screen (then as center-nearest), a navigation.anchors target still centers
 # #   cycle-windows forward   — Alt-Tab style window cycling
 # #   cycle-windows backward  — reverse cycle
 # #   home-toggle             — toggle between current position and origin

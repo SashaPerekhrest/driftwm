@@ -138,6 +138,10 @@ pub fn parse_action(s: &str) -> Result<Action, String> {
             let dir = parse_direction(arg.ok_or("center-nearest requires a direction")?)?;
             Ok(Action::CenterNearest(dir))
         }
+        "focus-nearest" => {
+            let dir = parse_direction(arg.ok_or("focus-nearest requires a direction")?)?;
+            Ok(Action::FocusNearest(dir))
+        }
         "cycle-windows" => {
             let dir_str = arg.ok_or("cycle-windows requires forward or backward")?;
             match dir_str {
@@ -239,6 +243,7 @@ pub const ACTION_NAMES: &[(&str, &str)] = &[
     ("fit-window", "fit-window"),
     ("fit-window-snapped", "fit-window-snapped"),
     ("focus-center", "focus-center"),
+    ("focus-nearest", "focus-nearest up"),
     ("go-to-bookmark", "go-to-bookmark 1"),
     ("grow-window", "grow-window up"),
     ("home-toggle", "home-toggle"),
@@ -612,6 +617,7 @@ mod tests {
             Action::PanViewport(_) => "pan-viewport",
             Action::CenterWindow => "center-window",
             Action::CenterNearest(_) => "center-nearest",
+            Action::FocusNearest(_) => "focus-nearest",
             Action::CycleWindows { .. } => "cycle-windows",
             Action::HomeToggle => "home-toggle",
             Action::GoToBookmark(_) => "go-to-bookmark",

@@ -214,6 +214,17 @@ fn parse_action_center_nearest_down_left() {
 }
 
 #[test]
+fn parse_action_focus_nearest_up_right() {
+    let result = parse_action("focus-nearest up-right").unwrap();
+    assert!(matches!(result, Action::FocusNearest(Direction::UpRight)));
+}
+
+#[test]
+fn parse_action_focus_nearest_requires_a_direction() {
+    assert!(parse_action("focus-nearest").is_err());
+}
+
+#[test]
 fn parse_action_cycle_windows_forward() {
     let result = parse_action("cycle-windows forward").unwrap();
     assert!(matches!(result, Action::CycleWindows { backward: false }));

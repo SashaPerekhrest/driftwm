@@ -60,6 +60,7 @@ pub enum Action {
     PanViewport(Direction),
     CenterWindow,
     CenterNearest(Direction),
+    FocusNearest(Direction),
     CycleWindows { backward: bool },
     HomeToggle,
     GoToBookmark(String),
@@ -1418,6 +1419,7 @@ mod tests {
         assert!(!Action::CloseWindow.runs_during_fullscreen());
         assert!(!Action::ZoomIn.runs_during_fullscreen());
         assert!(!Action::CenterNearest(Direction::Up).runs_during_fullscreen());
+        assert!(!Action::FocusNearest(Direction::Up).runs_during_fullscreen());
     }
 
     #[test]
