@@ -29,14 +29,11 @@ struct FillGeometry {
 }
 
 impl DriftWm {
-    fn compute_fill_geometry(&self, window: &Window) -> Option<FillGeometry> {
-        let surface = window.wl_surface()?;
-        let output = self.output_for_window(window)?;
-
-        // Usable screen rect → canvas rect via the output's own camera/zoom.
-        let usable = self.usable_area_on(&output);
+    /// `output`'s usable area as a canvas rect, through its own camera and zoom.
+    pub(super) fn usable_canvas_bounds(&self, output: &Output) -> SnapRect {
+        let usable = self.usable_area_on(output);
         let (camera, zoom) = {
-            let os = output_state(&output);
+            let os = output_state(output);
             (os.camera, os.zoom)
         };
         let top_left = screen_to_canvas(
@@ -54,12 +51,18 @@ impl DriftWm {
             zoom,
         )
         .0;
-        let bounds = SnapRect {
+        SnapRect {
             x_low: top_left.x,
             x_high: bottom_right.x,
             y_low: top_left.y,
             y_high: bottom_right.y,
-        };
+        }
+    }
+
+    fn compute_fill_geometry(&self, window: &Window) -> Option<FillGeometry> {
+        let surface = window.wl_surface()?;
+        let output = self.output_for_window(window)?;
+        let bounds = self.usable_canvas_bounds(&output);
 
         #[allow(clippy::mutable_key_type)]
         let obstacles: Vec<SnapRect> = self

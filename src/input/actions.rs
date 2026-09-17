@@ -202,8 +202,10 @@ impl DriftWm {
                     self.session_store_mark_dirty();
                 }
             }
+            Action::MoveToSnap(dir) => self.move_to_snap_focused(dir),
             Action::GrowWindow(dir) => self.step_resize_focused(dir, self.config.resize_step),
             Action::ShrinkWindow(dir) => self.step_resize_focused(dir, -self.config.resize_step),
+            Action::ResizeToSnap(dir) => self.resize_to_snap_focused(dir),
             Action::PanViewport(dir) => {
                 let Some(zoom) = self.with_output_state(|os| {
                     os.zoom_target = None;

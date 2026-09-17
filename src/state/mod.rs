@@ -20,6 +20,7 @@ mod focus;
 mod fullscreen;
 mod init;
 mod keyboard_focus;
+mod keyboard_snap;
 mod layers;
 mod membership;
 mod navigation;

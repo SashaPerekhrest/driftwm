@@ -55,8 +55,10 @@ pub enum Action {
     CloseWindow,
     SuspendWindow,
     NudgeWindow(Direction),
+    MoveToSnap(Direction),
     GrowWindow(Direction),
     ShrinkWindow(Direction),
+    ResizeToSnap(Direction),
     PanViewport(Direction),
     CenterWindow,
     CenterNearest(Direction),
@@ -105,8 +107,10 @@ impl Action {
             Action::ZoomIn
                 | Action::ZoomOut
                 | Action::NudgeWindow(_)
+                | Action::MoveToSnap(_)
                 | Action::GrowWindow(_)
                 | Action::ShrinkWindow(_)
+                | Action::ResizeToSnap(_)
                 | Action::PanViewport(_)
                 | Action::CycleWindows { .. }
                 | Action::Spawn(_)
