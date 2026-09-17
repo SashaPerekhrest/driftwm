@@ -353,7 +353,17 @@ impl DriftWm {
             // keyboard focus to an `OnDemand` layer under the pointer.
             if self.pointer_over_layer {
                 if button_state == ButtonState::Pressed {
-                    let layer = pointer.current_focus().map(|f| f.0);
+                    // A pen withholds `wl_pointer` focus from a bar whose
+                    // client has the tool bound, so its tap resolves the bar
+                    // from the pick instead.
+                    let layer = if self.pointer_pen.is_some() {
+                        let screen_pos =
+                            canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
+                        self.pointer_focus_under_pick(screen_pos, pos)
+                            .map(|(focus, _)| focus.0)
+                    } else {
+                        pointer.current_focus().map(|f| f.0)
+                    };
                     self.focus_layer_if_on_demand(layer, serial);
                     self.maybe_grab_screen_space_click(&pointer, button, serial);
                 }

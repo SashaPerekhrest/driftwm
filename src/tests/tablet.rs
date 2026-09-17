@@ -1,7 +1,9 @@
-//! Graphics-tablet (`wp_tablet_manager_v2`) input. A pen is not only a
-//! tablet-protocol source: the compositor drives the seat pointer from it so
-//! legacy apps and server-side decorations keep working, which is why most of
-//! what follows asserts on pointer-side bookkeeping rather than tablet-v2 wire
+//! Graphics-tablet (`wp_tablet_manager_v2`) input. A pen drives the seat
+//! pointer — cursor, hover focus, hot corners, click-to-focus and the grabs
+//! all run off it, so server-side decorations and legacy apps keep working —
+//! but the client under the pen gets exactly one stream: tablet-v2 when it
+//! has the tool bound, the emulated `wl_pointer` otherwise. Most of what
+//! follows asserts on pointer-side bookkeeping rather than tablet-v2 wire
 //! traffic.
 //!
 //! The per-device output resolver is shared with touch
@@ -10,15 +12,21 @@
 
 use smithay::input::tablet::TabletSeatTrait;
 use smithay::utils::{Logical, Point};
+use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use driftwm::config::BTN_LEFT;
 
-use super::client::{ClientId, TabletEvent, TabletToolEvent};
+use crate::state::StageWindow;
+
+use super::client::{ClientId, LayerConfigureProps, TabletEvent, TabletToolEvent};
 use super::input_backend::{
     FakeDevice, FakeTabletAxes, pen_proximity_in, pen_proximity_in_screen, pen_tip_down,
-    pen_tip_up, pen_to, pen_to_screen_with, pen_to_with, tablet_added, tablet_removed, touch_down,
+    pen_tip_up, pen_to, pen_to_screen_with, pen_to_with, pointer_to, tablet_added, tablet_removed,
+    touch_down,
 };
-use super::{Fixture, config, keyboard_focus, map_window, server_surface, window_by_app_id};
+use super::{
+    Fixture, config, keyboard_focus, map_window, pointer_focus, server_surface, window_by_app_id,
+};
 
 /// A registered pen in proximity — the state every scenario below starts from.
 fn pen_in_proximity(f: &mut Fixture, at: Point<f64, Logical>) -> FakeDevice {
@@ -418,6 +426,10 @@ fn a_pen_stroke_delivers_every_motion_to_a_pointer_only_client() {
 /// canvas origin for turning pen positions into the surface-local ones the
 /// client should see. Round-trips so the compositor has processed the tablet
 /// seat request before any pen event runs.
+///
+/// The window maps under the fixture's parked pointer, which seats it on
+/// `wl_pointer` as a mouse would; that delivery is dropped from the record so
+/// what remains is the pen's alone.
 fn tablet_client_with_window(
     f: &mut Fixture,
 ) -> (
@@ -428,7 +440,8 @@ fn tablet_client_with_window(
     let id = f.add_client();
     let surface = map_window(f, id, "canvas", (800, 600));
     f.client(id).get_tablet_seat();
-    f.roundtrip(id);
+    f.double_roundtrip(id);
+    f.client(id).state.pointer_positions.clear();
     let window = window_by_app_id(f, "canvas").unwrap();
     let origin = f.state().stage.position_of(&window).unwrap().to_f64();
     (id, surface, origin)
@@ -562,12 +575,11 @@ fn a_pen_stroke_reaches_a_tablet_client_as_a_continuous_sequence() {
     );
 }
 
-/// One pen event drives two deliveries — the seat pointer for clients that
-/// speak no tablet protocol, the tablet tool for those that do — and a client
-/// bound to both must see the same stroke on each, or the path it happens to
-/// draw from is the one that lost motions.
+/// A client with the tool bound takes the pen on tablet-v2 alone. Fed the
+/// emulated pointer as well, a drawing app reads the tip as a second press at
+/// the same spot and restarts the stroke, so every stroke is a dot.
 #[test]
-fn a_pen_stroke_drives_both_paths_in_lockstep() {
+fn a_tablet_client_gets_the_stroke_on_tablet_v2_and_nothing_on_wl_pointer() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     let (id, _surface, origin) = tablet_client_with_window(&mut f);
@@ -575,10 +587,6 @@ fn a_pen_stroke_drives_both_paths_in_lockstep() {
     let start = origin + Point::from((100.0, 100.0));
     let device = pen_in_proximity(&mut f, start);
     pen_to(&mut f, &device, start);
-    f.double_roundtrip(id);
-    f.client(id).state.pointer_positions.clear();
-    f.client(id).drain_tablet_tool_events();
-
     pen_tip_down(&mut f, &device);
     let stroke = stroke_from(start);
     for at in &stroke {
@@ -588,27 +596,208 @@ fn a_pen_stroke_drives_both_paths_in_lockstep() {
     f.double_roundtrip(id);
 
     // The stroke is what lies between the tip going down and lifting.
-    let tablet_motions: Vec<(f64, f64)> = f
-        .client(id)
-        .drain_tablet_tool_events()
-        .into_iter()
-        .take_while(|e| *e != TabletToolEvent::Up)
+    let events = f.client(id).drain_tablet_tool_events();
+    let tablet_motions: Vec<(f64, f64)> = events
+        .iter()
+        .skip_while(|e| **e != TabletToolEvent::Down)
+        .take_while(|e| **e != TabletToolEvent::Up)
         .filter_map(|e| match e {
-            TabletToolEvent::Motion { x, y } => Some((x, y)),
+            TabletToolEvent::Motion { x, y } => Some((*x, *y)),
             _ => None,
         })
         .collect();
-    let pointer_motions = f.client(id).state.pointer_positions.clone();
+    let expected: Vec<(f64, f64)> = stroke
+        .iter()
+        .map(|at| (at.x - origin.x, at.y - origin.y))
+        .collect();
     assert_eq!(
-        pointer_motions.len(),
-        stroke.len(),
-        "the pointer path must carry the whole stroke, or the lockstep below is \
-         two empty streams agreeing: {pointer_motions:?}"
+        tablet_motions, expected,
+        "the tablet stream must carry the whole stroke, or the silence asserted \
+         below is a dead pen rather than a withheld one: {events:?}"
+    );
+
+    let buttons = &f.client(id).state.pointer_buttons;
+    assert!(
+        buttons.is_empty(),
+        "a client on the tablet stream must see no emulated button: {buttons:?}"
+    );
+    let positions = &f.client(id).state.pointer_positions;
+    assert!(
+        positions.is_empty(),
+        "nor any wl_pointer enter or motion: {positions:?}"
+    );
+}
+
+/// The pull re-picks focus at the cursor every iteration and every frame. It
+/// has to withhold the pen's client the same way the motion did, or the
+/// client is re-seated on `wl_pointer` one pump after the pen left it out.
+#[test]
+fn the_pull_does_not_re_seat_wl_pointer_on_a_tablet_client_under_the_pen() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    assert!(
+        pointer_focus(&mut f).is_none(),
+        "precondition: the motion itself withheld the client"
+    );
+
+    f.pump(3);
+    f.double_roundtrip(id);
+
+    assert!(
+        pointer_focus(&mut f).is_none(),
+        "the pull must not hand the client the focus the motion withheld"
+    );
+    let positions = &f.client(id).state.pointer_positions;
+    assert!(
+        positions.is_empty(),
+        "no wl_pointer enter may reach the client across the pulls: {positions:?}"
+    );
+}
+
+/// A pen and a mouse share the seat pointer; whichever moved it last owns it.
+/// A mouse motion after a pen hover puts the client back on `wl_pointer`, and
+/// the next pen motion takes it off again.
+#[test]
+fn mouse_motion_after_a_pen_hover_hands_wl_pointer_back() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+    let window = window_by_app_id(&mut f, "canvas").unwrap();
+
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    f.double_roundtrip(id);
+    assert!(
+        f.client(id).state.pointer_positions.is_empty(),
+        "precondition: the pen hover reached the client on tablet-v2 only"
+    );
+
+    let mouse = FakeDevice::mouse();
+    pointer_to(&mut f, &mouse, at + Point::from((10.0, 0.0)));
+    f.double_roundtrip(id);
+    assert_eq!(
+        pointer_focus(&mut f),
+        Some(server_surface(&window)),
+        "a mouse reclaims the pointer, so the client is on wl_pointer again"
     );
     assert_eq!(
-        tablet_motions, pointer_motions,
-        "the tablet tool and the seat pointer are fed from the same pen events, \
-         so a client bound to both must see the same motions on each"
+        f.client(id).state.pointer_positions,
+        vec![(110.0, 100.0)],
+        "the reclaiming motion enters the client at the mouse's position"
+    );
+
+    pen_to(&mut f, &device, at);
+    f.double_roundtrip(id);
+    assert!(
+        pointer_focus(&mut f).is_none(),
+        "the pen's next motion takes the pointer back and withholds the client again"
+    );
+}
+
+/// Withholding `wl_pointer` changes what the client receives, not what the
+/// compositor does with the tip: it still runs through the button path, so a
+/// tap on an unfocused window raises and focuses it like a click would.
+#[test]
+fn a_pen_tip_on_a_tablet_client_still_raises_and_focuses_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (_id, _surface, origin) = tablet_client_with_window(&mut f);
+    let window = window_by_app_id(&mut f, "canvas").unwrap();
+    let other = f.add_client();
+    map_window(&mut f, other, "other", (300, 300));
+    let other_window = window_by_app_id(&mut f, "other").unwrap();
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(server_surface(&other_window)),
+        "precondition: the window mapped last holds focus"
+    );
+    assert_eq!(
+        f.state().stage.windows().next_back(),
+        Some(&StageWindow::Client(other_window.clone())),
+        "precondition: and sits on top"
+    );
+
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    pen_tip_down(&mut f, &device);
+    pen_tip_up(&mut f, &device);
+
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(server_surface(&window)),
+        "the tip focuses the window under the pen"
+    );
+    assert_eq!(
+        f.state().stage.windows().next_back(),
+        Some(&StageWindow::Client(window)),
+        "and raises it"
+    );
+}
+
+/// A press over a layer grants an on-demand layer keyboard focus, resolved
+/// from the pointer's focus. A pen withholds that focus from a bar whose
+/// client has the tool bound, so the tap has to resolve the bar from the pick
+/// instead, or a pen can never type into a bar's search box.
+#[test]
+fn a_pen_tap_still_grants_an_on_demand_layer_keyboard_focus() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    f.client(id).get_tablet_seat();
+    let created = f
+        .client(id)
+        .create_layer(None, zwlr_layer_shell_v1::Layer::Top, "bar");
+    let layer_surface = created.surface.clone();
+    created.set_configure_props(LayerConfigureProps {
+        size: Some((200, 150)),
+        kb_interactivity: Some(zwlr_layer_surface_v1::KeyboardInteractivity::OnDemand),
+        ..Default::default()
+    });
+    created.commit();
+    f.roundtrip(id);
+    let layer = f.client(id).layer(&layer_surface);
+    layer.set_size(200, 150);
+    layer.attach_new_buffer();
+    layer.ack_last_and_commit();
+    f.double_roundtrip(id);
+    assert!(
+        keyboard_focus(&mut f).is_none(),
+        "precondition: an on-demand layer takes no focus until pressed"
+    );
+
+    // Unanchored, so the layer centres on the output.
+    let device = FakeDevice::tablet();
+    tablet_added(&mut f, &device);
+    let on_bar = Point::from((960.0, 540.0));
+    pen_proximity_in_screen(&mut f, &device, on_bar);
+    pen_to_screen_with(&mut f, &device, on_bar, FakeTabletAxes::default());
+    f.double_roundtrip(id);
+    assert!(
+        pointer_focus(&mut f).is_none(),
+        "precondition: the bar's client has the tool bound, so the pen withheld it"
+    );
+
+    pen_tip_down(&mut f, &device);
+    pen_tip_up(&mut f, &device);
+
+    let output = f.state().space.outputs().next().cloned().unwrap();
+    let layer_root = smithay::desktop::layer_map_for_output(&output)
+        .layers()
+        .next()
+        .unwrap()
+        .wl_surface()
+        .clone();
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(layer_root),
+        "the tap grants the bar keyboard focus, resolved from the pick"
     );
 }
 

@@ -114,7 +114,9 @@ impl DriftWm {
         let time = event.time_msec();
 
         // Drives the seat pointer too, so menus and hover keep working in
-        // clients that speak no tablet protocol.
+        // clients that speak no tablet protocol; a client that does is
+        // withheld from `wl_pointer` while the pen owns the pointer.
+        self.pointer_pen = Some(event.tool());
         let under = self.dispatch_absolute_motion(&output, screen_pos, canvas_pos, serial, time);
 
         // Forward native tablet events to supporting clients
@@ -160,9 +162,13 @@ impl DriftWm {
         // `active_output()`, so the pen's own output has to be active before it
         // runs or a pinned tablet hit-tests its coordinates against another
         // monitor's scene.
-        if event.state() == ProximityState::In {
-            self.focused_output = Some(output.clone());
-            self.cursor.hidden_by_touch = false;
+        match event.state() {
+            ProximityState::In => {
+                self.focused_output = Some(output.clone());
+                self.cursor.hidden_by_touch = false;
+                self.pointer_pen = Some(event.tool());
+            }
+            ProximityState::Out => self.pointer_pen = None,
         }
 
         // Below `interact_min` a canvas window is a click target, not an input

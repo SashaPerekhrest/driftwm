@@ -20,6 +20,7 @@ use smithay::{
 use smithay::desktop::space::SpaceElement;
 use smithay::desktop::{PopupPointerGrab, Window};
 use smithay::input::pointer::{ClickGrab, PointerHandle};
+use smithay::input::tablet::TabletSeatTrait;
 use smithay::reexports::wayland_server::Resource;
 use smithay::wayland::seat::WaylandFocus;
 
@@ -877,6 +878,30 @@ impl DriftWm {
         }
     }
 
+    /// `under` as `wl_pointer` may see it. A client with the pen's tool bound
+    /// takes the pen on tablet-v2 alone: fed the emulated pointer as well, a
+    /// drawing app reads the tip as a second press at the same spot and
+    /// restarts the stroke, so every stroke is a dot. Everything
+    /// compositor-side — cursor, hover, hot corners, click-to-focus, the grabs —
+    /// keeps running off the unfiltered pick; only the delivery is withheld.
+    pub(crate) fn wl_pointer_under(
+        &self,
+        under: Option<(FocusTarget, Point<f64, Logical>)>,
+    ) -> Option<(FocusTarget, Point<f64, Logical>)> {
+        let Some(pen) = &self.pointer_pen else {
+            return under;
+        };
+        let Some(tool) = self.seat.tablet_seat().get_tool(pen) else {
+            return under;
+        };
+        under.filter(|(focus, _)| {
+            focus
+                .0
+                .client()
+                .is_none_or(|client| tool.client_tools(&client).next().is_none())
+        })
+    }
+
     /// `under` as the live grab, if any, will hand it to the client; see
     /// [`PointerGrabKind`].
     fn delivered_focus(
@@ -1006,6 +1031,10 @@ impl DriftWm {
             self.update_pointer_constraint(old_focus);
             return;
         }
+        // Withheld here as well as at the motion: this re-pick runs every
+        // iteration and would otherwise re-seat the pen's client one pump
+        // after the motion left it out.
+        let under = self.wl_pointer_under(under);
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
         let focus_unchanged = delivered.as_ref().map(|(focus, _)| focus) == old_focus.as_ref();
         // A lock still holding the surface under the cursor has nothing to
@@ -1095,6 +1124,7 @@ impl DriftWm {
     ) {
         // Real pointer motion restores the cursor that touch input hid.
         self.cursor.hidden_by_touch = false;
+        self.pointer_pen = None;
         let output = match self.active_output() {
             Some(o) => o,
             None => return,
@@ -1124,8 +1154,10 @@ impl DriftWm {
 
     /// The shared tail of every absolute motion that moves the seat pointer:
     /// focus cascade, pick promotion, dispatch, and the per-motion side
-    /// effects, in the order they have to run. Returns what the motion was
-    /// delivered to, which the tablet path forwards on tablet-v2 as well.
+    /// effects, in the order they have to run. Returns the pick, which the
+    /// tablet path forwards on tablet-v2 — a pen withholds it from
+    /// `wl_pointer` for a client that takes the tool, so the pick and the
+    /// pointer delivery can differ.
     ///
     /// Both callers route through here on purpose: a second copy of this
     /// sequence silently falls behind it.
@@ -1143,7 +1175,8 @@ impl DriftWm {
         // Promote an armed pick to a move once the drag clears the slop. Before
         // pointer.motion so the freshly installed grab receives this event.
         self.maybe_promote_pick(canvas_pos);
-        self.dispatch_pointer_motion(under.clone(), canvas_pos, serial, time);
+        let wl_under = self.wl_pointer_under(under.clone());
+        self.dispatch_pointer_motion(wl_under, canvas_pos, serial, time);
         pointer.frame(self);
         self.update_decoration_cursor(canvas_pos);
         self.update_pointer_constraint(old_focus);
@@ -1159,6 +1192,7 @@ impl DriftWm {
     fn on_pointer_motion_relative<I: InputBackend>(&mut self, event: I::PointerMotionEvent) {
         // Real pointer motion restores the cursor that touch input hid.
         self.cursor.hidden_by_touch = false;
+        self.pointer_pen = None;
         // When locked, pointer only targets the lock surface
         if self.session_lock.is_locked() {
             let Some(output) = self.active_output() else {
