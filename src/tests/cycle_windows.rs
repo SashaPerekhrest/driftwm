@@ -261,3 +261,40 @@ fn an_off_screen_step_still_pans_in() {
         "b is on screen once the pan lands"
     );
 }
+
+/// Tab-Tab faster than the animation: the second step lands on a window that
+/// is on screen at this frame but not where the first step's pan is heading,
+/// so it must re-target the pan rather than focus in place.
+#[test]
+fn a_step_mid_pan_retargets_the_pan() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    three_windows(&mut f);
+    let win_a = window_by_app_id(&mut f, "a").unwrap();
+    let win_b = window_by_app_id(&mut f, "b").unwrap();
+    f.state().map_window(
+        StageWindow::Client(win_b.clone()),
+        Point::from((6000, 6000)),
+        false,
+    );
+    settle(&mut f);
+
+    held_cycle_step(&mut f);
+    let toward_b = f
+        .state()
+        .camera_target()
+        .expect("the pan toward b is armed");
+    assert_eq!(f.state().focused_window(), Some(win_b));
+
+    held_cycle_step(&mut f);
+
+    assert_eq!(f.state().focused_window(), Some(win_a.clone()));
+    let toward_a = f.state().camera_target().expect("the pan is still armed");
+    assert_ne!(toward_a, toward_b, "and now heads for a instead of b");
+    settle(&mut f);
+    assert!(
+        f.state().window_fully_in_viewport(&win_a),
+        "a is on screen once the view rests"
+    );
+}

@@ -270,3 +270,43 @@ fn a_clipped_stand_in_pans_in() {
 
     f.state().dismiss_suspended(sid);
 }
+
+/// A step taken while the previous step's pan is still in flight re-targets
+/// the pan: the target is judged where the view will rest, not at the frame
+/// the animation happens to be on, so it is never left behind off screen.
+#[test]
+fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (100, 400));
+    let b = window_at(&mut f, id, "b", (1750, 400));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    let toward_b = f
+        .state()
+        .camera_target()
+        .expect("the pan toward b is armed");
+    assert!(
+        f.state().window_fully_in_viewport(&a),
+        "precondition: at this frame a still reads as fully on screen"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Left));
+
+    assert_eq!(f.state().focused_window(), Some(a.clone()));
+    let toward_a = f.state().camera_target().expect("the pan is still armed");
+    assert_ne!(toward_a, toward_b, "and now heads for a instead of b");
+    settle(&mut f);
+    assert!(
+        f.state().window_fully_in_viewport(&a),
+        "a is on screen once the view rests"
+    );
+    assert!(!f.state().window_fully_in_viewport(&b));
+}

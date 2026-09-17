@@ -102,7 +102,11 @@ impl DriftWm {
     /// click-to-navigate, activation), as opposed to the centering navigations,
     /// which always park. `zoom` applies to the pan alone.
     pub fn reveal_element(&mut self, element: &StageWindow, zoom: NavZoom) {
-        if self.window_fully_in_viewport(element) {
+        // Only a view at rest can vouch for the target: while a pan is in
+        // flight the camera is a frame of the animation, not where the view
+        // will land, so a step taken mid-pan re-targets the pan instead of
+        // leaving its target behind on the way to the previous one.
+        if self.camera_target().is_none() && self.window_fully_in_viewport(element) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus_element(element, serial);
         } else {
