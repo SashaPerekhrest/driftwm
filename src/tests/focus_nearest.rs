@@ -310,3 +310,38 @@ fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
     );
     assert!(!f.state().window_fully_in_viewport(&b));
 }
+
+/// A step out of fullscreen searches from the window that just left it, even
+/// when the restored view clips that window: otherwise the origin would fall
+/// back to the viewport center and the step would land on whatever sits
+/// nearest that instead.
+#[test]
+fn a_step_out_of_fullscreen_searches_from_the_window_that_left_it() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    // From the viewport center (960, 540), c is the nearest window to the
+    // right; from a, only b is.
+    let c = window_at(&mut f, id, "c", (1000, 400));
+    let a = window_at(&mut f, id, "a", (1750, 400));
+    let b = window_at(&mut f, id, "b", (2200, 400));
+    origin_view(&mut f);
+    assert!(
+        !f.state().window_fully_in_viewport(&a),
+        "precondition: a is clipped in the view fullscreen restores to"
+    );
+    f.state().enter_fullscreen(&a, Some(output));
+    f.double_roundtrip(id);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert!(!f.state().is_fullscreen(), "the step left fullscreen first");
+    assert_eq!(
+        f.state().focused_window(),
+        Some(b),
+        "the search started from a, not from the viewport center (which would \
+         have picked {c:?})"
+    );
+}
