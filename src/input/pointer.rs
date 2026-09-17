@@ -252,11 +252,10 @@ impl DriftWm {
                 self.pointer_focus_under_pick(screen_pos, pos)
                     .map(|(focus, _)| focus.0)
             });
-            // smithay's popup grab takes a press whose `wl_pointer` focus is
-            // not the popup's client for a click outside and dismisses the
-            // menu. A pen tap on the menu of a client it withholds has no such
-            // focus, and that client already has the tap on tablet-v2; a tap
-            // elsewhere falls through and still dismisses.
+            // smithay's popup grab dismisses the menu on a press whose
+            // `wl_pointer` focus is not the popup's client — which a tap on the
+            // menu of a withheld client never has. That client already has the
+            // tap on tablet-v2; a tap elsewhere falls through and dismisses.
             if let Some(pick) = &pen_pick
                 && pointer.current_focus().is_none()
                 && let Some(popup) = self.popup_grab.as_ref().and_then(|g| g.grab.current_grab())

@@ -429,9 +429,9 @@ fn a_pen_stroke_delivers_every_motion_to_a_pointer_only_client() {
 /// client should see. Round-trips so the compositor has processed the tablet
 /// seat request before any pen event runs.
 ///
-/// The window maps under the fixture's parked pointer, which seats it on
-/// `wl_pointer` as a mouse would; that delivery is dropped from the record so
-/// what remains is the pen's alone.
+/// The window maps under the fixture's parked pointer and is seated on
+/// `wl_pointer` as by a mouse; that delivery is cleared so what remains is
+/// the pen's alone.
 fn tablet_client_with_window(
     f: &mut Fixture,
 ) -> (
@@ -774,10 +774,9 @@ fn tablet_client_popup_under_pen(
     popup_surface
 }
 
-/// smithay's popup grab takes a press whose `wl_pointer` focus is not the
-/// popup's client for a click outside and dismisses the menu, and a client the
-/// pen withholds from `wl_pointer` never has that focus. A tap on the menu
-/// itself has to leave it standing, or no menu can be used with a pen.
+/// A pen tap on a withheld client's own menu carries no `wl_pointer` focus on
+/// the popup's client, which smithay's popup grab would read as a click
+/// outside. It has to leave the menu standing, or no menu works with a pen.
 #[test]
 fn a_pen_tap_on_a_tablet_clients_own_popup_leaves_it_standing() {
     let mut f = Fixture::new();

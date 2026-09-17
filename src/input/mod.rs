@@ -878,12 +878,11 @@ impl DriftWm {
         }
     }
 
-    /// `under` as `wl_pointer` may see it. A client with the pen's tool bound
-    /// takes the pen on tablet-v2 alone: fed the emulated pointer as well, a
-    /// drawing app reads the tip as a second press at the same spot and
-    /// restarts the stroke, so every stroke is a dot. Everything
-    /// compositor-side — cursor, hover, hot corners, click-to-focus, the grabs —
-    /// keeps running off the unfiltered pick; only the delivery is withheld.
+    /// `under` as `wl_pointer` may see it: a client with the pen's tool bound
+    /// takes the pen on tablet-v2 alone, since fed the emulated pointer as well
+    /// a drawing app reads the tip as a second press and restarts the stroke.
+    /// Cursor, hover, hot corners, click-to-focus and the grabs keep running
+    /// off the unfiltered pick; only the delivery is withheld.
     pub(crate) fn wl_pointer_under(
         &self,
         under: Option<(FocusTarget, Point<f64, Logical>)>,
@@ -1155,9 +1154,8 @@ impl DriftWm {
     /// The shared tail of every absolute motion that moves the seat pointer:
     /// focus cascade, pick promotion, dispatch, and the per-motion side
     /// effects, in the order they have to run. Returns the pick, which the
-    /// tablet path forwards on tablet-v2 — a pen withholds it from
-    /// `wl_pointer` for a client that takes the tool, so the pick and the
-    /// pointer delivery can differ.
+    /// tablet path forwards on tablet-v2; it is not what `wl_pointer` saw,
+    /// since a pen withholds that from a client that takes the tool.
     ///
     /// Both callers route through here on purpose: a second copy of this
     /// sequence silently falls behind it.

@@ -744,12 +744,10 @@ pub struct DriftWm {
     /// Last pointer hit-test landed on a screen-space target — a wlr layer or a
     /// screen-pinned window (both live in screen coords, unlike canvas windows).
     pub pointer_over_screen_space: bool,
-    /// The pen that owns the seat pointer: the last device to move it was
-    /// this tool, still in proximity. While set, a client with the tool bound
-    /// is withheld from `wl_pointer` (see [`DriftWm::wl_pointer_under`]).
-    /// Cleared by proximity-out and by any mouse motion, which reclaims the
-    /// pointer — without that, a pen and a mouse used together would flap the
-    /// client's focus every event.
+    /// The pen that owns the seat pointer: the last device to move it, still
+    /// in proximity. While set, a client with the tool bound is withheld from
+    /// `wl_pointer` (see [`DriftWm::wl_pointer_under`]). Mouse motion clears
+    /// it, or a pen and a mouse used together would flap the client's focus.
     pub pointer_pen: Option<smithay::backend::input::TabletToolDescriptor>,
     pub canvas_layers: Vec<CanvasLayer>,
 
