@@ -51,9 +51,6 @@ fn act(f: &mut Fixture, action: Action) {
     f.state().execute_action(&action);
 }
 
-/// The near dock lands `snap.gap` short of the neighbour, the far dock puts
-/// the window on its other side, and past that there is nothing: the press is
-/// a no-op that touches neither the position nor the camera.
 #[test]
 fn move_to_snap_docks_at_the_gap_and_stops_when_nothing_is_further() {
     let mut f = Fixture::new();
@@ -91,9 +88,8 @@ fn move_to_snap_docks_at_the_gap_and_stops_when_nothing_is_further() {
     assert!(f.state().camera_target().is_none());
 }
 
-/// A neighbour just below offers the alignments — left edges, centres, right
-/// edges — even with `[snap] corners` and `centers` off: those knobs tune
-/// drag magnetism, not what the keyboard can reach.
+/// The alignments are reachable with `[snap] corners` and `centers` off: those
+/// knobs tune drag magnetism, not what the keyboard can reach.
 #[test]
 fn move_to_snap_aligns_with_an_adjacent_neighbour_whatever_the_magnetism_knobs() {
     let mut f = Fixture::with_config(config("[snap]\ncorners = false\ncenters = false\n"));
@@ -117,9 +113,8 @@ fn move_to_snap_aligns_with_an_adjacent_neighbour_whatever_the_magnetism_knobs()
     );
 }
 
-/// A stop off screen brings the camera along through the navigation a
-/// directional focus uses, so `focus_placement` decides where the window
-/// lands on screen.
+/// The camera follows through the directional-focus navigation, so
+/// `focus_placement` decides where the window lands on screen.
 #[test]
 fn move_to_snap_reveals_a_far_stop_on_the_focus_placement_point() {
     let mut f = Fixture::with_config(config("focus_placement = \"left\"\n"));
@@ -158,9 +153,6 @@ fn move_to_snap_reveals_a_far_stop_on_the_focus_placement_point() {
     );
 }
 
-/// `right` grows the right edge to `snap.gap` short of the neighbour, then to
-/// the usable area's edge, then nowhere; `left` walks it back through the same
-/// lines and stops once none lies inside the window.
 #[test]
 fn resize_to_snap_walks_the_right_edge_out_and_back() {
     let mut f = Fixture::new();
@@ -215,8 +207,7 @@ fn resize_to_snap_walks_the_right_edge_out_and_back() {
     );
 }
 
-/// With no neighbour in range the edge goes to where `fill-window` would put
-/// it: the usable area's edge, `snap.outer_gap` in.
+/// The fill edge: the usable area's edge, `snap.outer_gap` in.
 #[test]
 fn resize_to_snap_with_no_neighbour_grows_to_the_fill_edge() {
     let mut f = Fixture::with_config(config("[snap]\nouter_gap = 12.0\n"));
@@ -237,8 +228,6 @@ fn resize_to_snap_with_no_neighbour_grows_to_the_fill_edge() {
     );
 }
 
-/// A suspended stand-in is the focused element like any client: its right
-/// edge walks the same lines and it moves to the same stops.
 #[test]
 fn a_stand_in_resizes_and_moves_to_snap_like_a_client() {
     let mut f = Fixture::new();
@@ -276,9 +265,8 @@ fn a_stand_in_resizes_and_moves_to_snap_like_a_client() {
     f.state().dismiss_suspended(sid);
 }
 
-/// The default chord pressed while fullscreen: the prelude exits fullscreen
-/// and only *sends* the restore, so committed geometry is still the output's
-/// size when the move measures — it has to measure the restored size.
+/// The action prelude exits fullscreen and only *sends* the restore, so
+/// committed geometry is still the output's size when the move measures.
 #[test]
 fn move_to_snap_during_fullscreen_measures_the_restored_window() {
     let mut f = Fixture::new();
@@ -309,8 +297,6 @@ fn move_to_snap_during_fullscreen_measures_the_restored_window() {
     );
 }
 
-/// A window no viewport shows resolves to the active output, whose far edge is
-/// no bound for it: like `fill-window`, a resize outside the fence does nothing.
 #[test]
 fn resize_to_snap_leaves_a_window_outside_the_viewport_alone() {
     let mut f = Fixture::new();
@@ -337,8 +323,6 @@ fn resize_to_snap_leaves_a_window_outside_the_viewport_alone() {
     );
 }
 
-/// A stand-in's bar sits above its body, so a vertical stop lands the body a
-/// bar below the frame's origin.
 #[test]
 fn a_stand_in_moves_down_by_its_frame_and_lands_its_body_below_the_bar() {
     let mut f = Fixture::new();
@@ -369,8 +353,6 @@ fn a_stand_in_moves_down_by_its_frame_and_lands_its_body_below_the_bar() {
     f.state().dismiss_suspended(sid);
 }
 
-/// A border widens every frame the stops measure, on the primary and the
-/// neighbour alike, and the fill edge sits a border past the usable area.
 #[test]
 fn a_border_widens_the_frames_the_stops_measure() {
     let mut f = Fixture::with_config(config("[decorations]\nborder_width = 2\n"));

@@ -117,8 +117,7 @@ fn super_shift_right_resolves_to_move_to_snap_right() {
     );
 }
 
-/// `nudge-window` lost its default chord to `move-to-snap` but stays a
-/// bindable action, so a config that kept it keeps working.
+/// `nudge-window` has no default chord but stays bindable.
 #[test]
 fn nudge_window_still_binds_explicitly() {
     let config = Config::from_toml(

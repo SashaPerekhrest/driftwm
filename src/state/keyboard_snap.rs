@@ -1,7 +1,5 @@
 //! `move-to-snap` / `resize-to-snap`: the keyboard walks between the stops
-//! drag snapping offers — every family, at any distance, whatever the
-//! `[snap] corners` / `centers` magnetism knobs say — instead of stepping by
-//! a fixed number of pixels.
+//! drag snapping offers, every family at any distance.
 
 use std::collections::HashSet;
 
@@ -51,9 +49,8 @@ impl DriftWm {
             Point::from((loc.x, (origin + (bar + bw) as f64).round() as i32))
         };
 
-        // A nudge's bookkeeping: the move re-anchors the element, so any fill
-        // restore point and owed recenter are stale, and its canvas position
-        // is durable session state.
+        // The move re-anchors the element: its fill restore point and any owed
+        // recenter are stale, and its position is session state.
         self.stage.clear_fill(&element);
         self.drop_owed_recenter(&element);
         self.map_window(element.clone(), new_loc, false);
@@ -119,8 +116,8 @@ impl DriftWm {
         self.step_resize(&element, start, &axis, (target - edge).round() as i32);
     }
 
-    /// The query for `frame`'s stops along one axis: every family on, the
-    /// alignment band a drag at zoom 1 would use.
+    /// The query for `frame`'s stops along one axis, with the alignment band a
+    /// drag at zoom 1 would use.
     fn stop_query(&self, frame: &SnapRect, horizontal: bool) -> StopQuery {
         let (perp_low, perp_high) = if horizontal {
             (frame.y_low, frame.y_high)
@@ -133,6 +130,7 @@ impl DriftWm {
             perp_high,
             gap: self.config.snap_gap,
             align_band: self.config.snap_gap + self.config.snap_distance,
+            // The magnetism knobs tune a drag, not what the keyboard can reach.
             same_edge: true,
             edge_center: true,
         }

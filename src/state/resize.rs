@@ -363,8 +363,7 @@ impl DriftWm {
         self.step_resize(&element, start, dir, step);
     }
 
-    /// The focused canvas element and the rect a step on it starts from, or
-    /// `None` when there is nothing to step.
+    /// The focused canvas element and the rect a step on it starts from.
     pub(super) fn step_target(&self) -> Option<(StageWindow, StepStart)> {
         let element = self
             .focused_element()

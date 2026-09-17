@@ -104,11 +104,10 @@ pub struct StopQuery {
 
 /// Every stop `others` offer along the query's axis, neighbour by neighbour.
 ///
-/// A neighbour whose perpendicular span overlaps the primary's offers the two
-/// docks. One that sits perpendicular-adjacent instead — clear of the primary
-/// but within `align_band` of it — offers the alignments: the same-edge pair
-/// and the centre. Never both from one neighbour: aligning to a window the
-/// primary already overlaps perpendicularly would only z-stack the two.
+/// A neighbour overlapping the primary's perpendicular span offers the docks;
+/// one clear of it but within `align_band` offers the alignments instead.
+/// Never both: aligning to a window the primary already overlaps
+/// perpendicularly would only z-stack the two.
 pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item = Stop> + 'a {
     others.iter().flat_map(move |other| {
         let (other_low, other_high, other_perp_low, other_perp_high) = if q.horizontal {
@@ -167,8 +166,7 @@ pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item
     })
 }
 
-/// How far the primary's origin sits below `line`, so a stop for that line
-/// converts to the origin the whole window lands on.
+/// Offset from the primary's origin to `line`.
 fn origin_shift(line: Line, extent: f64) -> f64 {
     match line {
         Line::Low => 0.0,
@@ -192,9 +190,8 @@ impl SnapParams<'_> {
     }
 }
 
-/// Find the best snap candidate along one axis: the [`stops`] the neighbours
-/// offer, converted to the origin that puts the primary's line on each, taking
-/// the closest within `threshold`.
+/// Find the best snap candidate along one axis: the closest of the [`stops`]
+/// the neighbours offer, as the origin that puts the primary's line on it.
 ///
 /// Returns `Some((snapped_origin, abs_distance))` for the closest candidate
 /// within `threshold`, or `None`.
@@ -216,9 +213,8 @@ pub fn find_snap_candidate(natural_edge_low: f64, p: &SnapParams<'_>) -> Option<
 /// window already sits on, since every placement rounds to a pixel.
 const ON_STOP: f64 = 0.5;
 
-/// The nearest of `candidates` strictly past `from` — toward higher coordinates
-/// when `forward` — ignoring any within [`ON_STOP`] of it, so a settled snap
-/// walks on to the next stop instead of landing on its own again.
+/// The nearest of `candidates` more than [`ON_STOP`] past `from`, toward
+/// higher coordinates when `forward`.
 fn nearest_beyond(
     from: f64,
     forward: bool,
@@ -236,9 +232,8 @@ fn nearest_beyond(
         .reduce(|a, b| if forward { a.min(b) } else { a.max(b) })
 }
 
-/// Where a whole-window move from origin `from` lands when it takes the next
-/// stop in its direction, whatever the distance: every [`stops`] family the
-/// neighbours offer, as the origin that puts the primary's line on it.
+/// The origin a whole-window move from `from` lands on at the next stop in its
+/// direction, at any distance, from every [`stops`] family.
 pub fn next_origin(
     from: f64,
     forward: bool,
@@ -253,9 +248,8 @@ pub fn next_origin(
     )
 }
 
-/// The coordinate the primary's high edge, at `edge`, grows out to next: the
-/// nearest stop a neighbour offers that edge inside `bound`, else `bound`
-/// itself — the usable area's edge, which caps the walk.
+/// Where the primary's high edge at `edge` grows to next: the nearest stop
+/// offered that edge within `bound`, else `bound` itself.
 pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery) -> Option<f64> {
     let lines = stops(others, q)
         .filter(|s| s.line == Line::High)
@@ -265,9 +259,8 @@ pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery)
     nearest_beyond(edge, true, lines)
 }
 
-/// The coordinate the primary's high edge, at `edge`, pulls back to next: the
-/// nearest stop for it — a neighbour's or `bound` — strictly inside the span
-/// it closes against `anchor`, the low edge.
+/// Where the primary's high edge at `edge` pulls back to next: the nearest
+/// stop offered that edge — or `bound` — still past `anchor`, the low edge.
 pub fn next_shrink_line(
     edge: f64,
     anchor: f64,
@@ -592,8 +585,7 @@ mod tests {
         }
     }
 
-    /// A query for a primary spanning `[0, 100]` on the perpendicular axis,
-    /// both alignment families on, at the default gap and band.
+    /// Perpendicular span `[0, 100]`, every family on, the default gap and band.
     fn query(horizontal: bool) -> StopQuery {
         StopQuery {
             horizontal,
