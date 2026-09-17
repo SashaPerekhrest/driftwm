@@ -26,11 +26,9 @@ enum NavTarget {
 }
 
 impl DriftWm {
-    /// The cone search behind `center-nearest` and `focus-nearest`: the
-    /// nearest canvas element or `navigation.anchors` point in `dir`, measured
-    /// from the focused element while it is fully in view (or from the
-    /// fullscreen window the action just exited), otherwise from the viewport
-    /// center.
+    /// The cone search shared by `center-nearest` and `focus-nearest`: the
+    /// nearest canvas element or `navigation.anchors` point in `dir`, searched
+    /// from the focused element when fully in view, else the viewport center.
     fn nearest_in_direction(
         &self,
         dir: &Direction,

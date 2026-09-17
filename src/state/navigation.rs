@@ -98,9 +98,8 @@ impl DriftWm {
     }
 
     /// Focus + raise a stage element, panning the camera to it only when it
-    /// isn't already fully on screen — the reveal shape (`msg focus`,
-    /// click-to-navigate, activation), as opposed to the centering navigations,
-    /// which always park. `zoom` applies to the pan alone.
+    /// isn't already fully on screen, unlike the centering navigations, which
+    /// always park. `zoom` applies to the pan alone.
     pub fn reveal_element(&mut self, element: &StageWindow, zoom: NavZoom) {
         // Only a view at rest can vouch for the target: while a pan is in
         // flight the camera is a frame of the animation, not where the view

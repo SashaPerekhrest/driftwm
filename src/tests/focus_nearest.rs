@@ -135,9 +135,7 @@ fn a_clipped_target_pans_in_onto_the_placement_point() {
     );
 }
 
-/// `center-nearest` keeps parking a target that is already fully on screen:
-/// it is the walk-through for a non-center `focus_placement`, the one
-/// directional action a user can rely on to move the view.
+/// `center-nearest` parks a target that is already fully on screen.
 #[test]
 fn center_nearest_still_parks_a_fully_visible_target() {
     let mut f = Fixture::new();
@@ -312,9 +310,7 @@ fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
 }
 
 /// A step out of fullscreen searches from the window that just left it, even
-/// when the restored view clips that window: otherwise the origin would fall
-/// back to the viewport center and the step would land on whatever sits
-/// nearest that instead.
+/// when the restored view clips that window.
 #[test]
 fn a_step_out_of_fullscreen_searches_from_the_window_that_left_it() {
     let mut f = Fixture::new();
