@@ -10,7 +10,8 @@
 //! (`DriftWm::touch_output_for_device`); the fake reports no libinput device,
 //! so resolution falls through to the config override or the first output.
 
-use smithay::input::tablet::TabletSeatTrait;
+use smithay::input::pointer::CursorImageStatus;
+use smithay::input::tablet::{TabletSeatHandler, TabletSeatTrait};
 use smithay::utils::{Logical, Point};
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
@@ -20,10 +21,11 @@ use crate::state::StageWindow;
 
 use super::client::{ClientId, LayerConfigureProps, TabletEvent, TabletToolEvent};
 use super::input_backend::{
-    FakeDevice, FakeTabletAxes, pen_proximity_in, pen_proximity_in_screen, pen_tip_down,
-    pen_tip_up, pen_to, pen_to_screen_with, pen_to_with, pointer_to, tablet_added, tablet_removed,
-    touch_down,
+    FakeDevice, FakeTabletAxes, fake_tool, pen_proximity_in, pen_proximity_in_screen,
+    pen_proximity_out, pen_tip_down, pen_tip_up, pen_to, pen_to_screen_with, pen_to_with,
+    pointer_to, tablet_added, tablet_removed, touch_down,
 };
+use super::popups::grow_popup;
 use super::{
     Fixture, config, keyboard_focus, map_window, pointer_focus, server_surface, window_by_app_id,
 };
@@ -738,6 +740,160 @@ fn a_pen_tip_on_a_tablet_client_still_raises_and_focuses_it() {
         f.state().stage.windows().next_back(),
         Some(&StageWindow::Client(window)),
         "and raises it"
+    );
+}
+
+/// A grabbed popup on the tablet client's window, covering the pen's spot:
+/// tapped once for a serial, then the popup opened, grabbed and grown past
+/// its single-pixel input region. The default positioner centres it on the
+/// parent's origin.
+fn tablet_client_popup_under_pen(
+    f: &mut Fixture,
+    id: ClientId,
+    surface: &wayland_client::protocol::wl_surface::WlSurface,
+    device: &FakeDevice,
+) -> wayland_client::protocol::wl_surface::WlSurface {
+    pen_tip_down(f, device);
+    pen_tip_up(f, device);
+    f.double_roundtrip(id);
+
+    let popup = f.client(id).create_popup(surface);
+    let popup_surface = popup.surface.clone();
+    popup.commit();
+    f.roundtrip(id);
+    let popup = f.client(id).popup(&popup_surface);
+    popup.grab(1);
+    popup.attach_new_buffer();
+    popup.ack_last_and_commit();
+    f.double_roundtrip(id);
+    grow_popup(f, id, &popup_surface, (200, 100));
+    assert!(
+        f.state().popup_grab.is_some(),
+        "precondition: the popup holds a grab, or this scenario tests nothing"
+    );
+    popup_surface
+}
+
+/// smithay's popup grab takes a press whose `wl_pointer` focus is not the
+/// popup's client for a click outside and dismisses the menu, and a client the
+/// pen withholds from `wl_pointer` never has that focus. A tap on the menu
+/// itself has to leave it standing, or no menu can be used with a pen.
+#[test]
+fn a_pen_tap_on_a_tablet_clients_own_popup_leaves_it_standing() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+
+    let at = origin + Point::from((10.0, 10.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    let popup_surface = tablet_client_popup_under_pen(&mut f, id, &surface, &device);
+    f.client(id).drain_tablet_tool_events();
+
+    pen_to(&mut f, &device, origin + Point::from((12.0, 12.0)));
+    pen_tip_down(&mut f, &device);
+    pen_tip_up(&mut f, &device);
+    f.double_roundtrip(id);
+    f.pump(3);
+
+    assert!(
+        !f.client(id).popup(&popup_surface).popup_done,
+        "a tap on the menu must not dismiss it"
+    );
+    assert!(
+        f.state().popup_grab.is_some(),
+        "and the grab that routes its input stays"
+    );
+    let events = f.client(id).drain_tablet_tool_events();
+    assert!(
+        events.contains(&TabletToolEvent::Down),
+        "the tap reaches the client on tablet-v2, which is why the emulated \
+         button has nothing left to do: {events:?}"
+    );
+}
+
+/// The counterpart: a pen tap beside the menu is a click outside, and the
+/// menu goes.
+#[test]
+fn a_pen_tap_outside_a_tablet_clients_popup_dismisses_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+
+    let at = origin + Point::from((10.0, 10.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    let popup_surface = tablet_client_popup_under_pen(&mut f, id, &surface, &device);
+
+    // Right of the 800-wide window: bare canvas.
+    pen_to(&mut f, &device, origin + Point::from((900.0, 100.0)));
+    pen_tip_down(&mut f, &device);
+    pen_tip_up(&mut f, &device);
+    f.double_roundtrip(id);
+    f.pump(3);
+
+    assert!(
+        f.client(id).popup(&popup_surface).popup_done,
+        "a tap outside the menu dismisses it, as a click does"
+    );
+}
+
+/// Hover the pen over the tablet client and have that client hide the tool
+/// cursor, as a drawing canvas does — what its `set_cursor` on the tool
+/// arrives as.
+fn pen_over_tablet_client_hiding_the_cursor(
+    f: &mut Fixture,
+    id: ClientId,
+    origin: Point<f64, Logical>,
+) -> FakeDevice {
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(f, at);
+    pen_to(f, &device, at);
+    f.double_roundtrip(id);
+    f.state()
+        .tablet_tool_image(&fake_tool(), CursorImageStatus::Hidden);
+    assert_eq!(
+        f.state().cursor.cursor_status,
+        CursorImageStatus::Hidden,
+        "precondition: the client's tool cursor is in effect"
+    );
+    device
+}
+
+/// smithay drops a client's cursor on the `wl_pointer` leave, which a client
+/// withheld from `wl_pointer` never gets. The image its tool set has to go
+/// when the tool leaves it, or the cursor stays hidden over the bare canvas.
+#[test]
+fn the_tool_cursor_is_dropped_when_the_pen_moves_off_a_tablet_client() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+    let device = pen_over_tablet_client_hiding_the_cursor(&mut f, id, origin);
+
+    // Right of the 800-wide window: bare canvas.
+    pen_to(&mut f, &device, origin + Point::from((900.0, 100.0)));
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.state().cursor.cursor_status,
+        CursorImageStatus::default_named(),
+        "the tool leaving the client restores the default cursor"
+    );
+}
+
+#[test]
+fn the_tool_cursor_is_dropped_when_the_pen_leaves_proximity() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+    let device = pen_over_tablet_client_hiding_the_cursor(&mut f, id, origin);
+
+    pen_proximity_out(&mut f, &device);
+
+    assert_eq!(
+        f.state().cursor.cursor_status,
+        CursorImageStatus::default_named(),
+        "lifting the pen away restores the default cursor"
     );
 }
 

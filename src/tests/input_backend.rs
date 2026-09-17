@@ -357,7 +357,7 @@ pub struct FakeTabletAxes {
 
 /// The pen every scenario uses. Capabilities are advertised to the client at
 /// `add_tool` time, so a tool omitting one here cannot legally send that axis.
-fn fake_tool() -> TabletToolDescriptor {
+pub fn fake_tool() -> TabletToolDescriptor {
     TabletToolDescriptor {
         tool_type: TabletToolType::Pen,
         hardware_serial: 1,
@@ -839,6 +839,22 @@ pub fn pen_proximity_in_screen(f: &mut Fixture, device: &FakeDevice, screen: Poi
 pub fn pen_proximity_in(f: &mut Fixture, device: &FakeDevice, at: Point<f64, Logical>) {
     let screen = screen_of(f, at);
     pen_proximity_in_screen(f, device, screen);
+}
+
+/// Lift the pen out of proximity, wherever it is. Like a tip, the event
+/// carries no position the compositor reads.
+pub fn pen_proximity_out(f: &mut Fixture, device: &FakeDevice) {
+    f.state()
+        .process_input_event::<FakeInput>(InputEvent::TabletToolProximity {
+            event: FakeTabletProximityEvent {
+                device: device.clone(),
+                screen: Point::default(),
+                tool: fake_tool(),
+                axes: FakeTabletAxes::default(),
+                state: ProximityState::Out,
+                time: next_time(),
+            },
+        });
 }
 
 /// Move the pen to raw screen position `screen`, reporting `axes`.

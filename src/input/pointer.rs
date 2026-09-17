@@ -243,6 +243,30 @@ impl DriftWm {
             self.set_last_scroll_pan(None);
             self.with_output_state(|os| os.momentum.stop());
 
+            // A pen withholds `wl_pointer` focus from a client with the tool
+            // bound, so where its press landed is read off the pick wherever
+            // the mouse path reads it off that focus.
+            let pen_pick = self.pointer_pen.is_some().then(|| {
+                let pos = pointer.current_location();
+                let screen_pos = canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
+                self.pointer_focus_under_pick(screen_pos, pos)
+                    .map(|(focus, _)| focus.0)
+            });
+            // smithay's popup grab takes a press whose `wl_pointer` focus is
+            // not the popup's client for a click outside and dismisses the
+            // menu. A pen tap on the menu of a client it withholds has no such
+            // focus, and that client already has the tap on tablet-v2; a tap
+            // elsewhere falls through and still dismisses.
+            if let Some(pick) = &pen_pick
+                && pointer.current_focus().is_none()
+                && let Some(popup) = self.popup_grab.as_ref().and_then(|g| g.grab.current_grab())
+                && pick
+                    .as_ref()
+                    .is_some_and(|s| s.id().same_client_as(&popup.0.id()))
+            {
+                return;
+            }
+
             // A 3-finger tap (LRM button map) generates BTN_MIDDLE.
             // Buffer it — if a 3-finger swipe follows within 300ms, suppress
             // the click and enter window-move mode. Otherwise flush to client (paste).
@@ -353,17 +377,7 @@ impl DriftWm {
             // keyboard focus to an `OnDemand` layer under the pointer.
             if self.pointer_over_layer {
                 if button_state == ButtonState::Pressed {
-                    // A pen withholds `wl_pointer` focus from a bar whose
-                    // client has the tool bound, so its tap resolves the bar
-                    // from the pick instead.
-                    let layer = if self.pointer_pen.is_some() {
-                        let screen_pos =
-                            canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
-                        self.pointer_focus_under_pick(screen_pos, pos)
-                            .map(|(focus, _)| focus.0)
-                    } else {
-                        pointer.current_focus().map(|f| f.0)
-                    };
+                    let layer = pen_pick.unwrap_or_else(|| pointer.current_focus().map(|f| f.0));
                     self.focus_layer_if_on_demand(layer, serial);
                     self.maybe_grab_screen_space_click(&pointer, button, serial);
                 }

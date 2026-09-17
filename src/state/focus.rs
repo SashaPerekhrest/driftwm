@@ -14,7 +14,7 @@ use smithay::{
         dnd::{DndFocus, Source},
         keyboard::{KeyboardTarget, KeysymHandle, ModifiersState},
         pointer::{
-            AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent,
+            AxisFrame, ButtonEvent, CursorImageStatus, GestureHoldBeginEvent, GestureHoldEndEvent,
             GesturePinchBeginEvent, GesturePinchEndEvent, GesturePinchUpdateEvent,
             GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
             PointerTarget, RelativeMotionEvent,
@@ -294,6 +294,10 @@ impl TabletToolTarget<DriftWm> for FocusTarget {
             data,
             tool_descriptor,
         );
+        // smithay drops a client's cursor on the `wl_pointer` leave, which a
+        // client withheld from `wl_pointer` never gets; the image its tool
+        // set — hidden, for a drawing canvas — would outlive the pen's visit.
+        data.cursor_image(seat, CursorImageStatus::default_named());
     }
 
     fn down(
