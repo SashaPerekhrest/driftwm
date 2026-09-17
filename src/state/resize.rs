@@ -159,7 +159,7 @@ impl DriftWm {
     /// offer it declined. The two halves have to answer alike — measuring from the
     /// offer while correcting toward the commit inflates the anchor edge once per
     /// repeat.
-    fn placed_element_size(&self, element: &StageWindow) -> Size<i32, Logical> {
+    pub(super) fn placed_element_size(&self, element: &StageWindow) -> Size<i32, Logical> {
         match element {
             // A stand-in's size cell is written synchronously, so its placement
             // never assumes anything the compositor is not already drawing.

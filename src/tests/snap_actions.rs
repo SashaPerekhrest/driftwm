@@ -3,6 +3,7 @@
 //! between them and the usable area's edge — clients and stand-ins alike.
 
 use smithay::desktop::Window;
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 use wayland_client::protocol::wl_surface::WlSurface as ClientSurface;
 
@@ -273,4 +274,124 @@ fn a_stand_in_resizes_and_moves_to_snap_like_a_client() {
     );
 
     f.state().dismiss_suspended(sid);
+}
+
+/// The default chord pressed while fullscreen: the prelude exits fullscreen
+/// and only *sends* the restore, so committed geometry is still the output's
+/// size when the move measures — it has to measure the restored size.
+#[test]
+fn move_to_snap_during_fullscreen_measures_the_restored_window() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    let key = super::server_surface(&a).id();
+
+    f.state().enter_fullscreen(&a, Some(output));
+    f.double_roundtrip(id);
+    super::adopt_last_configure(&mut f, id, &surface);
+    assert!(f.state().is_fullscreen(), "precondition: fullscreen");
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+
+    assert!(!f.state().is_fullscreen());
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((588, 100)),
+        "docked by its restored 400 px width, not the 1920 px it still commits"
+    );
+    assert!(
+        !f.state().pending_recenter.contains_key(&key),
+        "the exit's owed recenter went with the move"
+    );
+}
+
+/// A window no viewport shows resolves to the active output, whose far edge is
+/// no bound for it: like `fill-window`, a resize outside the fence does nothing.
+#[test]
+fn resize_to_snap_leaves_a_window_outside_the_viewport_alone() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((3000.0, 0.0)));
+    let configures = configure_count(&mut f, id, &surface);
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(
+        configure_count(&mut f, id, &surface),
+        configures,
+        "off screen: no configure"
+    );
+
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (1820, 300),
+        "back in view, the same press grows to the usable edge"
+    );
+}
+
+/// A stand-in's bar sits above its body, so a vertical stop lands the body a
+/// bar below the frame's origin.
+#[test]
+fn a_stand_in_moves_down_by_its_frame_and_lands_its_body_below_the_bar() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    window_at(&mut f, id, "b", (100, 1000), (400, 300));
+    let sid = f.state().insert_suspended_for_test(
+        1,
+        Point::from((100, 100)),
+        Size::from((400, 300)),
+        "s",
+        "S",
+    );
+    f.state().focus_and_raise_suspended(sid);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    let s = f.state().find_suspended(sid).unwrap();
+    let elem = StageWindow::Suspended(s);
+
+    act(&mut f, Action::MoveToSnap(Direction::Down));
+
+    // Frame 75..400 (a 25 px bar) docks its bottom at 988: origin 663, body
+    // 25 lower.
+    assert_eq!(
+        f.state().stage.position_of(&elem),
+        Some(Point::from((100, 688)))
+    );
+
+    f.state().dismiss_suspended(sid);
+}
+
+/// A border widens every frame the stops measure, on the primary and the
+/// neighbour alike, and the fill edge sits a border past the usable area.
+#[test]
+fn a_border_widens_the_frames_the_stops_measure() {
+    let mut f = Fixture::with_config(config("[decorations]\nborder_width = 2\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((584, 100)),
+        "frames 98..502 and 998..1402 dock at 986, so the content starts at 584"
+    );
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (1336, 300),
+        "the frame grows to 1922, a border past the usable edge at outer_gap 0"
+    );
 }

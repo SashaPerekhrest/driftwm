@@ -253,49 +253,34 @@ pub fn next_origin(
     )
 }
 
-/// The coordinate the primary's `line` grows out to next: the nearest stop a
-/// neighbour offers that line inside `bound`, else `bound` itself — the usable
-/// area's edge, which caps the walk.
-pub fn next_grow_line(
-    edge: f64,
-    line: Line,
-    bound: f64,
-    others: &[SnapRect],
-    q: &StopQuery,
-) -> Option<f64> {
-    let outward = line == Line::High;
+/// The coordinate the primary's high edge, at `edge`, grows out to next: the
+/// nearest stop a neighbour offers that edge inside `bound`, else `bound`
+/// itself — the usable area's edge, which caps the walk.
+pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery) -> Option<f64> {
     let lines = stops(others, q)
-        .filter(|s| s.line == line)
+        .filter(|s| s.line == Line::High)
         .map(|s| s.at)
-        .filter(|&at| if outward { at <= bound } else { at >= bound })
+        .filter(|&at| at <= bound)
         .chain(std::iter::once(bound));
-    nearest_beyond(edge, outward, lines)
+    nearest_beyond(edge, true, lines)
 }
 
-/// The coordinate the primary's `line` pulls back to next: the nearest stop for
-/// it — a neighbour's or `bound` — strictly inside the span the edge closes
-/// against `anchor`, the opposite edge.
+/// The coordinate the primary's high edge, at `edge`, pulls back to next: the
+/// nearest stop for it — a neighbour's or `bound` — strictly inside the span
+/// it closes against `anchor`, the low edge.
 pub fn next_shrink_line(
     edge: f64,
-    line: Line,
     anchor: f64,
     bound: f64,
     others: &[SnapRect],
     q: &StopQuery,
 ) -> Option<f64> {
-    let outward = line == Line::High;
     let lines = stops(others, q)
-        .filter(|s| s.line == line)
+        .filter(|s| s.line == Line::High)
         .map(|s| s.at)
         .chain(std::iter::once(bound))
-        .filter(|&at| {
-            if outward {
-                at - anchor > ON_STOP
-            } else {
-                anchor - at > ON_STOP
-            }
-        });
-    nearest_beyond(edge, !outward, lines)
+        .filter(|&at| at - anchor > ON_STOP);
+    nearest_beyond(edge, false, lines)
 }
 
 /// Distance between two intervals `[lo1, hi1]` and `[lo2, hi2]`. Zero when
@@ -737,25 +722,16 @@ mod tests {
     fn a_grow_walks_neighbour_lines_then_the_bound() {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
         let q = query(true);
-        assert_eq!(
-            next_grow_line(400.0, Line::High, 1000.0, &others, &q),
-            Some(588.0)
-        );
-        assert_eq!(
-            next_grow_line(588.0, Line::High, 1000.0, &others, &q),
-            Some(1000.0)
-        );
-        assert_eq!(
-            next_grow_line(1000.0, Line::High, 1000.0, &others, &q),
-            None
-        );
+        assert_eq!(next_grow_line(400.0, 1000.0, &others, &q), Some(588.0));
+        assert_eq!(next_grow_line(588.0, 1000.0, &others, &q), Some(1000.0));
+        assert_eq!(next_grow_line(1000.0, 1000.0, &others, &q), None);
     }
 
     #[test]
     fn a_grow_ignores_a_neighbour_line_past_the_bound() {
         let others = [rect(1100.0, 50.0, 200.0, 100.0)];
         assert_eq!(
-            next_grow_line(400.0, Line::High, 1000.0, &others, &query(true)),
+            next_grow_line(400.0, 1000.0, &others, &query(true)),
             Some(1000.0)
         );
     }
@@ -763,7 +739,7 @@ mod tests {
     #[test]
     fn a_grow_with_no_neighbour_reaches_the_bound() {
         assert_eq!(
-            next_grow_line(400.0, Line::High, 1000.0, &[], &query(true)),
+            next_grow_line(400.0, 1000.0, &[], &query(true)),
             Some(1000.0)
         );
     }
@@ -773,20 +749,17 @@ mod tests {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
         let q = query(true);
         assert_eq!(
-            next_shrink_line(1000.0, Line::High, 0.0, 1000.0, &others, &q),
+            next_shrink_line(1000.0, 0.0, 1000.0, &others, &q),
             Some(588.0)
         );
-        assert_eq!(
-            next_shrink_line(588.0, Line::High, 0.0, 1000.0, &others, &q),
-            None
-        );
+        assert_eq!(next_shrink_line(588.0, 0.0, 1000.0, &others, &q), None);
     }
 
     #[test]
     fn a_shrink_past_the_bound_pulls_back_to_it_first() {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
         assert_eq!(
-            next_shrink_line(1200.0, Line::High, 0.0, 1000.0, &others, &query(true)),
+            next_shrink_line(1200.0, 0.0, 1000.0, &others, &query(true)),
             Some(1000.0)
         );
     }
@@ -795,7 +768,7 @@ mod tests {
     fn a_shrink_never_closes_the_span_onto_its_anchor() {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
         assert_eq!(
-            next_shrink_line(1000.0, Line::High, 588.0, 1000.0, &others, &query(true)),
+            next_shrink_line(1000.0, 588.0, 1000.0, &others, &query(true)),
             None
         );
     }
@@ -811,10 +784,11 @@ mod tests {
     }
 
     proptest! {
-        /// A walk lands on an enumerated stop strictly beyond its origin and
-        /// skips none on the way.
+        /// The walk's ordering: it lands on an enumerated stop strictly
+        /// beyond its origin and skips none on the way. The stops' own
+        /// coordinates are pinned by the table cases above.
         #[test]
-        fn next_origin_is_the_nearest_enumerated_stop_beyond(
+        fn next_origin_takes_the_nearest_stop_beyond_and_skips_none(
             from in -1000.0..1000.0f64,
             forward in any::<bool>(),
             extent in 20.0..600.0f64,

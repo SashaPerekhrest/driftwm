@@ -9,7 +9,7 @@ use smithay::utils::Point;
 
 use super::{DriftWm, NavZoom};
 use driftwm::config::Direction;
-use driftwm::layout::snap::{self, Line, SnapRect, StopQuery};
+use driftwm::layout::snap::{self, SnapRect, StopQuery};
 
 impl DriftWm {
     /// Move the focused canvas element along `dir` to the nearest stop past
@@ -29,7 +29,11 @@ impl DriftWm {
         #[allow(clippy::mutable_key_type)]
         let excludes = HashSet::new();
         let (others, bar, bw) = self.snap_targets(&element, &excludes);
-        let frame = super::fit::snap_rect_at(loc, element.geometry().size, bar, bw);
+        // The size the placement assumes, not committed geometry: the action
+        // prelude may have just exited fullscreen, and the client goes on
+        // reporting the output's size until it acks the restore.
+        let size = self.placed_element_size(&element);
+        let frame = super::fit::snap_rect_at(loc, size, bar, bw);
         let q = self.stop_query(&frame, horizontal);
         let (from, extent) = if horizontal {
             (frame.x_low, frame.x_high - frame.x_low)
@@ -71,27 +75,38 @@ impl DriftWm {
         let Some((element, start)) = self.step_target() else {
             return;
         };
-        let chrome = self.element_chrome(&element);
-        let frame = super::fit::snap_rect_at(start.loc, start.size, chrome.bar, chrome.border);
         #[allow(clippy::mutable_key_type)]
         let excludes = HashSet::new();
-        let (others, _, _) = self.snap_targets(&element, &excludes);
+        let (others, bar, bw) = self.snap_targets(&element, &excludes);
+        let frame = super::fit::snap_rect_at(start.loc, start.size, bar, bw);
         let Some(output) = self.output_for_window(&element) else {
             return;
         };
-        // The edge `fill-window` grows to on that side.
+        // The fence `fill-window` grows inside, refused the same way for a
+        // window lying entirely outside it: `output_for_window` falls back to
+        // the active output for a window no viewport shows, and that
+        // viewport's far edge is no bound for a window screens away.
+        let inset = self.config.outer_frame_inset(bw);
         let bounds = self.usable_canvas_bounds(&output);
-        let inset = self.config.outer_frame_inset(chrome.border);
+        let fence = SnapRect {
+            x_low: bounds.x_low + inset,
+            x_high: bounds.x_high - inset,
+            y_low: bounds.y_low + inset,
+            y_high: bounds.y_high - inset,
+        };
+        if !frame.overlaps(&fence) {
+            return;
+        }
         let q = self.stop_query(&frame, horizontal);
         let (edge, anchor, bound) = if horizontal {
-            (frame.x_high, frame.x_low, bounds.x_high - inset)
+            (frame.x_high, frame.x_low, fence.x_high)
         } else {
-            (frame.y_high, frame.y_low, bounds.y_high - inset)
+            (frame.y_high, frame.y_low, fence.y_high)
         };
         let target = if grow {
-            snap::next_grow_line(edge, Line::High, bound, &others, &q)
+            snap::next_grow_line(edge, bound, &others, &q)
         } else {
-            snap::next_shrink_line(edge, Line::High, anchor, bound, &others, &q)
+            snap::next_shrink_line(edge, anchor, bound, &others, &q)
         };
         let Some(target) = target else {
             return;
