@@ -74,46 +74,67 @@ fn super_q_resolves_to_close_window() {
     );
 }
 
-// ── Super+Shift+Arrow → NudgeWindow ─────────────────────────────────────
+// ── Super+Shift+Arrow → MoveToSnap ──────────────────────────────────────
 
 #[test]
-fn super_shift_up_resolves_to_nudge_window_up() {
+fn super_shift_up_resolves_to_move_to_snap_up() {
     let config = Config::default();
     let result = config.lookup(&logo_shift(), Keysym::from(keysyms::KEY_Up));
     assert!(result.is_some(), "Super+Shift+Up should be bound");
     assert!(
-        matches!(result.unwrap(), Action::NudgeWindow(Direction::Up)),
-        "Super+Shift+Up should resolve to NudgeWindow(Up)"
+        matches!(result.unwrap(), Action::MoveToSnap(Direction::Up)),
+        "Super+Shift+Up should resolve to MoveToSnap(Up)"
     );
 }
 
 #[test]
-fn super_shift_down_resolves_to_nudge_window_down() {
+fn super_shift_down_resolves_to_move_to_snap_down() {
     let config = Config::default();
     let result = config.lookup(&logo_shift(), Keysym::from(keysyms::KEY_Down));
     assert!(
-        matches!(result.unwrap(), Action::NudgeWindow(Direction::Down)),
-        "Super+Shift+Down should resolve to NudgeWindow(Down)"
+        matches!(result.unwrap(), Action::MoveToSnap(Direction::Down)),
+        "Super+Shift+Down should resolve to MoveToSnap(Down)"
     );
 }
 
 #[test]
-fn super_shift_left_resolves_to_nudge_window_left() {
+fn super_shift_left_resolves_to_move_to_snap_left() {
     let config = Config::default();
     let result = config.lookup(&logo_shift(), Keysym::from(keysyms::KEY_Left));
     assert!(
-        matches!(result.unwrap(), Action::NudgeWindow(Direction::Left)),
-        "Super+Shift+Left should resolve to NudgeWindow(Left)"
+        matches!(result.unwrap(), Action::MoveToSnap(Direction::Left)),
+        "Super+Shift+Left should resolve to MoveToSnap(Left)"
     );
 }
 
 #[test]
-fn super_shift_right_resolves_to_nudge_window_right() {
+fn super_shift_right_resolves_to_move_to_snap_right() {
     let config = Config::default();
     let result = config.lookup(&logo_shift(), Keysym::from(keysyms::KEY_Right));
     assert!(
-        matches!(result.unwrap(), Action::NudgeWindow(Direction::Right)),
-        "Super+Shift+Right should resolve to NudgeWindow(Right)"
+        matches!(result.unwrap(), Action::MoveToSnap(Direction::Right)),
+        "Super+Shift+Right should resolve to MoveToSnap(Right)"
+    );
+}
+
+/// `nudge-window` lost its default chord to `move-to-snap` but stays a
+/// bindable action, so a config that kept it keeps working.
+#[test]
+fn nudge_window_still_binds_explicitly() {
+    let config = Config::from_toml(
+        r#"
+[keybindings]
+"mod+alt+shift+right" = "nudge-window right"
+"#,
+    )
+    .unwrap();
+    let result = config.lookup(
+        &mods(true, false, true, true),
+        Keysym::from(keysyms::KEY_Right),
+    );
+    assert!(
+        matches!(result, Some(Action::NudgeWindow(Direction::Right))),
+        "an explicit nudge-window binding resolves"
     );
 }
 

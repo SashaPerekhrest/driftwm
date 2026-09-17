@@ -350,7 +350,7 @@ completed click on a partially off-screen window also pans it in fully visible �
 
 Default: `20`
 
-px per nudge-window action (mod-shift-arrow by default)
+px per nudge-window action (unbound by default)
 
 ### `resize_step`
 
@@ -813,10 +813,10 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+down"` | `focus-nearest down` |  |
 | `"mod+left"` | `focus-nearest left` |  |
 | `"mod+right"` | `focus-nearest right` |  |
-| `"mod+shift+up"` | `nudge-window up` |  |
-| `"mod+shift+down"` | `nudge-window down` |  |
-| `"mod+shift+left"` | `nudge-window left` |  |
-| `"mod+shift+right"` | `nudge-window right` |  |
+| `"mod+shift+up"` | `move-to-snap up` |  |
+| `"mod+shift+down"` | `move-to-snap down` |  |
+| `"mod+shift+left"` | `move-to-snap left` |  |
+| `"mod+shift+right"` | `move-to-snap right` |  |
 | `"mod+ctrl+up"` | `pan-viewport up` |  |
 | `"mod+ctrl+down"` | `pan-viewport down` |  |
 | `"mod+ctrl+left"` | `pan-viewport left` |  |
@@ -896,8 +896,23 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 **Example: keyboard resize (unbound by default) — both drive the right edge, one pushing it out and one pulling it in, by resize_step px**
 
 ```toml
-"mod+ctrl+shift+right" = "grow-window right"
-"mod+ctrl+shift+left" = "shrink-window right"
+"mod+ctrl+alt+right" = "grow-window right"
+"mod+ctrl+alt+left" = "shrink-window right"
+```
+
+**Example: resize-to-snap (unbound by default) — right/down grow the right/bottom edge to the next snap stop, left/up pull it back to the previous one**
+
+```toml
+"mod+ctrl+shift+up" = "resize-to-snap up"
+"mod+ctrl+shift+down" = "resize-to-snap down"
+"mod+ctrl+shift+left" = "resize-to-snap left"
+"mod+ctrl+shift+right" = "resize-to-snap right"
+```
+
+**Example: nudge-window (unbound by default) — step the focused window by nudge_step px rather than to a snap stop**
+
+```toml
+"mod+alt+shift+right" = "nudge-window right"
 ```
 
 ## `[mouse]`
@@ -912,7 +927,7 @@ When true (default), dragging a window's edge or corner resizes it via the invis
 
 Default: `false`
 
-When true, resizing a window by dragging its edge (SSD or CSD border) propagates to every window connected to it via snap adjacency. Only that drag: the grow-window/shrink-window keybindings and the resize gesture always size the one window. Bind `resize-window-snapped` to a mouse button, gesture, or touch trigger for a cluster-aware drag of your own.
+When true, resizing a window by dragging its edge (SSD or CSD border) propagates to every window connected to it via snap adjacency. Only that drag: the grow-window/shrink-window/resize-to-snap keybindings and the resize gesture always size the one window. Bind `resize-window-snapped` to a mouse button, gesture, or touch trigger for a cluster-aware drag of your own.
 
 ### `decoration_fit_snapped`
 

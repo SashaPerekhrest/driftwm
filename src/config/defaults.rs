@@ -59,28 +59,28 @@ pub(super) fn default_bindings(mod_key: ModKey) -> HashMap<KeyCombo, Action> {
                 modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_Up),
             },
-            Action::NudgeWindow(Direction::Up),
+            Action::MoveToSnap(Direction::Up),
         ),
         (
             KeyCombo {
                 modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_Down),
             },
-            Action::NudgeWindow(Direction::Down),
+            Action::MoveToSnap(Direction::Down),
         ),
         (
             KeyCombo {
                 modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_Left),
             },
-            Action::NudgeWindow(Direction::Left),
+            Action::MoveToSnap(Direction::Left),
         ),
         (
             KeyCombo {
                 modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_Right),
             },
-            Action::NudgeWindow(Direction::Right),
+            Action::MoveToSnap(Direction::Right),
         ),
         (
             KeyCombo {

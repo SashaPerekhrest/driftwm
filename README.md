@@ -108,7 +108,7 @@ canvas action — launching an app, navigating — exits it.
 | `Alt` + 2-finger pinch in/out             | Fit window                    |
 | `Alt` + 3-finger pinch in/out             | Toggle fullscreen             |
 | `Mod` + MMB click / `Mod+F`               | Toggle fullscreen             |
-| `Mod+Shift` + arrow                       | Nudge window (default 20px)   |
+| `Mod+Shift` + arrow                       | Move to the next snap stop    |
 
 </details>
 
