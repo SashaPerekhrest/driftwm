@@ -58,17 +58,17 @@ spots the camera jumps straight to.
 
 <details><summary><b>Navigation bindings</b></summary>
 
-| Input                        | Action                                     |
-| ---------------------------- | ------------------------------------------ |
-| 4-finger swipe               | Jump to nearest window (natural direction) |
-| `Mod+Ctrl` + LMB drag        | Jump to nearest window (natural direction) |
-| `Mod` + arrow                | Jump to nearest window in direction        |
-| `Alt-Tab` / `Alt-Shift-Tab`  | Cycle windows (MRU)                        |
-| 4-finger pinch in / `Mod+W`  | Zoom-to-fit (overview)                     |
-| 4-finger pinch out / `Mod+A` | Home toggle (origin and back)              |
-| 4-finger hold / `Mod+C`      | Center focused window                      |
-| `Mod+1-4`                    | Jump to bookmarked canvas position         |
-| `Mod+Shift+1-4`              | Save the current position as that bookmark |
+| Input                        | Action                                                           |
+| ---------------------------- | ---------------------------------------------------------------- |
+| 4-finger swipe               | Jump to nearest window (natural direction)                       |
+| `Mod+Ctrl` + LMB drag        | Jump to nearest window (natural direction)                       |
+| `Mod` + arrow                | Focus nearest window in direction; pans only if it is off screen |
+| `Alt-Tab` / `Alt-Shift-Tab`  | Cycle windows (MRU)                                              |
+| 4-finger pinch in / `Mod+W`  | Zoom-to-fit (overview)                                           |
+| 4-finger pinch out / `Mod+A` | Home toggle (origin and back)                                    |
+| 4-finger hold / `Mod+C`      | Center focused window                                            |
+| `Mod+1-4`                    | Jump to bookmarked canvas position                               |
+| `Mod+Shift+1-4`              | Save the current position as that bookmark                       |
 
 All 4-finger navigation gestures also work as `Mod` + 3-finger for smaller
 trackpads.

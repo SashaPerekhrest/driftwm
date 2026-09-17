@@ -236,49 +236,49 @@ fn super_c_does_not_conflict_with_close_window() {
     );
 }
 
-// ── Super+Arrow → CenterNearest ─────────────────────────────────────────
+// ── Super+Arrow → FocusNearest ──────────────────────────────────────────
 
 #[test]
-fn super_up_resolves_to_center_nearest_up() {
+fn super_up_resolves_to_focus_nearest_up() {
     let config = Config::default();
     let result = config.lookup(&logo(), Keysym::from(keysyms::KEY_Up));
     assert!(result.is_some(), "Super+Up should be bound");
     assert!(
-        matches!(result.unwrap(), Action::CenterNearest(Direction::Up)),
-        "Super+Up should resolve to CenterNearest(Up)"
+        matches!(result.unwrap(), Action::FocusNearest(Direction::Up)),
+        "Super+Up should resolve to FocusNearest(Up)"
     );
 }
 
 #[test]
-fn super_down_resolves_to_center_nearest_down() {
+fn super_down_resolves_to_focus_nearest_down() {
     let config = Config::default();
     let result = config.lookup(&logo(), Keysym::from(keysyms::KEY_Down));
     assert!(result.is_some(), "Super+Down should be bound");
     assert!(
-        matches!(result.unwrap(), Action::CenterNearest(Direction::Down)),
-        "Super+Down should resolve to CenterNearest(Down)"
+        matches!(result.unwrap(), Action::FocusNearest(Direction::Down)),
+        "Super+Down should resolve to FocusNearest(Down)"
     );
 }
 
 #[test]
-fn super_left_resolves_to_center_nearest_left() {
+fn super_left_resolves_to_focus_nearest_left() {
     let config = Config::default();
     let result = config.lookup(&logo(), Keysym::from(keysyms::KEY_Left));
     assert!(result.is_some(), "Super+Left should be bound");
     assert!(
-        matches!(result.unwrap(), Action::CenterNearest(Direction::Left)),
-        "Super+Left should resolve to CenterNearest(Left)"
+        matches!(result.unwrap(), Action::FocusNearest(Direction::Left)),
+        "Super+Left should resolve to FocusNearest(Left)"
     );
 }
 
 #[test]
-fn super_right_resolves_to_center_nearest_right() {
+fn super_right_resolves_to_focus_nearest_right() {
     let config = Config::default();
     let result = config.lookup(&logo(), Keysym::from(keysyms::KEY_Right));
     assert!(result.is_some(), "Super+Right should be bound");
     assert!(
-        matches!(result.unwrap(), Action::CenterNearest(Direction::Right)),
-        "Super+Right should resolve to CenterNearest(Right)"
+        matches!(result.unwrap(), Action::FocusNearest(Direction::Right)),
+        "Super+Right should resolve to FocusNearest(Right)"
     );
 }
 

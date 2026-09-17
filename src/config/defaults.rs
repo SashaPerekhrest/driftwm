@@ -192,28 +192,28 @@ pub(super) fn default_bindings(mod_key: ModKey) -> HashMap<KeyCombo, Action> {
                 modifiers: m.clone(),
                 sym: Keysym::from(keysyms::KEY_Up),
             },
-            Action::CenterNearest(Direction::Up),
+            Action::FocusNearest(Direction::Up),
         ),
         (
             KeyCombo {
                 modifiers: m.clone(),
                 sym: Keysym::from(keysyms::KEY_Down),
             },
-            Action::CenterNearest(Direction::Down),
+            Action::FocusNearest(Direction::Down),
         ),
         (
             KeyCombo {
                 modifiers: m.clone(),
                 sym: Keysym::from(keysyms::KEY_Left),
             },
-            Action::CenterNearest(Direction::Left),
+            Action::FocusNearest(Direction::Left),
         ),
         (
             KeyCombo {
                 modifiers: m.clone(),
                 sym: Keysym::from(keysyms::KEY_Right),
             },
-            Action::CenterNearest(Direction::Right),
+            Action::FocusNearest(Direction::Right),
         ),
         (
             KeyCombo {

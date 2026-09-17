@@ -6,7 +6,7 @@
 //!
 //! Fixture limitation: the in-process harness has no synthetic keyboard input,
 //! so a real held modifier can't be driven. `held_cycle_step` reproduces the
-//! held-modifier arm (step + cycle-navigating navigate, no commit) to stand in.
+//! held-modifier arm (step + cycle-navigating reveal, no commit) to stand in.
 
 use driftwm::config::Action;
 use smithay::desktop::Window;
@@ -33,7 +33,7 @@ fn cycle_forward(f: &mut Fixture) {
         .execute_action(&Action::CycleWindows { backward: false });
 }
 
-/// One step of a held-modifier cycle: step + a cycle-navigating navigate, with no
+/// One step of a held-modifier cycle: step + a cycle-navigating reveal, with no
 /// commit — exactly the `CycleWindows` arm minus the modifier-gated `end_cycle`.
 /// Stands in for a real held modifier the fixture can't inject.
 fn held_cycle_step(f: &mut Fixture) {

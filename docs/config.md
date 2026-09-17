@@ -43,7 +43,7 @@ An edge or corner puts the window's title bar / content edge snap.outer_gap in f
 
 A window too big to fit on an axis with its two gutters centers on that axis rather than hanging off screen; the other axis still places, so a tall window under "top-left" still goes left.
 
-It applies wherever the camera actually moves to a window — center-window, focus-center, center-nearest, Alt-Tab, click-to-navigate, activation, a newly mapped window, the window focus follows when one closes (see auto_navigate_on_close) and `driftwm msg focus`. Focusing a window that is already fully on screen doesn't pan at all, so this places windows on centering navigations rather than holding one against the edge continuously. Fullscreen, pinned and fit windows lock or fill the viewport and ignore it, as does a filled window returning to the view it was filled in.
+It applies wherever the camera actually moves to a window — center-window, focus-center, center-nearest, focus-nearest, Alt-Tab, click-to-navigate, activation, a newly mapped window, the window focus follows when one closes (see auto_navigate_on_close) and `driftwm msg focus`. The centering actions (center-window, focus-center, center-nearest) always park the window there, even one already fully on screen — center-nearest is how you walk a placement through your windows one step at a time. focus-nearest, Alt-Tab and the reveal paths (click-to-navigate, activation, `msg focus`) don't pan at all for a window that is already fully on screen, so they place a window only when the camera has to move rather than holding one against the edge continuously. Fullscreen, pinned and fit windows lock or fill the viewport and ignore it, as does a filled window returning to the view it was filled in.
 
 Because the spawn point follows it too (see window_placement above), this also shifts where a new window lands on the *canvas* — the position `msg move` reports and the session file stores. Under window_placement = "auto" that only applies to the fallback: a spawn that finds a slot next to the anchor still goes there.
 
@@ -366,7 +366,7 @@ px per pan-viewport action (mod-ctrl-arrow by default)
 
 Default: `[]`
 
-Anchors: canvas points discoverable by center-nearest (4-finger swipe / Mod+Arrow) even when no window is there. Uses Y-up coordinate system. Empty by default.
+Anchors: canvas points discoverable by focus-nearest / center-nearest (Mod+Arrow / 4-finger swipe) even when no window is there. Uses Y-up coordinate system. Empty by default.
 
 **Example: origin + 4 corners**
 
@@ -805,10 +805,10 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+c"` | `center-window` |  |
 | `"mod+x"` | `focus-center` |  |
 | `"mod+a"` | `home-toggle` |  |
-| `"mod+up"` | `center-nearest up` |  |
-| `"mod+down"` | `center-nearest down` |  |
-| `"mod+left"` | `center-nearest left` |  |
-| `"mod+right"` | `center-nearest right` |  |
+| `"mod+up"` | `focus-nearest up` |  |
+| `"mod+down"` | `focus-nearest down` |  |
+| `"mod+left"` | `focus-nearest left` |  |
+| `"mod+right"` | `focus-nearest right` |  |
 | `"mod+shift+up"` | `nudge-window up` |  |
 | `"mod+shift+down"` | `nudge-window down` |  |
 | `"mod+shift+left"` | `nudge-window left` |  |
@@ -856,6 +856,12 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 
 ```toml
 "ctrl+Print" = "spawn driftwm msg screenshot window -o - | wl-copy"
+```
+
+**Example: center-nearest — parks the target on the focus_placement point even when it is already on screen**
+
+```toml
+"mod+alt+shift+right" = "center-nearest right"
 ```
 
 **Example: tap binding — bare modifier chord, fires on release with no key on top**
