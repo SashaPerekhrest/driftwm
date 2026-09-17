@@ -1,4 +1,5 @@
 use smithay::{
+    desktop::Window,
     input::keyboard::Layout,
     utils::{Logical, Point, Size},
     wayland::seat::WaylandFocus,
@@ -6,7 +7,7 @@ use smithay::{
 
 use crate::state::{DriftWm, HomeReturn, NavZoom, StageWindow};
 use driftwm::canvas::{self};
-use driftwm::config::{Action, LayoutSwitch, Modifiers, SendEvents, TrackpadState};
+use driftwm::config::{Action, Direction, LayoutSwitch, Modifiers, SendEvents, TrackpadState};
 use driftwm::window_ext::WindowExt;
 
 /// Use the focused window as the cone-search origin only when it's fully
@@ -14,9 +15,89 @@ use driftwm::window_ext::WindowExt;
 /// (cone can still return the focused window if it's the nearest in that
 /// direction, which is useful for snapping back to a partially-visible
 /// focused window).
-const CENTER_NEAREST_ANCHOR_THRESHOLD: f64 = 1.0;
+const NEAREST_ANCHOR_THRESHOLD: f64 = 1.0;
+
+/// A directional-search hit: a canvas element, or a bare `navigation.anchors`
+/// point.
+#[derive(Clone, PartialEq)]
+enum NavTarget {
+    Window(StageWindow),
+    Anchor(Point<f64, Logical>),
+}
 
 impl DriftWm {
+    /// The cone search behind `center-nearest`: the nearest canvas element or
+    /// `navigation.anchors` point in `dir`, measured from the focused element
+    /// while it is fully in view (or from the fullscreen window the action
+    /// just exited), otherwise from the viewport center.
+    fn nearest_in_direction(
+        &self,
+        dir: &Direction,
+        was_fullscreen: Option<&Window>,
+    ) -> Option<NavTarget> {
+        // Focus intent, not seat focus: a focused stand-in holds no
+        // keyboard focus but anchors the search like any other element.
+        let focused = self.focused_anchor_element().filter(|e| !self.is_pinned(e));
+
+        // Anchor the directional search to the just-exited fullscreen
+        // window (wherever the restored view placed it) — otherwise the
+        // anchor falls back to a corner/offscreen spot and the swipe
+        // finds nothing.
+        let anchor = was_fullscreen
+            .cloned()
+            .map(StageWindow::Client)
+            .or_else(|| {
+                focused.filter(|e| self.window_visible_at_least(e, NEAREST_ANCHOR_THRESHOLD))
+            });
+
+        let (origin, skip) = if let Some(ref elem) = anchor {
+            (self.nav_center(elem), Some(NavTarget::Window(elem.clone())))
+        } else {
+            (self.viewport_center_canvas(), None)
+        };
+
+        // Candidates are every canvas element, stand-ins included, so a
+        // directional swipe can land on one and Enter relaunches it.
+        let windows = self
+            .stage
+            .windows()
+            .filter(|w| self.is_canvas_window(*w))
+            .map(|w| {
+                let closest = self.element_closest_point(origin, w);
+                // A directional search needs a direction vector, and a
+                // point sitting on the origin has none.
+                let point = if closest == origin {
+                    self.nav_center(w)
+                } else {
+                    closest
+                };
+                (NavTarget::Window(w.clone()), point)
+            });
+
+        let anchors = self
+            .config
+            .nav_anchors
+            .iter()
+            .map(|&p| (NavTarget::Anchor(p), p));
+
+        canvas::find_nearest(origin, dir, windows.chain(anchors), skip.as_ref())
+    }
+
+    /// Land the camera on a bare anchor point. Unfocuses so the next
+    /// directional step searches from the viewport center — which is now the
+    /// anchor.
+    fn center_on_anchor(&mut self, p: Point<f64, Logical>) {
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.set_window_focus(None, serial);
+        self.with_output_state(|os| {
+            os.overview_return = None;
+            os.momentum.stop();
+        });
+        let vc = self.usable_center_screen();
+        let zoom = self.zoom();
+        self.set_camera_target(Some(Point::from((p.x - vc.x / zoom, p.y - vc.y / zoom))));
+    }
+
     /// Spawn a command and reveal the cursor briefly so the launched app is
     /// easy to find.
     fn exec_command(&mut self, cmd: &str) {
@@ -181,59 +262,7 @@ impl DriftWm {
                 }
             }
             Action::CenterNearest(dir) => {
-                #[derive(Clone, PartialEq)]
-                enum NavTarget {
-                    Window(StageWindow),
-                    Anchor(Point<f64, smithay::utils::Logical>),
-                }
-
-                // Focus intent, not seat focus: a focused stand-in holds no
-                // keyboard focus but anchors the search like any other element.
-                let focused = self.focused_anchor_element().filter(|e| !self.is_pinned(e));
-
-                // Anchor the directional search to the just-exited fullscreen
-                // window (wherever the restored view placed it) — otherwise the
-                // anchor falls back to a corner/offscreen spot and the swipe
-                // finds nothing.
-                let anchor = was_fullscreen.clone().map(StageWindow::Client).or_else(|| {
-                    focused.filter(|e| {
-                        self.window_visible_at_least(e, CENTER_NEAREST_ANCHOR_THRESHOLD)
-                    })
-                });
-
-                let (origin, skip) = if let Some(ref elem) = anchor {
-                    (self.nav_center(elem), Some(NavTarget::Window(elem.clone())))
-                } else {
-                    (self.viewport_center_canvas(), None)
-                };
-
-                // Candidates are every canvas element, stand-ins included, so a
-                // directional swipe can land on one and Enter relaunches it.
-                let windows = self
-                    .stage
-                    .windows()
-                    .filter(|w| self.is_canvas_window(*w))
-                    .map(|w| {
-                        let closest = self.element_closest_point(origin, w);
-                        // A directional search needs a direction vector, and a
-                        // point sitting on the origin has none.
-                        let point = if closest == origin {
-                            self.nav_center(w)
-                        } else {
-                            closest
-                        };
-                        (NavTarget::Window(w.clone()), point)
-                    });
-
-                let anchors = self
-                    .config
-                    .nav_anchors
-                    .iter()
-                    .map(|&p| (NavTarget::Anchor(p), p));
-
-                let nearest =
-                    canvas::find_nearest(origin, dir, windows.chain(anchors), skip.as_ref());
-                match nearest {
+                match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
                     Some(NavTarget::Window(elem)) => {
                         // No fill-view restore here, unlike every other centering
                         // path: those land at a definite zoom anyway (1.0 when
@@ -244,21 +273,7 @@ impl DriftWm {
                         // inherits the zoom it left behind.
                         self.navigate_to_element(&elem, NavZoom::Keep);
                     }
-                    Some(NavTarget::Anchor(p)) => {
-                        // Unfocus so next CenterNearest searches from viewport center (= this anchor)
-                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                        self.set_window_focus(None, serial);
-                        self.with_output_state(|os| {
-                            os.overview_return = None;
-                            os.momentum.stop();
-                        });
-                        let vc = self.usable_center_screen();
-                        let zoom = self.zoom();
-                        self.set_camera_target(Some(Point::from((
-                            p.x - vc.x / zoom,
-                            p.y - vc.y / zoom,
-                        ))));
-                    }
+                    Some(NavTarget::Anchor(p)) => self.center_on_anchor(p),
                     None => {}
                 }
             }
