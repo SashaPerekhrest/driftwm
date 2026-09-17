@@ -55,94 +55,247 @@ fn try_candidate(best: &mut Option<(f64, f64)>, snap_pos: f64, dist: f64, thresh
     }
 }
 
-/// Find the best snap candidate along one axis.
-///
-/// Three candidate families:
-/// - **Opposite-edge** (dragged right → other left, dragged left → other right)
-///   docks the windows side-by-side with a gap; requires strict perpendicular
-///   overlap (so a window only docks to neighbors it actually visually overlaps).
-/// - **Same-edge** (left↔left, right↔right) aligns parallel edges exactly.
-/// - **Edge-center** snaps the moved window's midpoint to the neighbor's
-///   midpoint along the moved axis (centers align along the perp axis).
-///
-/// Both alignment families fire only when the windows are perpendicular-
-/// *adjacent* within `gap + threshold` (the band where an opposite-edge snap
-/// on the other axis would engage). Alignment is intentionally rejected on
-/// any perp overlap — aligning left edges of two same-height windows would
-/// just Z-stack them.
-///
-/// Returns `Some((snapped_origin, abs_distance))` for the closest candidate
-/// within `threshold`, or `None`.
-pub fn find_snap_candidate(natural_edge_low: f64, p: &SnapParams<'_>) -> Option<(f64, f64)> {
-    let natural_edge_high = natural_edge_low + p.extent;
-    let mut best: Option<(f64, f64)> = None;
+/// Which line of the primary a stop places: its low edge (left or top), its
+/// high edge (right or bottom), or its midpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Line {
+    Low,
+    High,
+    Center,
+}
 
-    for other in p.others {
-        let (other_low, other_high, other_perp_low, other_perp_high) = if p.horizontal {
+/// How a stop relates the primary to the neighbour offering it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Family {
+    /// Facing edges a gap apart: the windows sit side by side.
+    Dock,
+    /// Same-side edges exactly aligned.
+    SameEdge,
+    /// Midpoints aligned along the axis.
+    Center,
+}
+
+/// A coordinate along one axis that a neighbour offers one line of the primary.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stop {
+    pub line: Line,
+    pub family: Family,
+    /// Where the line lands.
+    pub at: f64,
+    /// Where the line meets the neighbour's edge, which is what a drag measures
+    /// its distance from: a dock's contact sits the gap past `at`, an
+    /// alignment's coincides with it.
+    pub contact: f64,
+}
+
+/// The primary's side of a stop enumeration: which axis, the span it covers on
+/// the other axis, and which families are on.
+pub struct StopQuery {
+    pub horizontal: bool,
+    pub perp_low: f64,
+    pub perp_high: f64,
+    pub gap: f64,
+    /// How far off the primary's perpendicular span a neighbour may sit and
+    /// still offer alignments.
+    pub align_band: f64,
+    pub same_edge: bool,
+    pub edge_center: bool,
+}
+
+/// Every stop `others` offer along the query's axis, neighbour by neighbour.
+///
+/// A neighbour whose perpendicular span overlaps the primary's offers the two
+/// docks. One that sits perpendicular-adjacent instead — clear of the primary
+/// but within `align_band` of it — offers the alignments: the same-edge pair
+/// and the centre. Never both from one neighbour: aligning to a window the
+/// primary already overlaps perpendicularly would only z-stack the two.
+pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item = Stop> + 'a {
+    others.iter().flat_map(move |other| {
+        let (other_low, other_high, other_perp_low, other_perp_high) = if q.horizontal {
             (other.x_low, other.x_high, other.y_low, other.y_high)
         } else {
             (other.y_low, other.y_high, other.x_low, other.x_high)
         };
 
-        let perp_overlap = p.perp_high > other_perp_low && other_perp_high > p.perp_low;
-        let alignment_eligible = !perp_overlap
-            && perp_distance(p.perp_low, p.perp_high, other_perp_low, other_perp_high)
-                < p.gap + p.threshold;
-        let same_edge_eligible = p.same_edge && alignment_eligible;
-        let edge_center_eligible = p.edge_center && alignment_eligible;
+        let perp_overlap = q.perp_high > other_perp_low && other_perp_high > q.perp_low;
+        let aligns = !perp_overlap
+            && perp_distance(q.perp_low, q.perp_high, other_perp_low, other_perp_high)
+                < q.align_band;
 
-        if !perp_overlap && !same_edge_eligible && !edge_center_eligible {
-            continue;
-        }
+        let docks = perp_overlap.then_some([
+            Stop {
+                line: Line::High,
+                family: Family::Dock,
+                at: other_low - q.gap,
+                contact: other_low,
+            },
+            Stop {
+                line: Line::Low,
+                family: Family::Dock,
+                at: other_high + q.gap,
+                contact: other_high,
+            },
+        ]);
+        let edges = (aligns && q.same_edge).then_some([
+            Stop {
+                line: Line::Low,
+                family: Family::SameEdge,
+                at: other_low,
+                contact: other_low,
+            },
+            Stop {
+                line: Line::High,
+                family: Family::SameEdge,
+                at: other_high,
+                contact: other_high,
+            },
+        ]);
+        let center = (aligns && q.edge_center).then(|| {
+            let mid = (other_low + other_high) / 2.0;
+            Stop {
+                line: Line::Center,
+                family: Family::Center,
+                at: mid,
+                contact: mid,
+            }
+        });
+        docks
+            .into_iter()
+            .flatten()
+            .chain(edges.into_iter().flatten())
+            .chain(center)
+    })
+}
 
-        if perp_overlap {
-            // Opposite-edge: dragged right edge → other left edge
-            try_candidate(
-                &mut best,
-                other_low - p.gap - p.extent,
-                (natural_edge_high - other_low).abs(),
-                p.threshold,
-            );
+/// How far the primary's origin sits below `line`, so a stop for that line
+/// converts to the origin the whole window lands on.
+fn origin_shift(line: Line, extent: f64) -> f64 {
+    match line {
+        Line::Low => 0.0,
+        Line::High => extent,
+        Line::Center => extent / 2.0,
+    }
+}
 
-            // Opposite-edge: dragged left edge → other right edge
-            try_candidate(
-                &mut best,
-                other_high + p.gap,
-                (natural_edge_low - other_high).abs(),
-                p.threshold,
-            );
-        }
-
-        if same_edge_eligible {
-            // Same-edge: left → left (no gap — edges align exactly)
-            try_candidate(
-                &mut best,
-                other_low,
-                (natural_edge_low - other_low).abs(),
-                p.threshold,
-            );
-
-            // Same-edge: right → right
-            try_candidate(
-                &mut best,
-                other_high - p.extent,
-                (natural_edge_high - other_high).abs(),
-                p.threshold,
-            );
-        }
-
-        if edge_center_eligible {
-            let other_center = (other_low + other_high) / 2.0;
-            try_candidate(
-                &mut best,
-                other_center - p.extent / 2.0,
-                (natural_edge_low + p.extent / 2.0 - other_center).abs(),
-                p.threshold,
-            );
+impl SnapParams<'_> {
+    fn stop_query(&self) -> StopQuery {
+        StopQuery {
+            horizontal: self.horizontal,
+            perp_low: self.perp_low,
+            perp_high: self.perp_high,
+            gap: self.gap,
+            // The band where a dock on the other axis would engage.
+            align_band: self.gap + self.threshold,
+            same_edge: self.same_edge,
+            edge_center: self.edge_center,
         }
     }
+}
 
+/// Find the best snap candidate along one axis: the [`stops`] the neighbours
+/// offer, converted to the origin that puts the primary's line on each, taking
+/// the closest within `threshold`.
+///
+/// Returns `Some((snapped_origin, abs_distance))` for the closest candidate
+/// within `threshold`, or `None`.
+pub fn find_snap_candidate(natural_edge_low: f64, p: &SnapParams<'_>) -> Option<(f64, f64)> {
+    let mut best: Option<(f64, f64)> = None;
+    for stop in stops(p.others, &p.stop_query()) {
+        let shift = origin_shift(stop.line, p.extent);
+        try_candidate(
+            &mut best,
+            stop.at - shift,
+            (natural_edge_low + shift - stop.contact).abs(),
+            p.threshold,
+        );
+    }
     best
+}
+
+/// Half a pixel: a stop this close to a whole-pixel position is the one the
+/// window already sits on, since every placement rounds to a pixel.
+const ON_STOP: f64 = 0.5;
+
+/// The nearest of `candidates` strictly past `from` — toward higher coordinates
+/// when `forward` — ignoring any within [`ON_STOP`] of it, so a settled snap
+/// walks on to the next stop instead of landing on its own again.
+fn nearest_beyond(
+    from: f64,
+    forward: bool,
+    candidates: impl IntoIterator<Item = f64>,
+) -> Option<f64> {
+    candidates
+        .into_iter()
+        .filter(|&c| {
+            if forward {
+                c - from > ON_STOP
+            } else {
+                from - c > ON_STOP
+            }
+        })
+        .reduce(|a, b| if forward { a.min(b) } else { a.max(b) })
+}
+
+/// Where a whole-window move from origin `from` lands when it takes the next
+/// stop in its direction, whatever the distance: every [`stops`] family the
+/// neighbours offer, as the origin that puts the primary's line on it.
+pub fn next_origin(
+    from: f64,
+    forward: bool,
+    extent: f64,
+    others: &[SnapRect],
+    q: &StopQuery,
+) -> Option<f64> {
+    nearest_beyond(
+        from,
+        forward,
+        stops(others, q).map(|s| s.at - origin_shift(s.line, extent)),
+    )
+}
+
+/// The coordinate the primary's `line` grows out to next: the nearest stop a
+/// neighbour offers that line inside `bound`, else `bound` itself — the usable
+/// area's edge, which caps the walk.
+pub fn next_grow_line(
+    edge: f64,
+    line: Line,
+    bound: f64,
+    others: &[SnapRect],
+    q: &StopQuery,
+) -> Option<f64> {
+    let outward = line == Line::High;
+    let lines = stops(others, q)
+        .filter(|s| s.line == line)
+        .map(|s| s.at)
+        .filter(|&at| if outward { at <= bound } else { at >= bound })
+        .chain(std::iter::once(bound));
+    nearest_beyond(edge, outward, lines)
+}
+
+/// The coordinate the primary's `line` pulls back to next: the nearest stop for
+/// it — a neighbour's or `bound` — strictly inside the span the edge closes
+/// against `anchor`, the opposite edge.
+pub fn next_shrink_line(
+    edge: f64,
+    line: Line,
+    anchor: f64,
+    bound: f64,
+    others: &[SnapRect],
+    q: &StopQuery,
+) -> Option<f64> {
+    let outward = line == Line::High;
+    let lines = stops(others, q)
+        .filter(|s| s.line == line)
+        .map(|s| s.at)
+        .chain(std::iter::once(bound))
+        .filter(|&at| {
+            if outward {
+                at - anchor > ON_STOP
+            } else {
+                anchor - at > ON_STOP
+            }
+        });
+    nearest_beyond(edge, !outward, lines)
 }
 
 /// Distance between two intervals `[lo1, hi1]` and `[lo2, hi2]`. Zero when
@@ -176,69 +329,28 @@ pub struct EdgeSnapParams<'a> {
 /// Find the best snap target for a single edge (used during resize).
 ///
 /// Unlike `find_snap_candidate` which snaps a whole window origin, this snaps
-/// one active edge to nearby edges of other windows.
+/// one active edge to the [`stops`] offered that edge alone.
 /// Returns `Some((snapped_edge_pos, distance))`.
 pub fn find_edge_snap(natural_edge: f64, p: &EdgeSnapParams<'_>) -> Option<(f64, f64)> {
+    let q = StopQuery {
+        horizontal: p.horizontal,
+        perp_low: p.perp_low,
+        perp_high: p.perp_high,
+        gap: p.gap,
+        align_band: p.gap + p.threshold,
+        same_edge: p.same_edge,
+        edge_center: false,
+    };
+    let line = if p.high_edge { Line::High } else { Line::Low };
     let mut best: Option<(f64, f64)> = None;
-
-    for other in p.others {
-        let (other_low, other_high, other_perp_low, other_perp_high) = if p.horizontal {
-            (other.x_low, other.x_high, other.y_low, other.y_high)
-        } else {
-            (other.y_low, other.y_high, other.x_low, other.x_high)
-        };
-
-        let perp_overlap = p.perp_high > other_perp_low && other_perp_high > p.perp_low;
-        let same_edge_eligible = p.same_edge
-            && !perp_overlap
-            && perp_distance(p.perp_low, p.perp_high, other_perp_low, other_perp_high)
-                < p.gap + p.threshold;
-
-        if !perp_overlap && !same_edge_eligible {
-            continue;
-        }
-
-        if p.high_edge {
-            // Right/bottom edge: snap to other's near edge with gap (opposite),
-            // and to other's far edge exactly (same-edge alignment).
-            if perp_overlap {
-                try_candidate(
-                    &mut best,
-                    other_low - p.gap,
-                    (natural_edge - other_low).abs(),
-                    p.threshold,
-                );
-            }
-            if same_edge_eligible {
-                try_candidate(
-                    &mut best,
-                    other_high,
-                    (natural_edge - other_high).abs(),
-                    p.threshold,
-                );
-            }
-        } else {
-            // Left/top edge: snap to other's far edge with gap (opposite),
-            // and to other's near edge exactly (same-edge alignment).
-            if perp_overlap {
-                try_candidate(
-                    &mut best,
-                    other_high + p.gap,
-                    (natural_edge - other_high).abs(),
-                    p.threshold,
-                );
-            }
-            if same_edge_eligible {
-                try_candidate(
-                    &mut best,
-                    other_low,
-                    (natural_edge - other_low).abs(),
-                    p.threshold,
-                );
-            }
-        }
+    for stop in stops(p.others, &q).filter(|s| s.line == line) {
+        try_candidate(
+            &mut best,
+            stop.at,
+            (natural_edge - stop.contact).abs(),
+            p.threshold,
+        );
     }
-
     best
 }
 
@@ -478,5 +590,252 @@ pub fn update_edge(
         }
 
         natural_edge
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn rect(x_low: f64, y_low: f64, w: f64, h: f64) -> SnapRect {
+        SnapRect {
+            x_low,
+            x_high: x_low + w,
+            y_low,
+            y_high: y_low + h,
+        }
+    }
+
+    /// A query for a primary spanning `[0, 100]` on the perpendicular axis,
+    /// both alignment families on, at the default gap and band.
+    fn query(horizontal: bool) -> StopQuery {
+        StopQuery {
+            horizontal,
+            perp_low: 0.0,
+            perp_high: 100.0,
+            gap: 12.0,
+            align_band: 36.0,
+            same_edge: true,
+            edge_center: true,
+        }
+    }
+
+    fn lines(stops: impl Iterator<Item = Stop>) -> Vec<(Line, Family, f64)> {
+        stops.map(|s| (s.line, s.family, s.at)).collect()
+    }
+
+    #[test]
+    fn a_perpendicular_overlap_offers_the_two_docks_and_nothing_else() {
+        let others = [rect(500.0, 50.0, 200.0, 100.0)];
+        assert_eq!(
+            lines(stops(&others, &query(true))),
+            vec![
+                (Line::High, Family::Dock, 488.0),
+                (Line::Low, Family::Dock, 712.0)
+            ]
+        );
+        let contacts: Vec<f64> = stops(&others, &query(true)).map(|s| s.contact).collect();
+        assert_eq!(contacts, vec![500.0, 700.0], "a dock measures edge to edge");
+    }
+
+    #[test]
+    fn a_perpendicular_adjacent_neighbour_offers_the_three_alignments() {
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        assert_eq!(
+            lines(stops(&others, &query(true))),
+            vec![
+                (Line::Low, Family::SameEdge, 100.0),
+                (Line::High, Family::SameEdge, 400.0),
+                (Line::Center, Family::Center, 250.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn alignments_switch_off_with_their_flags() {
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        let neither = StopQuery {
+            same_edge: false,
+            edge_center: false,
+            ..query(true)
+        };
+        assert_eq!(stops(&others, &neither).count(), 0);
+        let edges_only = StopQuery {
+            edge_center: false,
+            ..query(true)
+        };
+        assert_eq!(stops(&others, &edges_only).count(), 2);
+    }
+
+    #[test]
+    fn a_neighbour_at_the_band_offers_nothing() {
+        let others = [rect(100.0, 136.0, 300.0, 100.0)];
+        assert_eq!(stops(&others, &query(true)).count(), 0);
+    }
+
+    #[test]
+    fn the_vertical_axis_reads_the_rect_transposed() {
+        let others = [rect(50.0, 500.0, 100.0, 200.0)];
+        assert_eq!(
+            lines(stops(&others, &query(false))),
+            vec![
+                (Line::High, Family::Dock, 488.0),
+                (Line::Low, Family::Dock, 712.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_move_walks_to_the_nearest_stop_past_its_origin() {
+        // Extent 200: the high dock at 488 puts the origin at 288, the low
+        // dock at 712 leaves it there.
+        let others = [rect(500.0, 50.0, 200.0, 100.0)];
+        let q = query(true);
+        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(288.0));
+        assert_eq!(next_origin(288.0, true, 200.0, &others, &q), Some(712.0));
+        assert_eq!(next_origin(712.0, true, 200.0, &others, &q), None);
+        assert_eq!(next_origin(712.0, false, 200.0, &others, &q), Some(288.0));
+        assert_eq!(next_origin(288.0, false, 200.0, &others, &q), None);
+    }
+
+    #[test]
+    fn a_stop_the_window_rounded_onto_does_not_count() {
+        // A 12.5 gap lands the dock at 287.5, which a placement rounds to 288;
+        // from 288 that stop is neither ahead nor behind.
+        let others = [rect(500.0, 50.0, 200.0, 100.0)];
+        let q = StopQuery {
+            gap: 12.5,
+            ..query(true)
+        };
+        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(287.5));
+        assert_eq!(next_origin(288.0, true, 200.0, &others, &q), Some(712.5));
+        assert_eq!(next_origin(288.0, false, 200.0, &others, &q), None);
+    }
+
+    #[test]
+    fn a_move_takes_alignments_from_an_adjacent_neighbour() {
+        // Left edges at 100, centres at 150, right edges at 200.
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        let q = query(true);
+        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(100.0));
+        assert_eq!(next_origin(100.0, true, 200.0, &others, &q), Some(150.0));
+        assert_eq!(next_origin(150.0, true, 200.0, &others, &q), Some(200.0));
+        assert_eq!(next_origin(200.0, true, 200.0, &others, &q), None);
+    }
+
+    #[test]
+    fn a_move_along_y_walks_the_transposed_stops() {
+        let others = [rect(50.0, 500.0, 100.0, 200.0)];
+        assert_eq!(
+            next_origin(0.0, true, 100.0, &others, &query(false)),
+            Some(388.0)
+        );
+    }
+
+    #[test]
+    fn a_grow_walks_neighbour_lines_then_the_bound() {
+        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+        let q = query(true);
+        assert_eq!(
+            next_grow_line(400.0, Line::High, 1000.0, &others, &q),
+            Some(588.0)
+        );
+        assert_eq!(
+            next_grow_line(588.0, Line::High, 1000.0, &others, &q),
+            Some(1000.0)
+        );
+        assert_eq!(
+            next_grow_line(1000.0, Line::High, 1000.0, &others, &q),
+            None
+        );
+    }
+
+    #[test]
+    fn a_grow_ignores_a_neighbour_line_past_the_bound() {
+        let others = [rect(1100.0, 50.0, 200.0, 100.0)];
+        assert_eq!(
+            next_grow_line(400.0, Line::High, 1000.0, &others, &query(true)),
+            Some(1000.0)
+        );
+    }
+
+    #[test]
+    fn a_grow_with_no_neighbour_reaches_the_bound() {
+        assert_eq!(
+            next_grow_line(400.0, Line::High, 1000.0, &[], &query(true)),
+            Some(1000.0)
+        );
+    }
+
+    #[test]
+    fn a_shrink_walks_back_through_the_lines_inside_the_span() {
+        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+        let q = query(true);
+        assert_eq!(
+            next_shrink_line(1000.0, Line::High, 0.0, 1000.0, &others, &q),
+            Some(588.0)
+        );
+        assert_eq!(
+            next_shrink_line(588.0, Line::High, 0.0, 1000.0, &others, &q),
+            None
+        );
+    }
+
+    #[test]
+    fn a_shrink_past_the_bound_pulls_back_to_it_first() {
+        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+        assert_eq!(
+            next_shrink_line(1200.0, Line::High, 0.0, 1000.0, &others, &query(true)),
+            Some(1000.0)
+        );
+    }
+
+    #[test]
+    fn a_shrink_never_closes_the_span_onto_its_anchor() {
+        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+        assert_eq!(
+            next_shrink_line(1000.0, Line::High, 588.0, 1000.0, &others, &query(true)),
+            None
+        );
+    }
+
+    fn any_rect() -> impl Strategy<Value = SnapRect> {
+        (
+            -1000.0..1000.0f64,
+            -1000.0..1000.0f64,
+            20.0..600.0f64,
+            20.0..600.0f64,
+        )
+            .prop_map(|(x, y, w, h)| rect(x, y, w, h))
+    }
+
+    proptest! {
+        /// A walk lands on an enumerated stop strictly beyond its origin and
+        /// skips none on the way.
+        #[test]
+        fn next_origin_is_the_nearest_enumerated_stop_beyond(
+            from in -1000.0..1000.0f64,
+            forward in any::<bool>(),
+            extent in 20.0..600.0f64,
+            others in prop::collection::vec(any_rect(), 0..6),
+        ) {
+            let q = query(true);
+            let origins: Vec<f64> = stops(&others, &q)
+                .map(|s| s.at - origin_shift(s.line, extent))
+                .collect();
+            let beyond = |o: f64| if forward { o - from > ON_STOP } else { from - o > ON_STOP };
+            match next_origin(from, forward, extent, &others, &q) {
+                Some(o) => {
+                    prop_assert!(beyond(o));
+                    prop_assert!(origins.contains(&o));
+                    let none_skipped = origins
+                        .iter()
+                        .all(|&c| !beyond(c) || if forward { c >= o } else { c <= o });
+                    prop_assert!(none_skipped);
+                }
+                None => prop_assert!(origins.iter().all(|&c| !beyond(c))),
+            }
+        }
     }
 }
