@@ -895,7 +895,7 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 
 Default: `true`
 
-When true (default), dragging a window's edge or corner resizes it via the invisible resize border (SSD frame or CSD margin). Set false to make that border inert — resize only through explicit bindings (e.g. alt+right) or gestures. The band stays part of the window either way: pointer focus and on-window bindings still apply over it, so it never reads as empty canvas.
+When true (default), dragging a window's edge or corner resizes it via the invisible resize border (SSD frame or CSD margin). Set false to make that border inert — resize only through explicit bindings (e.g. alt+right) or gestures. The band stays part of the window either way: on-window bindings still apply over it, so it never reads as empty canvas.
 
 ### `decoration_resize_snapped`
 

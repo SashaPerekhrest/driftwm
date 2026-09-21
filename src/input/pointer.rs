@@ -47,7 +47,8 @@ impl DriftWm {
             let screen_pos = canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
             self.pinned_window_under(screen_pos, pos).is_some()
                 || !matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
-                || (!self.config.resize_on_border && self.pinned_resize_margin_under(screen_pos))
+                || (!self.config.resize_on_border
+                    && self.pinned_resize_margin_under(screen_pos).is_some())
         };
         // SSD chrome and the CSD resize margin sit outside the surface bbox, so
         // `element_under` misses them; count them as OnWindow so on-window bindings
@@ -119,6 +120,11 @@ impl DriftWm {
             match self.pinned_decoration_under(screen_pos) {
                 PinnedChrome::Hit(..) => return None,
                 PinnedChrome::Covered => return self.pinned_element_under(screen_pos),
+                // An inert margin is chrome too, and the canvas walk below
+                // would answer for the window drawn behind the pin.
+                PinnedChrome::Miss if self.pinned_resize_margin_under(screen_pos).is_some() => {
+                    return None;
+                }
                 PinnedChrome::Miss => {}
             }
         }
@@ -1164,10 +1170,24 @@ impl DriftWm {
             return true;
         }
 
-        let Some((focus, _)) = self.pinned_window_under(screen_pos, pos) else {
-            return false;
+        // Any press the bare-left chrome arm above did not consume is still the
+        // pin's over its chrome or resize margin: a bound action acts on it, an
+        // unbound press focuses it. Neither band gives pointer focus, so the
+        // forward below reaches no client, but it still installs the implicit
+        // grab that keeps focus off a client until release.
+        let pinned_window = match self.pinned_window_under(screen_pos, pos) {
+            Some((focus, _)) => self.window_for_surface(&focus.0),
+            None => {
+                let over_chrome = match self.pinned_decoration_under(screen_pos) {
+                    PinnedChrome::Hit(window, _) => Some(window),
+                    _ => self.pinned_resize_margin_under(screen_pos),
+                };
+                let Some(window) = over_chrome else {
+                    return false;
+                };
+                Some(window)
+            }
         };
-        let pinned_window = self.window_for_surface(&focus.0);
         if let Some(action) = binding
             && let Some(ref window) = pinned_window
             && !window.is_widget()

@@ -24,9 +24,10 @@
 //! `decoration_under`, which skips pins and would answer for a canvas window
 //! drawn behind the one actually there.
 
-use driftwm::canvas::{CanvasPos, ScreenPos, canvas_to_screen, screen_to_canvas};
-use driftwm::config::{BTN_LEFT, BindingContext};
+use driftwm::canvas::{CanvasPos, canvas_to_screen};
+use driftwm::config::{BTN_LEFT, BTN_RIGHT, BindingContext};
 use smithay::desktop::Window;
+use smithay::input::keyboard::ModifiersState;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
@@ -42,8 +43,8 @@ use super::input_backend::{
 };
 use super::popups::grow_popup;
 use super::{
-    Fixture, config, give_ssd, is_activated, map_popup, map_window, server_surface,
-    window_by_app_id,
+    Fixture, adopt_last_configure, config, give_ssd, is_activated, map_popup, map_window,
+    server_surface, to_canvas, window_by_app_id,
 };
 
 /// Every window here is 400x300 so a rect test needs only its origin.
@@ -104,11 +105,6 @@ fn in_rect(origin: Point<i32, Logical>, p: Point<f64, Logical>) -> bool {
 fn to_screen(f: &mut Fixture, canvas: Point<f64, Logical>) -> Point<f64, Logical> {
     let (camera, zoom) = (f.state().camera(), f.state().zoom());
     canvas_to_screen(CanvasPos(canvas), camera, zoom).0
-}
-
-fn to_canvas(f: &mut Fixture, screen: Point<f64, Logical>) -> Point<f64, Logical> {
-    let (camera, zoom) = (f.state().camera(), f.state().zoom());
-    screen_to_canvas(ScreenPos(screen), camera, zoom).0
 }
 
 /// A pinned window on a 1920x1080 output, then zoom 2 without a pan. Returns
@@ -537,6 +533,120 @@ fn a_click_on_a_pinned_window_as_drawn_targets_it() {
     assert!(!is_activated(&beneath));
 }
 
+/// With `resize_on_border` off the margin around a pinned window is inert
+/// chrome rather than a live border, but it still belongs to the pin — a click
+/// there must not fall through to the canvas window drawn behind the pin.
+#[test]
+fn a_click_in_a_pinned_windows_inert_margin_targets_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_RULE_NO_BORDER_RESIZE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert!(
+        f.state()
+            .pointer_focus_under(margin_screen, margin_canvas)
+            .is_none(),
+        "precondition: the inert margin is chrome, so it yields no client pointer focus"
+    );
+    assert_eq!(
+        f.state().pointer_context(margin_canvas),
+        BindingContext::OnWindow,
+        "precondition: the margin still belongs to the pin"
+    );
+
+    // Behind the pin's margin: the only thing the canvas walk can find there.
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((margin_canvas.x as i32 - 80, margin_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, margin_canvas),
+        "precondition: the canvas window covers the click point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the click's"
+    );
+
+    click(&mut f, &FakeDevice::mouse(), margin_canvas, BTN_LEFT);
+    f.double_roundtrip(id);
+
+    assert!(
+        is_activated(&pin),
+        "a click in the pin's own inert margin belongs to the pin"
+    );
+    assert!(!is_activated(&beneath));
+}
+
+/// A press other than a bare left one on a pin's live border starts no resize,
+/// but the border is still the pin's — the press must not fall through to the
+/// canvas window drawn behind the pin either.
+#[test]
+fn a_right_press_on_a_pinned_windows_border_targets_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(margin_screen),
+            PinnedChrome::Hit(_, DecorationHit::ResizeBorder(_))
+        ),
+        "precondition: the probe point must land on the pin's live resize border"
+    );
+    assert!(
+        f.state()
+            .config
+            .mouse_button_lookup_ctx(
+                &ModifiersState::default(),
+                BTN_RIGHT,
+                BindingContext::OnWindow
+            )
+            .is_none(),
+        "precondition: no default binding claims a bare right press on-window, \
+         or this scenario would be exercising that binding instead"
+    );
+
+    // Behind the pin's border: the only thing the canvas walk can find there.
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((margin_canvas.x as i32 - 80, margin_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, margin_canvas),
+        "precondition: the canvas window covers the click point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the click's"
+    );
+
+    click(&mut f, &FakeDevice::mouse(), margin_canvas, BTN_RIGHT);
+    f.double_roundtrip(id);
+
+    assert!(
+        is_activated(&pin),
+        "a right press on the pin's own border belongs to the pin"
+    );
+    assert!(!is_activated(&beneath));
+}
+
 /// A tap in the phantom band lands on empty canvas, so it must leave focus
 /// alone — the pin is nowhere near the finger.
 #[test]
@@ -887,5 +997,45 @@ fn pinned_bar_right_pad_strip_is_chrome() {
             PinnedChrome::Hit(_, DecorationHit::TitleBar)
         ),
         "the right-pad strip of a pinned SSD window's bar is chrome, not a hole"
+    );
+}
+
+/// A fullscreen window covers a pin on its output entirely: the resize margin
+/// around the pin must yield to it exactly as the pin's content and chrome do.
+#[test]
+fn a_pins_resize_margin_does_not_punch_through_a_fullscreen_window() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    let output = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let fs_surface = map_window(&mut f, id, "fs", (400, 300));
+    let fs = window_by_app_id(&mut f, "fs").unwrap();
+    f.state().enter_fullscreen(&fs, Some(output));
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &fs_surface);
+
+    let content_screen = pt(site.x as f64 + 200.0, site.y as f64 + 150.0);
+    let content_canvas = to_canvas(&mut f, content_screen);
+    assert_eq!(
+        f.state()
+            .pointer_focus_under(content_screen, content_canvas)
+            .map(|(t, _)| t.0),
+        Some(server_surface(&fs)),
+        "precondition: the fullscreen window's surface must cover the pin, \
+         or this scenario proves nothing"
+    );
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert_eq!(
+        f.state()
+            .pointer_focus_under(margin_screen, margin_canvas)
+            .map(|(t, _)| t.0),
+        Some(server_surface(&fs)),
+        "a pin's resize margin must not punch a hole through a fullscreen \
+         window covering it"
     );
 }

@@ -5,10 +5,12 @@
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
 
+use crate::decorations::DecorationHit;
+use crate::input::PinnedChrome;
 use crate::state::{FocusTarget, StageWindow};
 
 use super::{
-    Fixture, config, give_ssd, is_activated, keyboard_focus, map_window, server_surface,
+    Fixture, config, give_ssd, is_activated, keyboard_focus, map_window, server_surface, to_canvas,
     window_by_app_id,
 };
 
@@ -425,6 +427,75 @@ size = [400, 300]
         "hovering the pin's phantom rect must reach the window really drawn there"
     );
     assert!(!is_activated(&pin));
+}
+
+/// Hovering a pin's title bar focuses the pin: the bar is chrome, so it yields
+/// no client pointer focus, and the canvas walk (which skips pins) would
+/// otherwise land on whatever is drawn behind the pin.
+#[test]
+fn hover_on_a_pinned_windows_title_bar_focuses_the_pin_not_the_window_beneath() {
+    let mut f = Fixture::with_config(config(
+        r#"
+focus_follows_mouse = true
+[decorations]
+default_mode = "server"
+
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    give_ssd(&mut f, &pin);
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let bar = f.state().config.decorations.title_bar_height as f64;
+    let screen = Point::from((site.x as f64 + 200.0, site.y as f64 - bar / 2.0));
+    let canvas = to_canvas(&mut f, screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(screen),
+            PinnedChrome::Hit(_, DecorationHit::TitleBar)
+        ),
+        "precondition: the probe point must land on the pin's title bar"
+    );
+    assert!(
+        f.state().pointer_focus_under(screen, canvas).is_none(),
+        "precondition: chrome yields no client pointer focus"
+    );
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((canvas.x as i32 - 80, canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        canvas.x >= origin.x as f64
+            && canvas.x < origin.x as f64 + 400.0
+            && canvas.y >= origin.y as f64
+            && canvas.y < origin.y as f64 + 300.0,
+        "precondition: the canvas window must cover the hover point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused"
+    );
+
+    f.state().warp_pointer(canvas);
+    f.state().maybe_hover_focus(canvas);
+
+    assert!(
+        is_activated(&pin),
+        "hovering the pin's title bar must focus the pin drawn under the pointer"
+    );
+    assert!(!is_activated(&beneath));
 }
 
 /// Hovering outside any window edge (in the 8px external resize margin) yields

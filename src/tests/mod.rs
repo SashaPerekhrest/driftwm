@@ -442,6 +442,12 @@ fn server_surface(window: &Window) -> WlSurface {
     window.wl_surface().unwrap().into_owned()
 }
 
+/// Canvas-space point that maps to output-relative screen position `screen`.
+fn to_canvas(f: &mut Fixture, screen: Point<f64, Logical>) -> Point<f64, Logical> {
+    let (camera, zoom) = (f.state().camera(), f.state().zoom());
+    driftwm::canvas::screen_to_canvas(driftwm::canvas::ScreenPos(screen), camera, zoom).0
+}
+
 /// Register an SSD title bar for `window`, exactly as the compositor does on the
 /// first sized commit under `default_mode = "server"`. The headless test client
 /// never binds xdg-decoration, so that commit path doesn't run — do it directly

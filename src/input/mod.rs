@@ -566,9 +566,8 @@ impl DriftWm {
             self.pointer_over_screen_space = true;
             return Some(hit);
         }
-        if self.stage.has_pinned()
-            && (!matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
-                || self.pinned_resize_margin_under(screen_pos))
+        if !matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
+            || self.pinned_resize_margin_under(screen_pos).is_some()
         {
             self.pointer_over_layer = false;
             self.pointer_over_screen_space = true;
@@ -682,6 +681,16 @@ impl DriftWm {
             let Some(window) = self.window_for_surface(&focus.0) else {
                 return;
             };
+            self.hover_focus_window(window);
+            return;
+        }
+        // Chrome gives no pointer focus, so `pinned_window_under` misses it,
+        // but the bar and close button are still the pin's for hover. Its resize
+        // band is rejected like a canvas window's below and falls through to the
+        // canvas walk only — a lower pin under the band is not probed.
+        if let PinnedChrome::Hit(window, hit) = self.pinned_decoration_under(screen_pos)
+            && !matches!(hit, DecorationHit::ResizeBorder(_))
+        {
             self.hover_focus_window(window);
             return;
         }
@@ -1653,13 +1662,14 @@ impl DriftWm {
 
     /// The pick target under a canvas position: a suspended stand-in occluding
     /// the point, or a non-widget canvas window taken as one uniform target —
-    /// its content, its SSD chrome (title bar, close button, resize borders) and
-    /// its CSD resize margin all count, because `surface_under` reports every one
-    /// of those bands. Shared by `try_pick_button`, the hover affordance, and the
-    /// scroll fallback so the three agree on exactly what a click below the
-    /// threshold hits and where the affordance appears. Pinned, fullscreen and
-    /// widget windows are excluded (`surface_under(_, Some(false))` skips widgets
-    /// and off-output fullscreen; `is_canvas_window` rejects the rest).
+    /// its content, its SSD title bar and close button, and while
+    /// `resize_on_border` is on its resize borders and CSD margin all count,
+    /// because `draggable_element_under` accepts every band
+    /// `decoration_hit_for` reports. Shared by `try_pick_button`, the hover
+    /// affordance, and the scroll fallback so the three agree on exactly what a
+    /// click below the threshold hits and where the affordance appears. Pinned,
+    /// fullscreen and widget windows are excluded (the walk skips pins and
+    /// off-output fullscreen; `is_canvas_window` rejects the rest).
     pub(crate) fn pick_target_under(
         &self,
         canvas_pos: Point<f64, smithay::utils::Logical>,
@@ -1799,28 +1809,34 @@ impl DriftWm {
         None
     }
 
-    /// Find the pinned window (content or SSD decoration) under a screen-space
-    /// pointer position. Pinned windows render at scale 1.0 at their fixed
-    /// `screen_pos`, so hit-testing is done entirely in output-relative screen
-    /// coords. The returned focus location is canvas-adjusted exactly like
-    /// `layer_surface_under` so smithay's `pointer_canvas − focus_loc` yields
-    /// correct surface-local coordinates. Only windows on the active output are
-    /// considered — the pointer is always on the active output, and `screen_pos`
-    /// is relative to it.
+    /// The output pinned-window hit-tests run against, or `None` when nothing
+    /// pinned can be hit: no pin exists, no output is active, or a fullscreen
+    /// window covers the pins on it (like the top layer).
+    fn pinned_hit_output(&self) -> Option<String> {
+        if !self.stage.has_pinned() {
+            return None;
+        }
+        let output = self.active_output()?;
+        if self.is_output_fullscreen(&output) {
+            return None;
+        }
+        Some(output.name())
+    }
+
+    /// Find the pinned window content under a screen-space pointer position;
+    /// its chrome answers `None` and stops the walk. Pinned windows render at
+    /// scale 1.0 at their fixed `screen_pos`, so hit-testing is done entirely in
+    /// output-relative screen coords. The returned focus location is
+    /// canvas-adjusted exactly like `layer_surface_under` so smithay's
+    /// `pointer_canvas − focus_loc` yields correct surface-local coordinates.
+    /// Only windows on the active output are considered — the pointer is always
+    /// on the active output, and `screen_pos` is relative to it.
     pub(crate) fn pinned_window_under(
         &self,
         screen_pos: Point<f64, smithay::utils::Logical>,
         canvas_pos: Point<f64, smithay::utils::Logical>,
     ) -> Option<(FocusTarget, Point<f64, smithay::utils::Logical>)> {
-        if !self.stage.has_pinned() {
-            return None;
-        }
-        let output = self.active_output()?;
-        // Fullscreen covers pinned windows on that output (like the top layer).
-        if self.is_output_fullscreen(&output) {
-            return None;
-        }
-        let output_name = output.name();
+        let output_name = self.pinned_hit_output()?;
         let bar_height = self.config.decorations.title_bar_height;
         let border_width = driftwm::config::DecorationConfig::RESIZE_BORDER_WIDTH;
 
@@ -1905,17 +1921,9 @@ impl DriftWm {
         screen_pos: Point<f64, smithay::utils::Logical>,
     ) -> PinnedChrome {
         use crate::decorations::DecorationHit;
-        if !self.stage.has_pinned() {
-            return PinnedChrome::Miss;
-        }
-        let Some(output) = self.active_output() else {
+        let Some(output_name) = self.pinned_hit_output() else {
             return PinnedChrome::Miss;
         };
-        // Fullscreen covers pinned windows on that output (like the top layer).
-        if self.is_output_fullscreen(&output) {
-            return PinnedChrome::Miss;
-        }
-        let output_name = output.name();
         let bar_height = self.config.decorations.title_bar_height;
         let border_width = driftwm::config::DecorationConfig::RESIZE_BORDER_WIDTH;
 
@@ -2334,27 +2342,27 @@ impl DriftWm {
         })
     }
 
-    /// Whether `screen_pos` lands in the resize margin of any screen-pinned window.
-    pub(crate) fn pinned_resize_margin_under(&self, screen_pos: Point<f64, Logical>) -> bool {
-        let Some(output) = self.active_output() else {
-            return false;
-        };
-        let output_name = output.name();
-        for (window, site) in self.stage.pinned_windows() {
-            let Some(window) = window.client() else {
-                continue;
-            };
-            if site.output != output_name {
-                continue;
-            }
-            if self
-                .resize_margin_hit_for(window, site.screen_pos, screen_pos)
-                .is_some()
-            {
-                return true;
-            }
-        }
-        false
+    /// The screen-pinned window whose resize margin covers `screen_pos`,
+    /// topmost first. Ungated on `resize_on_border` like `resize_margin_under`:
+    /// the band is the pin's whether or not it can be dragged.
+    pub(crate) fn pinned_resize_margin_under(
+        &self,
+        screen_pos: Point<f64, Logical>,
+    ) -> Option<Window> {
+        let output_name = self.pinned_hit_output()?;
+        self.stage
+            .windows()
+            .rev()
+            .filter_map(|w| w.client())
+            .find(|&window| {
+                self.stage.pin_of(window).is_some_and(|p| {
+                    p.output == output_name
+                        && self
+                            .resize_margin_hit_for(window, p.screen_pos, screen_pos)
+                            .is_some()
+                })
+            })
+            .cloned()
     }
 
     /// Which region of a suspended window's frame `pos` lands in, or `None` if

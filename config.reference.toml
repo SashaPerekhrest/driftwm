@@ -510,8 +510,8 @@
 # # When true (default), dragging a window's edge or corner resizes it via the
 # # invisible resize border (SSD frame or CSD margin). Set false to make that
 # # border inert — resize only through explicit bindings (e.g. alt+right) or
-# # gestures. The band stays part of the window either way: pointer focus and
-# # on-window bindings still apply over it, so it never reads as empty canvas.
+# # gestures. The band stays part of the window either way: on-window bindings
+# # still apply over it, so it never reads as empty canvas.
 # resize_on_border = true
 
 # # When true, resizing a window by dragging its edge (SSD or CSD border)
