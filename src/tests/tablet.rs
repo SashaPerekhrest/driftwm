@@ -1116,3 +1116,40 @@ fn proximity_out_keeps_a_pointer_only_clients_cursor() {
         "the pointer-only client's cursor must survive the pen leaving proximity"
     );
 }
+
+/// A mouse motion puts the client back on `wl_pointer`, but the pen's next tip
+/// still belongs to tablet-v2 alone. The tip carries no motion to re-assert
+/// pen ownership, so the tip itself must, or the emulated left button reaches
+/// the client beside the tablet `down` and a drawing app restarts its stroke.
+#[test]
+fn a_tip_after_a_mouse_motion_stays_off_wl_pointer() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    pointer_to(&mut f, &FakeDevice::mouse(), at + Point::from((10.0, 0.0)));
+    f.double_roundtrip(id);
+    assert!(
+        pointer_focus(&mut f).is_some(),
+        "precondition: the mouse put the client back on wl_pointer"
+    );
+    f.client(id).state.pointer_buttons.clear();
+    f.client(id).drain_tablet_tool_events();
+
+    pen_tip_down(&mut f, &device);
+    pen_tip_up(&mut f, &device);
+    f.double_roundtrip(id);
+
+    let tablet = f.client(id).drain_tablet_tool_events();
+    assert!(
+        tablet.contains(&TabletToolEvent::Down),
+        "the tip must still reach the client on tablet-v2: {tablet:?}"
+    );
+    let buttons = &f.client(id).state.pointer_buttons;
+    assert!(
+        buttons.is_empty(),
+        "the tip must not also arrive as an emulated wl_pointer button: {buttons:?}"
+    );
+}

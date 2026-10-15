@@ -211,6 +211,10 @@ impl DriftWm {
 
     pub fn on_tablet_tool_tip<I: InputBackend>(&mut self, event: I::TabletToolTipEvent) {
         let tool = self.seat.tablet_seat().get_tool(&event.tool());
+        // A tip carries no motion, so after a mouse moved the pointer the pen
+        // has to reclaim it here, or the emulated press below reaches a
+        // client that already has the tip on tablet-v2.
+        self.pointer_pen = Some(event.tool());
 
         let serial = SERIAL_COUNTER.next_serial();
         let time = event.time_msec();
