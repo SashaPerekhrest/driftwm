@@ -43,7 +43,9 @@ An edge or corner puts the window's title bar / content edge snap.outer_gap in f
 
 A window too big to fit on an axis with its two gutters centers on that axis rather than hanging off screen; the other axis still places, so a tall window under "top-left" still goes left.
 
-It applies wherever the camera actually moves to a window — center-window, focus-center, center-nearest, focus-nearest, Alt-Tab, click-to-navigate, activation, a newly mapped window, the window focus follows when one closes (see auto_navigate_on_close) and `driftwm msg focus`. The centering actions (center-window, focus-center, center-nearest) always park the window there, even one already fully on screen — center-nearest is how you walk a placement through your windows one step at a time. focus-nearest, Alt-Tab and the reveal paths (click-to-navigate, activation, `msg focus`) don't pan at all for a window that is already fully on screen, so they place a window only when the camera has to move rather than holding one against the edge continuously. Fullscreen, pinned and fit windows lock or fill the viewport and ignore it, as does a filled window returning to the view it was filled in.
+It applies to the centering actions and wherever the camera jumps to a window — center-window, focus-center, center-nearest, Alt-Tab, click-to-navigate, activation, a newly mapped window, the window focus follows when one closes (see auto_navigate_on_close) and `driftwm msg focus`. The centering actions (center-window, focus-center, center-nearest) always park the window there, even one already fully on screen — center-nearest is how you walk a placement through your windows one step at a time. Alt-Tab, click-to-navigate, activation, focus following a close and `msg focus` don't pan at all for a window that is already fully on screen, so they place a window only when the camera has to move rather than holding one against the edge continuously. Fullscreen, pinned and fit windows lock or fill the viewport and ignore it, as does a filled window returning to the view it was filled in.
+
+focus-nearest (Mod+Arrow by default) walks rather than jumps, so it doesn't land here: it scrolls a clipped window just far enough to show it whole, snap.outer_gap in from the edge it hung past, and centers only on an axis where the window doesn't fit.
 
 Because the spawn point follows it too (see window_placement above), this also shifts where a new window lands on the *canvas* — the position `msg move` reports and the session file stores. Under window_placement = "auto" that only applies to the fallback: a spawn that finds a slot next to the anchor still goes there.
 
@@ -491,7 +493,7 @@ spacing kept between windows, in canvas px — snapping, auto placement, cluster
 
 Default: `0.0`
 
-inset from the usable area's edge to a window's title bar or content edge (border outside), in canvas px — fit-window, fill-window and focus_placement measure it; 0 is edge to edge
+inset from the usable area's edge to a window's title bar or content edge (border outside), in canvas px — fit-window, fill-window, focus_placement and focus-nearest measure it; 0 is edge to edge
 
 ### `distance`
 
@@ -764,7 +766,7 @@ Actions:
 - `center-window` — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 - `focus-center` — focus the window under the pointer and bring it there too + reset zoom; same fill exception
 - `center-nearest <dir>` — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
-- `focus-nearest <dir>` — focus the nearest window in direction; the camera follows only if it isn't fully on screen (then as center-nearest), a navigation.anchors target still centers
+- `focus-nearest <dir>` — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, a navigation.anchors target still centers
 - `cycle-windows forward` — Alt-Tab style window cycling
 - `cycle-windows backward` — reverse cycle
 - `home-toggle` — toggle between current position and origin
@@ -861,7 +863,7 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 **Example: center-nearest — parks the target on the focus_placement point even when it is already on screen**
 
 ```toml
-"mod+alt+shift+right" = "center-nearest right"
+"mod+alt+shift+up" = "center-nearest up"
 ```
 
 **Example: tap binding — bare modifier chord, fires on release with no key on top**
