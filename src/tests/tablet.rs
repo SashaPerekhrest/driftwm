@@ -1397,3 +1397,53 @@ fn a_tablet_client_cannot_turn_a_bound_pen_drag_into_a_drag_and_drop() {
         "the pan the binding started carries on instead of a drag"
     );
 }
+
+/// A tip with no pen motion since the mouse moved presses where the mouse
+/// left the pointer, on whatever client is there, while the tool's `down`
+/// goes to the client under the pen. That press must not carry the tip's
+/// serial, or the pen's client could cite it to turn the other client's click
+/// into a drag of its own.
+#[test]
+fn a_tip_pressing_on_another_client_does_not_lend_it_the_tips_serial() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+    f.client(id).get_data_device();
+    f.double_roundtrip(id);
+    let at = origin + Point::from((100.0, 100.0));
+    let plain = f.add_client();
+    map_window(&mut f, plain, "plain", (300, 300));
+    let plain_window = window_by_app_id(&mut f, "plain").unwrap();
+    f.state()
+        .stage
+        .set_position(&plain_window, Point::from((450, -150)));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    pointer_to(&mut f, &FakeDevice::mouse(), Point::from((600.0, 0.0)));
+    f.client(plain).state.pointer_buttons.clear();
+
+    pen_tip_down(&mut f, &device);
+    f.double_roundtrip(id);
+    f.double_roundtrip(plain);
+    assert_eq!(
+        f.client(plain).state.pointer_buttons,
+        vec![(BTN_LEFT, 1)],
+        "precondition: the press lands on the client under the mouse"
+    );
+    let serial = f
+        .client(id)
+        .state
+        .tablet_down_serial
+        .expect("precondition: the tool's down reaches the pen's client");
+
+    f.client(id).start_drag(&surface, serial);
+    f.roundtrip(id);
+    pen_to(&mut f, &device, at + Point::from((10.0, 0.0)));
+    f.double_roundtrip(id);
+
+    assert!(
+        f.client(id).state.data_device_events.is_empty(),
+        "no drag may start off another client's press: {:?}",
+        f.client(id).state.data_device_events
+    );
+}
