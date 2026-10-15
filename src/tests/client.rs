@@ -1591,13 +1591,16 @@ impl Window {
         self.xdg_toplevel.unset_maximized();
     }
 
-    /// Ask the compositor to resize this window from `edges`, as a CSD client
-    /// does when the user drags its own border. The serial isn't validated —
-    /// the compositor gates the request on the seat's pointer grab instead.
+    /// Ask the compositor to move this window, as a CSD client does when the
+    /// user drags its title bar.
     pub fn move_(&self, serial: u32) {
         self.xdg_toplevel._move(&self.seat, serial);
     }
 
+    /// Ask the compositor to resize this window from `edges`, as a CSD client
+    /// does when the user drags its own border. A mouse press is matched on
+    /// the seat's pointer grab, not on `serial`; a pen tip's is matched on
+    /// its serial.
     pub fn resize(&self, edges: xdg_toplevel::ResizeEdge, serial: u32) {
         self.xdg_toplevel.resize(&self.seat, serial, edges);
     }

@@ -1214,6 +1214,7 @@ fn a_pen_can_drag_and_drop_between_tablet_clients() {
     f.double_roundtrip(a);
     f.double_roundtrip(b);
     let (device, serial) = pen_tip_down_on_tablet_client(&mut f, a, at);
+    f.client(b).state.pointer_positions.clear();
 
     f.client(a).start_drag(&a_surface, serial);
     f.roundtrip(a);
@@ -1227,6 +1228,11 @@ fn a_pen_can_drag_and_drop_between_tablet_clients() {
             .contains(&DataDeviceEvent::Enter { surface: b_surface }),
         "dragging the pen onto another window must offer the drop to it: {:?}",
         f.client(b).state.data_device_events
+    );
+    let positions = &f.client(b).state.pointer_positions;
+    assert!(
+        positions.is_empty(),
+        "the drag reaches it on wl_data_device alone, not on wl_pointer: {positions:?}"
     );
 }
 
