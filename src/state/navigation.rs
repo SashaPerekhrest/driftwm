@@ -13,7 +13,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Point, Rectangle},
+    utils::{IsAlive, Logical, Point},
     wayland::seat::WaylandFocus,
 };
 
@@ -33,6 +33,11 @@ const ACTIVATION_VISIBLE_THRESHOLD: f64 = 1.0;
 /// separates "clipped to a hair" from "off screen entirely" without a
 /// size-dependent cutoff. See `window_already_active`.
 const ACTIVATION_ONSCREEN_THRESHOLD: f64 = f64::EPSILON;
+
+/// How far (screen px) a frame may sit past the usable edge and still count as
+/// inside it. A pan that lands a frame flush on an edge carries float rounding
+/// through the camera anchor, and a hair's overhang must not read as clipped.
+const IN_VIEW_NOISE: f64 = 1e-6;
 
 /// What a navigation does to the zoom it arrives at. The restore variant names
 /// its fallback rather than leaving it implied, so a call site picking a restore
@@ -113,28 +118,31 @@ impl DriftWm {
     /// isn't already fully on screen, unlike the centering navigations, which
     /// always park. `pan` picks how far that pan goes.
     pub fn reveal_element(&mut self, element: &StageWindow, pan: RevealPan) {
-        // Only a view at rest can vouch for the target: while a pan is in
-        // flight the camera is a frame of the animation, not where the view
-        // will land, so a step taken mid-pan re-targets the pan instead of
-        // leaving its target behind on the way to the previous one. Both
-        // targets count: a navigation pan rides the zoom tick, which clears
-        // `camera_target` from its first frame on.
-        let at_rest = self.camera_target().is_none() && self.zoom_target().is_none();
-        if at_rest && self.window_fully_in_viewport(element) {
+        // Judged where the view will land, not at the current frame of a
+        // flight still under way: a step onto a window the flight is about to
+        // leave behind re-targets it, and one onto a window it will show lets
+        // it land, zoom included.
+        let (camera, zoom) = self.landing_view();
+        if self.window_fully_in_view_at(element, camera, zoom) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus_element(element, serial);
             return;
         }
         match pan {
             RevealPan::Park(zoom) => self.navigate_to_element(element, zoom),
-            RevealPan::Minimal => self.pan_minimally_to_element(element),
+            RevealPan::Minimal => self.pan_minimally_to_element(element, camera, zoom),
         }
     }
 
-    /// Focus + raise `element` and pan the active output's camera, at its
-    /// current zoom, by the least amount that shows the element's frame whole,
+    /// Focus + raise `element` and pan the active output's view from `camera`
+    /// at `zoom` by the least amount that shows the element's frame whole,
     /// `outer_gap` in from the usable edge.
-    fn pan_minimally_to_element(&mut self, element: &StageWindow) {
+    fn pan_minimally_to_element(
+        &mut self,
+        element: &StageWindow,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) {
         // As in `navigate_to_window_on`: nothing is drawn for it yet.
         if self.hidden_by_deferred_adopt(element) {
             return;
@@ -154,25 +162,18 @@ impl DriftWm {
             StageWindow::Client(w) => super::configured_window_size(w),
             StageWindow::Suspended(s) => s.size.get(),
         };
-        let frame = Rectangle::new(
-            chrome.frame_loc(loc).to_f64(),
-            chrome.frame_size(size).to_f64(),
-        );
+        let frame = super::fit::snap_rect_at(loc, size, chrome.bar, chrome.border);
         // A border wider than `outer_gap` puts the inset past the usable edge,
         // which would leave the revealed frame clipped.
         let inset = self.config.outer_frame_inset(chrome.border).max(0.0);
-        let (camera, zoom) = {
-            let os = output_state(&output);
-            (os.camera, os.zoom)
-        };
         let target =
-            minimal_reveal_camera(frame, camera, zoom, self.usable_area_on(&output), inset);
+            minimal_reveal_camera(&frame, camera, zoom, self.usable_area_on(&output), inset);
 
         // Through the anchor, not a bare `camera_target`: an anchor still armed
         // by the previous pan would steer the camera back every tick.
         let center = Point::from((
-            frame.loc.x + frame.size.w / 2.0,
-            frame.loc.y + frame.size.h / 2.0,
+            (frame.x_low + frame.x_high) / 2.0,
+            (frame.y_low + frame.y_high) / 2.0,
         ));
         let center_screen =
             Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
@@ -672,14 +673,21 @@ impl DriftWm {
     where
         super::StageWindow: PartialEq<Q>,
     {
+        self.window_fully_in_view_at(w, self.camera(), self.zoom())
+    }
+
+    /// As `window_fully_in_viewport`, at `camera` and `zoom` instead of the
+    /// live view.
+    pub fn window_fully_in_view_at<Q>(&self, w: &Q, camera: Point<f64, Logical>, zoom: f64) -> bool
+    where
+        super::StageWindow: PartialEq<Q>,
+    {
         let Some(elem) = self.stage.windows().find(|e| **e == *w) else {
             return false;
         };
         let Some(rect) = self.visual_frame_rect(elem) else {
             return false;
         };
-        let camera = self.camera();
-        let zoom = self.zoom();
         let usable = self.get_usable_area();
 
         let screen_x_low = (rect.x_low - camera.x) * zoom;
@@ -687,15 +695,28 @@ impl DriftWm {
         let screen_x_high = (rect.x_high - camera.x) * zoom;
         let screen_y_high = (rect.y_high - camera.y) * zoom;
 
-        let u_x_low = usable.loc.x as f64;
-        let u_y_low = usable.loc.y as f64;
-        let u_x_high = (usable.loc.x + usable.size.w) as f64;
-        let u_y_high = (usable.loc.y + usable.size.h) as f64;
+        let u_x_low = usable.loc.x as f64 - IN_VIEW_NOISE;
+        let u_y_low = usable.loc.y as f64 - IN_VIEW_NOISE;
+        let u_x_high = (usable.loc.x + usable.size.w) as f64 + IN_VIEW_NOISE;
+        let u_y_high = (usable.loc.y + usable.size.h) as f64 + IN_VIEW_NOISE;
 
         screen_x_low >= u_x_low
             && screen_y_low >= u_y_low
             && screen_x_high <= u_x_high
             && screen_y_high <= u_y_high
+    }
+
+    /// Whether the active output's view already shows `w` as fully as any pan
+    /// could: its frame inside the usable area, or centered on an axis it is
+    /// too big for — where a `focus-nearest` reveal leaves it.
+    pub fn window_shown_as_fully_as_it_fits(&self, w: &super::StageWindow) -> bool {
+        let Some(rect) = self.visual_frame_rect(w) else {
+            return false;
+        };
+        let (camera, zoom) = (self.camera(), self.zoom());
+        let reveal = minimal_reveal_camera(&rect, camera, zoom, self.get_usable_area(), 0.0);
+        (reveal.x - camera.x).abs() * zoom <= IN_VIEW_NOISE
+            && (reveal.y - camera.y).abs() * zoom <= IN_VIEW_NOISE
     }
 
     /// Does the window's snap rect intersect `output`'s usable area at that

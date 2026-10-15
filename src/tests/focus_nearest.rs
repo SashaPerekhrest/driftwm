@@ -155,11 +155,13 @@ fn a_fully_visible_target_takes_focus_without_moving_the_camera() {
 /// past. The other axis holds.
 #[test]
 fn a_clipped_target_pans_in_just_far_enough_to_show_it() {
+    // Each target sits off the view's center on the other axis, so a pan that
+    // centered it there would show.
     let cases: [(Direction, (i32, i32), Edge, f64); 4] = [
-        (Direction::Right, (1750, 440), |s| s.right, 1920.0 - GAP),
-        (Direction::Left, (-130, 440), |s| s.left, GAP),
-        (Direction::Down, (810, 980), |s| s.bottom, 1080.0 - GAP),
-        (Direction::Up, (810, -100), |s| s.top, GAP),
+        (Direction::Right, (1750, 100), |s| s.right, 1920.0 - GAP),
+        (Direction::Left, (-130, 700), |s| s.left, GAP),
+        (Direction::Down, (500, 980), |s| s.bottom, 1080.0 - GAP),
+        (Direction::Up, (1100, -100), |s| s.top, GAP),
     ];
     for (dir, b_pos, edge, expected) in cases {
         let mut f = Fixture::with_config(config(GAP_CONFIG));
@@ -403,18 +405,19 @@ fn a_fully_visible_stand_in_is_focused_in_place() {
 }
 
 /// A clipped stand-in pans in like a clipped window: just far enough to show
-/// its frame, bar included, `outer_gap` in from the edge.
+/// its frame, `outer_gap` in from the edge. Its content is on screen and only
+/// its title bar hangs off the top, so the pan has to count the bar.
 #[test]
 fn a_clipped_stand_in_pans_in_just_far_enough() {
     let mut f = Fixture::with_config(config(GAP_CONFIG));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (100, 400));
+    let a = window_at(&mut f, id, "a", (810, 440));
     origin_view(&mut f);
     let sid = f.state().insert_suspended_for_test(
         1,
-        Point::from((1750, 400)),
+        Point::from((810, 0)),
         Size::from((300, 200)),
         "s",
         "S",
@@ -423,7 +426,7 @@ fn a_clipped_stand_in_pans_in_just_far_enough() {
     f.state().raise_and_focus(&a, serial);
 
     f.state()
-        .execute_action(&Action::FocusNearest(Direction::Right));
+        .execute_action(&Action::FocusNearest(Direction::Up));
 
     assert!(
         matches!(f.state().window_focus, Some(FocusIntent::Suspended(s)) if s == sid),
@@ -433,7 +436,7 @@ fn a_clipped_stand_in_pans_in_just_far_enough() {
     settle(&mut f);
     let s = StageWindow::Suspended(f.state().find_suspended(sid).unwrap());
     let frame = frame_on_screen(&mut f, &s);
-    assert_near(frame.right, 1920.0 - GAP, "the stand-in's right edge");
+    assert_near(frame.top, GAP, "the stand-in's bar");
     assert!(
         f.state().window_fully_in_viewport(&s),
         "the stand-in is on screen once the pan lands"
@@ -519,4 +522,92 @@ fn a_step_out_of_fullscreen_searches_from_the_window_that_left_it() {
         "the search started from a, not from the viewport center (which would \
          have picked {c:?})"
     );
+}
+
+/// A window too tall for the view never reads as fully on screen. Once a step
+/// has shown it as fully as it fits, the next step walks on past it rather
+/// than finding it again from the viewport center.
+#[test]
+fn a_walk_steps_on_past_a_window_too_tall_to_show_whole() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (810, 440));
+    let t = sized_window_at(&mut f, id, "t", (1750, -500), (300, 1200));
+    let c = window_at(&mut f, id, "c", (2300, 440));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(t));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(c.clone()));
+    assert!(f.state().window_fully_in_viewport(&c));
+}
+
+/// At a fractional zoom, a frame landed flush on the usable edge carries
+/// float rounding from the pan. It still reads as fully on screen, and the
+/// next step walks on from it.
+#[test]
+fn a_frame_revealed_flush_at_a_fractional_zoom_reads_as_on_screen() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (-2500, 400));
+    let b = sized_window_at(&mut f, id, "b", (-1498, 400), (1000, 400));
+    let c = window_at(&mut f, id, "c", (0, 400));
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((-2996.73, 0.0));
+        os.camera_target = None;
+        os.zoom = 0.961;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    assert!(f.state().window_fully_in_viewport(&b));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(c));
+}
+
+/// A step during a zoom animation onto a window still on screen where the
+/// zoom lands takes focus and lets the zoom finish, rather than stopping it
+/// partway.
+#[test]
+fn a_step_during_a_zoom_animation_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b, _c) = row_of_three(&mut f);
+    f.state().zoom_to_anchored(0.5);
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_zoom_animation(TICK);
+    assert!(
+        f.state().zoom() > 0.5,
+        "precondition: the zoom is under way"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), 0.5, "the zoom landed");
+    assert!(f.state().window_fully_in_viewport(&b));
 }

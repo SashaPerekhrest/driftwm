@@ -277,6 +277,24 @@ impl DriftWm {
         os.zoom_target = Some(zoom);
     }
 
+    /// The active output's camera and zoom once its camera/zoom flight lands
+    /// — the live view when nothing is in flight. Momentum isn't a flight: it
+    /// has no destination.
+    pub(crate) fn landing_view(&self) -> (Point<f64, Logical>, f64) {
+        let Some(output) = self.active_output() else {
+            return (self.camera(), self.zoom());
+        };
+        let os = output_state(&output);
+        let zoom = os.zoom_target.unwrap_or(os.zoom);
+        // The zoom tick steers by the anchor and clears `camera_target`, so
+        // while one is armed it alone says where the camera lands.
+        let camera = match os.zoom_animation_anchor {
+            Some(anchor) => driftwm::canvas::zoom_anchor_camera(anchor.canvas, anchor.screen, zoom),
+            None => os.camera_target.unwrap_or(os.camera),
+        };
+        (camera, zoom)
+    }
+
     pub fn viewport_center_canvas(&self) -> Point<f64, Logical> {
         let vc = self.usable_center_screen();
         let camera = self.camera();

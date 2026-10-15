@@ -42,11 +42,17 @@ impl DriftWm {
         // window (wherever the restored view placed it) — otherwise the
         // anchor falls back to a corner/offscreen spot and the swipe
         // finds nothing.
+        // A window the view already shows as fully as it can anchors too: one
+        // too big for the view never reads as fully visible, and searched for
+        // from the viewport center it would be the nearest hit again and again.
         let anchor = was_fullscreen
             .cloned()
             .map(StageWindow::Client)
             .or_else(|| {
-                focused.filter(|e| self.window_visible_at_least(e, NEAREST_ANCHOR_THRESHOLD))
+                focused.filter(|e| {
+                    self.window_visible_at_least(e, NEAREST_ANCHOR_THRESHOLD)
+                        || self.window_shown_as_fully_as_it_fits(e)
+                })
             });
 
         let (origin, skip) = if let Some(ref elem) = anchor {
