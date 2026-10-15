@@ -313,6 +313,31 @@ impl DriftWm {
             .is_some_and(|o| self.window_visible_at_least_on(window, &o, threshold))
     }
 
+    /// As `window_visible_at_least`, at `camera` and `zoom` instead of the
+    /// active output's live view.
+    pub fn window_visible_at_least_at<W>(
+        &self,
+        window: &W,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+        threshold: f64,
+    ) -> bool
+    where
+        W: StageElement,
+        StageWindow: PartialEq<W>,
+    {
+        let Some(loc) = self.stage.position_of(window) else {
+            return false;
+        };
+        driftwm::canvas::visible_fraction(
+            loc,
+            StageElement::size(window),
+            camera,
+            self.get_viewport_size(),
+            zoom,
+        ) >= threshold
+    }
+
     /// As `window_visible_at_least`, but against `output`'s viewport instead
     /// of the active one.
     pub fn window_visible_at_least_on<W>(&self, window: &W, output: &Output, threshold: f64) -> bool

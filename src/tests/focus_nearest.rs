@@ -578,6 +578,12 @@ fn a_frame_revealed_flush_at_a_fractional_zoom_reads_as_on_screen() {
         .execute_action(&Action::FocusNearest(Direction::Right));
     settle(&mut f);
     assert_eq!(f.state().focused_window(), Some(b.clone()));
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b.clone()));
+    assert!(
+        frame.right > 1920.0 && frame.right - 1920.0 < 1e-9,
+        "precondition: b landed a hair past the edge, {}",
+        frame.right
+    );
     assert!(f.state().window_fully_in_viewport(&b));
 
     f.state()
@@ -610,4 +616,101 @@ fn a_step_during_a_zoom_animation_lets_the_zoom_land() {
     settle(&mut f);
     assert_eq!(f.state().zoom(), 0.5, "the zoom landed");
     assert!(f.state().window_fully_in_viewport(&b));
+}
+
+/// Whether a too-big window counts as shown is judged on the frame the reveal
+/// moves: a window whose committed size lags the size it was configured to
+/// still counts once revealed, so the next step walks on past it.
+#[test]
+fn a_walk_steps_on_past_a_too_tall_window_whose_size_lags_its_configure() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (810, 440));
+    let t_surface = map_window(&mut f, id, "t", (300, 1200));
+    let t = window_by_app_id(&mut f, "t").unwrap();
+    f.state().map_window(
+        StageWindow::Client(t.clone()),
+        Point::from((1750, -500)),
+        false,
+    );
+    let c = window_at(&mut f, id, "c", (2300, 440));
+    let toplevel = t.toplevel().unwrap();
+    toplevel.with_pending_state(|s| s.size = Some((300, 1260).into()));
+    toplevel.send_configure();
+    super::ack_but_keep_size(&mut f, id, &t_surface);
+    assert_ne!(
+        crate::state::configured_window_size(&t),
+        t.geometry().size,
+        "precondition: t's size lags its configure"
+    );
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(t));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+    assert_eq!(f.state().focused_window(), Some(c));
+}
+
+/// A second step taken while the first one's pan is still under way searches
+/// from where that pan lands, so it walks on rather than finding the window
+/// the pan is revealing again.
+#[test]
+fn a_quick_second_step_walks_on_from_where_the_first_pan_lands() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (810, 440));
+    let _b = window_at(&mut f, id, "b", (1750, 440));
+    let c = window_at(&mut f, id, "c", (2300, 440));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    f.state().apply_zoom_animation(TICK);
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(c.clone()));
+    settle(&mut f);
+    assert!(f.state().window_fully_in_viewport(&c));
+}
+
+/// A step during a zoom-in onto a window the landing zoom clips pans from
+/// where the zoom lands, and lets it land.
+#[test]
+fn a_step_during_a_zoom_in_pans_from_where_the_zoom_lands() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b, c) = row_of_three(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&b, serial);
+    // Zoomed to 2 on the viewport center the view spans canvas x 480–1440:
+    // b stays whole, c at 1300–1600 is cut off.
+    f.state().zoom_to_anchored(2.0);
+    f.state().apply_zoom_animation(TICK);
+    assert!(
+        f.state().zoom() < 2.0,
+        "precondition: the zoom is under way"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(c.clone()));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), 2.0, "the zoom landed");
+    assert!(f.state().window_fully_in_viewport(&c));
 }

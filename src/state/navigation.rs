@@ -5,6 +5,7 @@ use driftwm::canvas::{
     CanvasPos, ScreenPos, canvas_to_screen, closest_point_on_rect, minimal_reveal_camera,
     screen_to_canvas,
 };
+use driftwm::layout::snap::SnapRect;
 use driftwm::window_ext::WindowExt;
 use smithay::{
     desktop::Window,
@@ -129,7 +130,7 @@ impl DriftWm {
             return;
         }
         match pan {
-            RevealPan::Park(zoom) => self.navigate_to_element(element, zoom),
+            RevealPan::Park(nav_zoom) => self.navigate_to_element(element, nav_zoom),
             RevealPan::Minimal => self.pan_minimally_to_element(element, camera, zoom),
         }
     }
@@ -153,19 +154,13 @@ impl DriftWm {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.raise_and_focus_element(element, serial);
 
-        let Some(loc) = self.stage.position_of(element) else {
+        let Some(frame) = self.reveal_frame(element) else {
             return;
         };
-        let chrome = self.element_chrome(element);
-        // Configured, not committed, as the park measures it.
-        let size = match element {
-            StageWindow::Client(w) => super::configured_window_size(w),
-            StageWindow::Suspended(s) => s.size.get(),
-        };
-        let frame = super::fit::snap_rect_at(loc, size, chrome.bar, chrome.border);
         // A border wider than `outer_gap` puts the inset past the usable edge,
         // which would leave the revealed frame clipped.
-        let inset = self.config.outer_frame_inset(chrome.border).max(0.0);
+        let border = self.element_chrome(element).border;
+        let inset = self.config.outer_frame_inset(border).max(0.0);
         let target =
             minimal_reveal_camera(&frame, camera, zoom, self.usable_area_on(&output), inset);
 
@@ -178,6 +173,24 @@ impl DriftWm {
         let center_screen =
             Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
         self.set_camera_anchor(&output, center, center_screen, zoom);
+    }
+
+    /// The frame a minimal reveal brings into view: sized as configured, not
+    /// as committed, the way the park measures it, so a window riding an
+    /// unacked configure lands where it is about to be.
+    fn reveal_frame(&self, element: &StageWindow) -> Option<SnapRect> {
+        let loc = self.stage.position_of(element)?;
+        let chrome = self.element_chrome(element);
+        let size = match element {
+            StageWindow::Client(w) => super::configured_window_size(w),
+            StageWindow::Suspended(s) => s.size.get(),
+        };
+        Some(super::fit::snap_rect_at(
+            loc,
+            size,
+            chrome.bar,
+            chrome.border,
+        ))
     }
 
     /// As `navigate_to_window`, but pans `output`'s camera instead of the
@@ -706,15 +719,20 @@ impl DriftWm {
             && screen_y_high <= u_y_high
     }
 
-    /// Whether the active output's view already shows `w` as fully as any pan
-    /// could: its frame inside the usable area, or centered on an axis it is
-    /// too big for — where a `focus-nearest` reveal leaves it.
-    pub fn window_shown_as_fully_as_it_fits(&self, w: &super::StageWindow) -> bool {
-        let Some(rect) = self.visual_frame_rect(w) else {
+    /// Whether the active output's view at `camera` and `zoom` shows `w` as
+    /// fully as any pan could: its frame inside the usable area, or centered
+    /// on an axis it is too big for — where a `focus-nearest` reveal leaves
+    /// it, measured on the same frame.
+    pub fn window_shown_as_fully_at(
+        &self,
+        w: &StageWindow,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) -> bool {
+        let Some(frame) = self.reveal_frame(w) else {
             return false;
         };
-        let (camera, zoom) = (self.camera(), self.zoom());
-        let reveal = minimal_reveal_camera(&rect, camera, zoom, self.get_usable_area(), 0.0);
+        let reveal = minimal_reveal_camera(&frame, camera, zoom, self.get_usable_area(), 0.0);
         (reveal.x - camera.x).abs() * zoom <= IN_VIEW_NOISE
             && (reveal.y - camera.y).abs() * zoom <= IN_VIEW_NOISE
     }

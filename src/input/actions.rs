@@ -11,10 +11,10 @@ use driftwm::config::{Action, Direction, LayoutSwitch, Modifiers, SendEvents, Tr
 use driftwm::window_ext::WindowExt;
 
 /// Use the focused window as the cone-search origin only when it's fully
-/// inside the viewport. Any clipping → search from viewport center instead
-/// (cone can still return the focused window if it's the nearest in that
-/// direction, which is useful for snapping back to a partially-visible
-/// focused window).
+/// inside the viewport (or, too big for that, shown as fully as it fits). Any
+/// other clipping → search from viewport center instead (cone can still return
+/// the focused window if it's the nearest in that direction, which is useful
+/// for snapping back to a partially-visible focused window).
 const NEAREST_ANCHOR_THRESHOLD: f64 = 1.0;
 
 /// A directional-search hit: a canvas element, or a bare `navigation.anchors`
@@ -28,7 +28,8 @@ enum NavTarget {
 impl DriftWm {
     /// The cone search shared by `center-nearest` and `focus-nearest`: the
     /// nearest canvas element or `navigation.anchors` point in `dir`, searched
-    /// from the focused element when fully in view, else the viewport center.
+    /// from the focused element when in view, else the viewport center — both
+    /// judged where the view lands.
     fn nearest_in_direction(
         &self,
         dir: &Direction,
@@ -38,27 +39,36 @@ impl DriftWm {
         // keyboard focus but anchors the search like any other element.
         let focused = self.focused_anchor_element().filter(|e| !self.is_pinned(e));
 
+        // A step taken while the last one's pan is under way searches from
+        // where that pan lands: at the frame it is on, the window it is
+        // revealing is still clipped and would be found again.
+        let (camera, zoom) = self.landing_view();
+
         // Anchor the directional search to the just-exited fullscreen
         // window (wherever the restored view placed it) — otherwise the
         // anchor falls back to a corner/offscreen spot and the swipe
         // finds nothing.
-        // A window the view already shows as fully as it can anchors too: one
-        // too big for the view never reads as fully visible, and searched for
-        // from the viewport center it would be the nearest hit again and again.
         let anchor = was_fullscreen
             .cloned()
             .map(StageWindow::Client)
             .or_else(|| {
+                // A window too big for the view never reads as fully visible;
+                // searched for from the viewport center it would be the
+                // nearest hit again and again.
                 focused.filter(|e| {
-                    self.window_visible_at_least(e, NEAREST_ANCHOR_THRESHOLD)
-                        || self.window_shown_as_fully_as_it_fits(e)
+                    self.window_visible_at_least_at(e, camera, zoom, NEAREST_ANCHOR_THRESHOLD)
+                        || self.window_shown_as_fully_at(e, camera, zoom)
                 })
             });
 
         let (origin, skip) = if let Some(ref elem) = anchor {
             (self.nav_center(elem), Some(NavTarget::Window(elem.clone())))
         } else {
-            (self.viewport_center_canvas(), None)
+            let vc = self.usable_center_screen();
+            (
+                Point::from((camera.x + vc.x / zoom, camera.y + vc.y / zoom)),
+                None,
+            )
         };
 
         // Candidates are every canvas element, stand-ins included, so a
