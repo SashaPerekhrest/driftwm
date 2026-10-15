@@ -10,8 +10,8 @@ use wayland_client::protocol::wl_surface::WlSurface as ClientSurface;
 
 use super::client::ClientId;
 use super::{
-    Fixture, ack_with_size, config, configure_count, give_ssd, last_configured, map_window, settle,
-    window_by_app_id, window_position,
+    Fixture, TICK, ack_with_size, config, configure_count, give_ssd, last_configured, map_window,
+    settle, window_by_app_id, window_position,
 };
 use crate::state::StageWindow;
 use driftwm::config::{Action, Direction};
@@ -161,6 +161,48 @@ fn move_to_snap_skips_an_alignment_that_lands_on_a_window() {
         window_position(&mut f, &a),
         Point::from((88, 100)),
         "past w's left edge, which is x's slot, to the dock before x"
+    );
+}
+
+/// A press while the camera is still flying is judged against where the
+/// camera is going, not the frame it has reached: the pan already armed
+/// would otherwise carry on to the old stop and leave the window behind.
+#[test]
+fn move_to_snap_mid_pan_brings_the_camera_back_with_the_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, _) = window_at(&mut f, id, "a", (1500, 100), (400, 300));
+    window_at(&mut f, id, "c", (800, 100), (400, 300));
+    window_at(&mut f, id, "b", (5000, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(window_position(&mut f, &a), Point::from((4588, 100)));
+
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().camera_target().is_none() && f.state().zoom_target().is_some(),
+        "one frame in, the anchored pan has already dropped its camera target"
+    );
+    let camera = f.state().camera();
+    assert!(
+        camera.x < 1212.0 && camera.x + 1920.0 > 1612.0,
+        "precondition: the stop back left is in view in this frame: {camera:?}"
+    );
+
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((1212, 100)),
+        "the dock after c"
+    );
+    settle(&mut f);
+    assert!(
+        f.state().window_fully_in_viewport(&a),
+        "the camera came back with the window"
     );
 }
 
@@ -483,6 +525,10 @@ fn move_to_snap_during_fullscreen_measures_the_restored_window() {
         window_position(&mut f, &a),
         Point::from((588, 100)),
         "docked by its restored 400 px width, not the 1920 px it still commits"
+    );
+    assert!(
+        f.state().camera_target().is_none() && f.state().zoom_target().is_none(),
+        "and judged in view by that width too, so the camera stays"
     );
     assert!(
         !f.state().pending_recenter.contains_key(&key),

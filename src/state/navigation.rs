@@ -701,6 +701,17 @@ impl DriftWm {
         let Some(rect) = self.visual_frame_rect(elem) else {
             return false;
         };
+        self.frame_fully_in_view_at(&rect, camera, zoom)
+    }
+
+    /// Is the canvas rect `rect` inside the active output's usable area at
+    /// `camera` and `zoom`?
+    pub(crate) fn frame_fully_in_view_at(
+        &self,
+        rect: &SnapRect,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) -> bool {
         let usable = self.get_usable_area();
 
         let screen_x_low = (rect.x_low - camera.x) * zoom;
