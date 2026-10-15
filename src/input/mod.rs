@@ -1699,10 +1699,9 @@ impl DriftWm {
     }
 
     /// The screen-pinned window that owns an output-relative screen position:
-    /// its content, or its chrome or resize margin, live or inert. For paths
-    /// that act on the window itself — a press, a gesture grab, a tap — where a
-    /// `None` over chrome would fall to the canvas walk, which skips pins and
-    /// reaches the window drawn behind this one.
+    /// its content, chrome or resize margin, live or inert. For paths that act
+    /// on the window itself: a `None` over chrome would fall to the canvas
+    /// walk, which skips pins and reaches the window drawn behind.
     pub(crate) fn pinned_owner_under(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
         self.pinned_topmost_under(screen_pos, |_| true)
     }
