@@ -850,8 +850,8 @@ impl DriftWm {
     /// motion with a later `axis` or `relative_motion` under one frame, and a
     /// frame emitted here would split those groups.
     ///
-    /// Callers hand over the plain pick: this is also where a pen withholds it
-    /// ([`Self::wl_pointer_under`]), and the record holds what was left.
+    /// Callers pass the unfiltered pick: the pen's withholding applies here
+    /// ([`Self::wl_pointer_under`]), so the record holds what it left.
     pub(crate) fn dispatch_pointer_motion(
         &mut self,
         under: Option<(FocusTarget, Point<f64, Logical>)>,

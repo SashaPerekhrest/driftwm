@@ -133,8 +133,7 @@ pub struct State {
     pub virtual_keyboard_manager: Option<ZwpVirtualKeyboardManagerV1>,
     pub tablet_manager: Option<ZwpTabletManagerV2>,
     pub data_device_manager: Option<WlDataDeviceManager>,
-    /// Created by [`Client::get_data_device`], not at bind time, so only the
-    /// scenarios that exercise drag-and-drop pay for it.
+    /// Created by [`Client::get_data_device`], not at bind time.
     pub data_device: Option<WlDataDevice>,
 
     pub windows: Vec<Window>,
@@ -172,8 +171,7 @@ pub struct State {
     /// oldest first. Empty until [`Client::get_tablet_seat`] runs.
     pub tablet_events: Vec<TabletEvent>,
     /// Serial of the most recent `zwp_tablet_tool_v2.down`, the one a tablet
-    /// client cites to start an interactive move, resize or drag. Kept apart
-    /// from [`TabletToolEvent::Down`], which records no serial.
+    /// client cites to start an interactive move, resize or drag.
     pub tablet_down_serial: Option<u32>,
     /// Serial of the most recent `wl_pointer.enter`, the one a client cites to
     /// set its own cursor.
@@ -1599,8 +1597,7 @@ impl Window {
 
     /// Ask the compositor to resize this window from `edges`, as a CSD client
     /// does when the user drags its own border. A mouse press is matched on
-    /// the seat's pointer grab, not on `serial`; a pen tip's is matched on
-    /// its serial.
+    /// the seat's pointer grab, a pen tip's on `serial`.
     pub fn resize(&self, edges: xdg_toplevel::ResizeEdge, serial: u32) {
         self.xdg_toplevel.resize(&self.seat, serial, edges);
     }
@@ -2407,11 +2404,11 @@ impl Dispatch<WlPointer, ()> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
-        // `enter` carries a position too, so a regression that dropped focus and
-        // re-entered instead of re-motioning would still land one on the client.
         if let wl_pointer::Event::Enter { serial, .. } = &event {
             state.pointer_enter_serial = Some(*serial);
         }
+        // `enter` carries a position too, so a regression that dropped focus and
+        // re-entered instead of re-motioning would still land one on the client.
         match event {
             wl_pointer::Event::Motion {
                 surface_x,

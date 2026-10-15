@@ -1050,11 +1050,10 @@ fn a_tablet_client_binding_late_still_gets_proximity() {
     );
 }
 
-/// A second tablet-aware client with a window of its own, for scenarios where
-/// the pen and the client acting on the seat differ. It maps centred inside
-/// the first client's window, which a tip on that window raises over it, so
-/// it is moved out to the right of it. Fails loudly if the window landed
-/// under `pen_at`, which would make the pen its client too.
+/// A second tablet-aware client with a window clear of `pen_at`, for scenarios
+/// where the pen's client and the one acting on the seat differ. The window
+/// maps centred over the first client's, which a tip there raises above it, so
+/// it is moved out to the right.
 fn another_tablet_client_with_window(
     f: &mut Fixture,
     app_id: &str,
@@ -1084,9 +1083,8 @@ fn another_tablet_client_with_window(
     (id, surface, origin)
 }
 
-/// A pen with its tip down on the tablet client's window, and the serial that
-/// tip's `down` carried — the one a client cites to start an interactive
-/// request from it.
+/// A pen with its tip down on the tablet client's window, and the serial its
+/// `down` carried.
 fn pen_tip_down_on_tablet_client(
     f: &mut Fixture,
     id: ClientId,
@@ -1104,9 +1102,8 @@ fn pen_tip_down_on_tablet_client(
 }
 
 /// A tablet client is withheld from `wl_pointer`, so the seat pointer's grab
-/// has no focus to match its move request against. The pen's own `down` serial
-/// is the only proof of a press the client has, and it has to be enough, or a
-/// CSD title bar cannot be dragged with a pen.
+/// has no focus to match its move request against. Its pen `down` serial has to
+/// be proof enough, or a CSD title bar cannot be dragged with a pen.
 #[test]
 fn a_tablet_client_can_start_a_move_from_its_pen_tip() {
     let mut f = Fixture::new();
@@ -1140,8 +1137,7 @@ fn a_tablet_client_can_start_a_move_from_its_pen_tip() {
     );
 }
 
-/// Same gap as the move: the resize request is matched against a pointer grab
-/// whose start focus a withheld client never has.
+/// Same gap as the move, for a resize.
 #[test]
 fn a_tablet_client_can_start_a_resize_from_its_pen_tip() {
     let mut f = Fixture::new();
@@ -1171,10 +1167,8 @@ fn a_tablet_client_can_start_a_resize_from_its_pen_tip() {
     );
 }
 
-/// A serial is only proof of a press for the client that was sent it. Another
-/// tablet client citing the pen's `down` serial must not take the window grab
-/// for itself, or any client could move its own window off someone else's
-/// stroke. Holds with and without the pen-serial acceptance.
+/// A serial is proof of a press only for the client it was sent to, or any
+/// client could move its own window off someone else's pen stroke.
 #[test]
 fn another_client_cannot_start_a_move_from_the_pens_serial() {
     let mut f = Fixture::new();
@@ -1198,10 +1192,9 @@ fn another_client_cannot_start_a_move_from_the_pens_serial() {
 }
 
 /// smithay accepts a drag only when the seat pointer's grab carries the cited
-/// serial, and a tablet client has only its tip's to cite. Once started, the
-/// drag finds its target in what lies under the pen, which a pen withholding
-/// tablet clients from `wl_pointer` must not hide from it, or nothing can be
-/// dropped onto one.
+/// serial, and a tablet client has only its tip's to cite. The drop target is
+/// what lies under the pen, which withholding tablet clients from `wl_pointer`
+/// must not hide, or nothing can be dropped onto one.
 #[test]
 fn a_pen_can_drag_and_drop_between_tablet_clients() {
     let mut f = Fixture::new();
@@ -1236,10 +1229,9 @@ fn a_pen_can_drag_and_drop_between_tablet_clients() {
     );
 }
 
-/// A scroll-pan slides windows under a cursor that has not moved, and the pen
-/// still owns the pointer then. Seating the client on `wl_pointer` at that
-/// point hands a tablet client the second stream it is withheld from, and every
-/// scroll event flaps it in and out.
+/// A scroll-pan slides windows under a cursor the pen still owns. Seating the
+/// tablet client found there on `wl_pointer` hands it the stream it is withheld
+/// from, and every scroll event flaps it in and out.
 #[test]
 fn a_scroll_pan_does_not_seat_a_tablet_client_under_the_pen() {
     let mut f = Fixture::new();
@@ -1270,10 +1262,9 @@ fn a_scroll_pan_does_not_seat_a_tablet_client_under_the_pen() {
     );
 }
 
-/// A client with no tablet seat gets the pen as a pointer, so its cursor image
-/// is a plain `wl_pointer` one. The pen leaving proximity is not the pointer
-/// leaving the client, and resetting the cursor to the arrow there overrides
-/// what a pointer-only app asked for.
+/// A client with no tablet seat gets the pen as a pointer and sets its cursor
+/// on `wl_pointer`. The pen leaving proximity is not the pointer leaving that
+/// client, so resetting the cursor there would override what the app asked for.
 #[test]
 fn proximity_out_keeps_a_pointer_only_clients_cursor() {
     let mut f = Fixture::new();
@@ -1305,9 +1296,8 @@ fn proximity_out_keeps_a_pointer_only_clients_cursor() {
 }
 
 /// A mouse motion puts the client back on `wl_pointer`, but the pen's next tip
-/// still belongs to tablet-v2 alone. The tip carries no motion to re-assert
-/// pen ownership, so the tip itself must, or the emulated left button reaches
-/// the client beside the tablet `down` and a drawing app restarts its stroke.
+/// still belongs to tablet-v2 alone, or the emulated left button reaches the
+/// client beside the tablet `down` and a drawing app restarts its stroke.
 #[test]
 fn a_tip_after_a_mouse_motion_stays_off_wl_pointer() {
     let mut f = Fixture::new();

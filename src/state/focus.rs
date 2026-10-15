@@ -44,8 +44,8 @@ use crate::state::DriftWm;
 pub struct FocusTarget(pub WlSurface);
 
 impl FocusTarget {
-    /// Whether this surface's client has `tool` bound. Such a client takes
-    /// the pen on tablet-v2, and `wl_pointer` is not its stream for it.
+    /// Whether this surface's client has `tool` bound, and so takes the pen on
+    /// tablet-v2 rather than `wl_pointer`.
     pub fn takes_tool(&self, tool: &TabletToolHandle<DriftWm>) -> bool {
         self.0
             .client()

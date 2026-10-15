@@ -203,11 +203,10 @@ impl DriftWm {
     /// 2. Normal click on window → focus + raise + forward to client
     /// 3. Left-click on empty canvas → pan canvas
     ///
-    /// `forward_serial` is one another stream already announced this press
-    /// with. It goes only on a press forwarded to a client, and so on the
-    /// implicit grab that press installs; a grab the compositor takes for a
-    /// binding gets a serial of its own, or a client holding the other
-    /// stream's could cite it to replace that grab.
+    /// `forward_serial` is the serial another stream already announced this
+    /// press with. Only a press forwarded to a client, and the implicit grab it
+    /// installs, carries it: a binding's grab gets its own, or a client holding
+    /// the other stream's serial could cite it to replace that grab.
     pub(super) fn on_pointer_button<I: InputBackend, E: PointerButtonEvent<I>>(
         &mut self,
         event: E,

@@ -237,12 +237,11 @@ impl DriftWm {
             tool.frame(self, time);
         }
 
-        // A forwarded press reuses the tip's serial: a client on tablet-v2
-        // cites that one to start a drag, which smithay accepts only against
-        // the pointer grab the press installs. Only while the pointer is where
-        // the tool is, though — after a mouse moved it the press lands on
-        // whatever is under the mouse, and the pen's client could otherwise
-        // cite its serial to take over that client's click.
+        // The press borrows the tip's serial, which a tablet-v2 client cites to
+        // start a drag and smithay checks against the pointer grab the press
+        // installs. Only while the pointer is at the tool: after a mouse moved
+        // it the press lands on whatever client is under the mouse, whose click
+        // the pen's client could then take over.
         let at_tool = tool.as_ref().and_then(|tool| tool.current_location())
             == Some(self.seat.get_pointer().unwrap().current_location());
         self.on_pointer_button::<I, _>(
