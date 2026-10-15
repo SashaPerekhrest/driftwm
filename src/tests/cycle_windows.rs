@@ -12,9 +12,9 @@ use driftwm::config::Action;
 use smithay::desktop::Window;
 use smithay::utils::{Point, SERIAL_COUNTER};
 
-use crate::state::{NavZoom, StageWindow};
+use crate::state::{NavZoom, RevealPan, StageWindow};
 
-use super::{Fixture, TICK, client::ClientId, map_window, settle, window_by_app_id};
+use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_by_app_id};
 
 /// Map toplevels a, b, c on a fresh client; focus history ends [c, b, a].
 /// Returns the client so callers can map more windows.
@@ -42,7 +42,7 @@ fn held_cycle_step(f: &mut Fixture) {
         let window = target.client().expect("cycle target is a client").clone();
         f.state().cycle_navigating = true;
         f.state()
-            .reveal_element(&StageWindow::Client(window), NavZoom::Keep);
+            .reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
         f.state().cycle_navigating = false;
     }
 }
@@ -318,5 +318,37 @@ fn a_step_mid_pan_retargets_the_pan() {
     assert!(
         f.state().window_fully_in_viewport(&win_a),
         "a is on screen once the view rests"
+    );
+}
+
+/// Alt-Tab is a jump, not a walk: a clipped target parks on `focus_placement`
+/// rather than taking the minimal pan `focus-nearest` does.
+#[test]
+fn a_clipped_step_parks_on_the_placement_point() {
+    let mut f = Fixture::with_config(config(
+        "focus_placement = \"left\"\n[snap]\nouter_gap = 20.0\n",
+    ));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    three_windows(&mut f);
+    let win_b = window_by_app_id(&mut f, "b").unwrap();
+    place_three(&mut f, (100, 700), (1750, 400), (100, 300));
+    assert!(
+        !f.state().window_fully_in_viewport(&win_b),
+        "precondition: b is clipped"
+    );
+
+    cycle_forward(&mut f);
+    assert_eq!(f.state().focused_window(), Some(win_b.clone()));
+    settle(&mut f);
+
+    let rect = f
+        .state()
+        .visual_frame_rect(&StageWindow::Client(win_b))
+        .unwrap();
+    let left = rect.x_low - f.state().camera().x;
+    assert!(
+        (left - 20.0).abs() < 1e-6,
+        "b parks on the left placement point: {left}"
     );
 }

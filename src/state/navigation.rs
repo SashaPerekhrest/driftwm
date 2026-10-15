@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use crate::surface_tree::focus_belongs_to_window;
 use driftwm::canvas::{
-    CanvasPos, ScreenPos, canvas_to_screen, closest_point_on_rect, screen_to_canvas,
+    CanvasPos, ScreenPos, canvas_to_screen, closest_point_on_rect, minimal_reveal_camera,
+    screen_to_canvas,
 };
 use driftwm::window_ext::WindowExt;
 use smithay::{
@@ -12,7 +13,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::{Resource, protocol::wl_surface::WlSurface},
     },
-    utils::{IsAlive, Logical, Point},
+    utils::{IsAlive, Logical, Point, Rectangle},
     wayland::seat::WaylandFocus,
 };
 
@@ -76,6 +77,17 @@ impl NavZoom {
     }
 }
 
+/// How [`DriftWm::reveal_element`] pans to a target that isn't fully on
+/// screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevealPan {
+    /// Park it on the `focus_placement` point, as a jump does.
+    Park(NavZoom),
+    /// The least pan that shows it whole, at the current zoom — a directional
+    /// walk, where parking each step would throw the view around.
+    Minimal,
+}
+
 impl DriftWm {
     /// Navigate the active output's viewport to a window: raise, focus, animate
     /// the camera until the window sits on the `focus_placement` point (the
@@ -99,8 +111,8 @@ impl DriftWm {
 
     /// Focus + raise a stage element, panning the camera to it only when it
     /// isn't already fully on screen, unlike the centering navigations, which
-    /// always park. `zoom` applies to the pan alone.
-    pub fn reveal_element(&mut self, element: &StageWindow, zoom: NavZoom) {
+    /// always park. `pan` picks how far that pan goes.
+    pub fn reveal_element(&mut self, element: &StageWindow, pan: RevealPan) {
         // Only a view at rest can vouch for the target: while a pan is in
         // flight the camera is a frame of the animation, not where the view
         // will land, so a step taken mid-pan re-targets the pan instead of
@@ -111,9 +123,60 @@ impl DriftWm {
         if at_rest && self.window_fully_in_viewport(element) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus_element(element, serial);
-        } else {
-            self.navigate_to_element(element, zoom);
+            return;
         }
+        match pan {
+            RevealPan::Park(zoom) => self.navigate_to_element(element, zoom),
+            RevealPan::Minimal => self.pan_minimally_to_element(element),
+        }
+    }
+
+    /// Focus + raise `element` and pan the active output's camera, at its
+    /// current zoom, by the least amount that shows the element's frame whole,
+    /// `outer_gap` in from the usable edge.
+    fn pan_minimally_to_element(&mut self, element: &StageWindow) {
+        // As in `navigate_to_window_on`: nothing is drawn for it yet.
+        if self.hidden_by_deferred_adopt(element) {
+            return;
+        }
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.raise_and_focus_element(element, serial);
+
+        let Some(loc) = self.stage.position_of(element) else {
+            return;
+        };
+        let chrome = self.element_chrome(element);
+        // Configured, not committed, as the park measures it.
+        let size = match element {
+            StageWindow::Client(w) => super::configured_window_size(w),
+            StageWindow::Suspended(s) => s.size.get(),
+        };
+        let frame = Rectangle::new(
+            chrome.frame_loc(loc).to_f64(),
+            chrome.frame_size(size).to_f64(),
+        );
+        // A border wider than `outer_gap` puts the inset past the usable edge,
+        // which would leave the revealed frame clipped.
+        let inset = self.config.outer_frame_inset(chrome.border).max(0.0);
+        let (camera, zoom) = {
+            let os = output_state(&output);
+            (os.camera, os.zoom)
+        };
+        let target =
+            minimal_reveal_camera(frame, camera, zoom, self.usable_area_on(&output), inset);
+
+        // Through the anchor, not a bare `camera_target`: an anchor still armed
+        // by the previous pan would steer the camera back every tick.
+        let center = Point::from((
+            frame.loc.x + frame.size.w / 2.0,
+            frame.loc.y + frame.size.h / 2.0,
+        ));
+        let center_screen =
+            Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
+        self.set_camera_anchor(&output, center, center_screen, zoom);
     }
 
     /// As `navigate_to_window`, but pans `output`'s camera instead of the

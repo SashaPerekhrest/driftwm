@@ -1,9 +1,9 @@
 //! `focus-nearest <dir>`: the directional search of `center-nearest` with
 //! reveal semantics. A target already fully on screen only takes the keyboard
-//! and the top of the z-order; a clipped one pans in exactly as
-//! `center-nearest` would; a bare `navigation.anchors` point still centers.
-//! `center-nearest` itself keeps parking unconditionally — it is the
-//! walk-through for a non-center `focus_placement`.
+//! and the top of the z-order; a clipped one pans in only as far as it takes
+//! to show it whole, `outer_gap` in from the edge; a bare `navigation.anchors`
+//! point still centers. `center-nearest` itself keeps parking unconditionally
+//! — it is the walk-through for a non-center `focus_placement`.
 
 use driftwm::config::{Action, Direction};
 use smithay::desktop::Window;
@@ -12,6 +12,9 @@ use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 use crate::state::{FocusIntent, StageWindow};
 
 use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_by_app_id};
+
+const GAP_CONFIG: &str = "[snap]\nouter_gap = 20.0\n";
+const GAP: f64 = 20.0;
 
 /// Park the viewport at the canvas origin, zoom 1, nothing in flight: the
 /// usable area is then the canvas rect (0,0)–(1920,1080).
@@ -27,11 +30,33 @@ fn origin_view(f: &mut Fixture) {
 
 /// Map a 300×200 window and put it at `pos` on the canvas.
 fn window_at(f: &mut Fixture, id: ClientId, app_id: &str, pos: (i32, i32)) -> Window {
-    map_window(f, id, app_id, (300, 200));
+    sized_window_at(f, id, app_id, pos, (300, 200))
+}
+
+fn sized_window_at(
+    f: &mut Fixture,
+    id: ClientId,
+    app_id: &str,
+    pos: (i32, i32),
+    size: (u16, u16),
+) -> Window {
+    map_window(f, id, app_id, size);
     let window = window_by_app_id(f, app_id).unwrap();
     f.state()
         .map_window(StageWindow::Client(window.clone()), Point::from(pos), false);
     window
+}
+
+/// `a` (300×200) focused in the middle of the origin view and `b` (`size`) at
+/// `b_pos`, nothing in flight.
+fn focused_a_and_b(f: &mut Fixture, b_pos: (i32, i32), size: (u16, u16)) -> (Window, Window) {
+    let id = f.add_client();
+    let a = window_at(f, id, "a", (810, 440));
+    let b = sized_window_at(f, id, "b", b_pos, size);
+    origin_view(f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    (a, b)
 }
 
 /// Three windows in a row — `a` at x=100, `b` at x=700, `c` at x=1300 — all
@@ -56,18 +81,45 @@ fn topmost(f: &mut Fixture) -> Option<Window> {
         .cloned()
 }
 
-/// Where `elem`'s visual frame sits on screen at the current camera and zoom:
-/// (left edge, center).
-fn frame_on_screen(f: &mut Fixture, elem: &StageWindow) -> (f64, Point<f64, Logical>) {
+/// A visual frame's edges in screen px.
+#[derive(Debug)]
+struct ScreenFrame {
+    left: f64,
+    top: f64,
+    right: f64,
+    bottom: f64,
+}
+
+impl ScreenFrame {
+    fn center(&self) -> Point<f64, Logical> {
+        Point::from((
+            (self.left + self.right) / 2.0,
+            (self.top + self.bottom) / 2.0,
+        ))
+    }
+}
+
+/// Where `elem`'s visual frame sits on screen at the current camera and zoom.
+fn frame_on_screen(f: &mut Fixture, elem: &StageWindow) -> ScreenFrame {
     let rect = f.state().visual_frame_rect(elem).unwrap();
     let camera = f.state().camera();
     let zoom = f.state().zoom();
-    let x_low = (rect.x_low - camera.x) * zoom;
-    let center = Point::from((
-        ((rect.x_low + rect.x_high) / 2.0 - camera.x) * zoom,
-        ((rect.y_low + rect.y_high) / 2.0 - camera.y) * zoom,
-    ));
-    (x_low, center)
+    ScreenFrame {
+        left: (rect.x_low - camera.x) * zoom,
+        top: (rect.y_low - camera.y) * zoom,
+        right: (rect.x_high - camera.x) * zoom,
+        bottom: (rect.y_high - camera.y) * zoom,
+    }
+}
+
+/// Picks one edge out of a [`ScreenFrame`].
+type Edge = fn(&ScreenFrame) -> f64;
+
+fn assert_near(actual: f64, expected: f64, what: &str) {
+    assert!(
+        (actual - expected).abs() < 1e-6,
+        "{what}: {actual} vs {expected}"
+    );
 }
 
 /// The scenario the action exists for: every window already on screen, so a
@@ -98,20 +150,104 @@ fn a_fully_visible_target_takes_focus_without_moving_the_camera() {
 }
 
 /// A target hanging off the viewport edge still pans in — a half-visible
-/// window is never left where it is, matching click-to-navigate — and lands
-/// on the `focus_placement` point exactly as `center-nearest` would.
+/// window is never left where it is, matching click-to-navigate — but only as
+/// far as it takes to show it whole, `outer_gap` in from the edge it hung
+/// past. The other axis holds.
 #[test]
-fn a_clipped_target_pans_in_onto_the_placement_point() {
-    let mut f = Fixture::with_config(config(r#"focus_placement = "left""#));
+fn a_clipped_target_pans_in_just_far_enough_to_show_it() {
+    let cases: [(Direction, (i32, i32), Edge, f64); 4] = [
+        (Direction::Right, (1750, 440), |s| s.right, 1920.0 - GAP),
+        (Direction::Left, (-130, 440), |s| s.left, GAP),
+        (Direction::Down, (810, 980), |s| s.bottom, 1080.0 - GAP),
+        (Direction::Up, (810, -100), |s| s.top, GAP),
+    ];
+    for (dir, b_pos, edge, expected) in cases {
+        let mut f = Fixture::with_config(config(GAP_CONFIG));
+        f.add_output(1, (1920, 1080));
+        f.skip_baseline_check();
+        let (_a, b) = focused_a_and_b(&mut f, b_pos, (300, 200));
+        assert!(
+            !f.state().window_fully_in_viewport(&b),
+            "precondition ({dir:?}): b is clipped"
+        );
+        let camera = f.state().camera();
+
+        f.state().execute_action(&Action::FocusNearest(dir.clone()));
+
+        assert_eq!(f.state().focused_window(), Some(b.clone()), "{dir:?}");
+        assert!(
+            f.state().camera_target().is_some(),
+            "{dir:?}: a pan was armed"
+        );
+        settle(&mut f);
+        let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+        assert_near(
+            edge(&frame),
+            expected,
+            &format!("{dir:?}: b's leading edge"),
+        );
+        let moved = f.state().camera() - camera;
+        let cross_axis = match dir {
+            Direction::Left | Direction::Right => moved.y,
+            _ => moved.x,
+        };
+        assert_eq!(cross_axis, 0.0, "{dir:?}: the other axis held");
+    }
+}
+
+/// `focus_placement` is where jumps land, not walks: a directional step onto
+/// a clipped window under `"left"` still stops as soon as the window is whole
+/// rather than carrying it across to the left edge.
+#[test]
+fn focus_placement_does_not_move_where_focus_nearest_lands() {
+    let mut f = Fixture::with_config(config(&format!("focus_placement = \"left\"\n{GAP_CONFIG}")));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (100, 400));
-    // Right edge at x=2050, past the 1920 px viewport.
-    let b = window_at(&mut f, id, "b", (1750, 400));
-    origin_view(&mut f);
-    let serial = SERIAL_COUNTER.next_serial();
-    f.state().raise_and_focus(&a, serial);
+    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.right, 1920.0 - GAP, "b's right edge");
+}
+
+/// On an axis where the frame and its two gaps don't fit, the step centers
+/// the target, as a park does on that axis; the other axis still pans
+/// minimally.
+#[test]
+fn a_target_taller_than_the_view_centers_vertically_and_pans_minimally_across() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b) = focused_a_and_b(&mut f, (1750, -500), (300, 1200));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(
+        frame.bottom - frame.top,
+        1200.0,
+        "precondition: b is 1200 tall",
+    );
+    assert_near(frame.right, 1920.0 - GAP, "b's right edge");
+    assert_near(frame.center().y, 540.0, "b's vertical center");
+}
+
+/// The gap is canvas px, like the placement inset: zoomed out to 0.5 it
+/// shows half as wide, and the step leaves the zoom alone.
+#[test]
+fn the_gap_scales_with_zoom() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    // At zoom 0.5 the view spans canvas (0,0)–(3840,2160); b's right edge at
+    // canvas 4000 hangs past it.
+    let (_a, b) = focused_a_and_b(&mut f, (3700, 980), (300, 200));
+    f.state().with_output_state(|os| os.zoom = 0.5);
     assert!(
         !f.state().window_fully_in_viewport(&b),
         "precondition: b is clipped"
@@ -119,20 +255,38 @@ fn a_clipped_target_pans_in_onto_the_placement_point() {
 
     f.state()
         .execute_action(&Action::FocusNearest(Direction::Right));
-
-    assert_eq!(f.state().focused_window(), Some(b.clone()));
-    assert!(f.state().camera_target().is_some(), "a pan was armed");
     settle(&mut f);
 
-    let gap = f.state().config.snap_outer_gap;
-    let zoom = f.state().zoom();
-    let usable = f.state().get_usable_area();
-    let (x_low, _) = frame_on_screen(&mut f, &StageWindow::Client(b));
-    let expected = usable.loc.x as f64 + gap * zoom;
-    assert!(
-        (x_low - expected).abs() < 1e-6,
-        "b parks on the left placement point: {x_low} vs {expected}"
+    assert_eq!(f.state().zoom(), 0.5, "the zoom held");
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.right, 1920.0 - GAP * 0.5, "b's right edge");
+}
+
+/// `outer_gap` measures to the content edge with the border outside it, so a
+/// border wider than the gap would put the frame's inset past the usable
+/// edge. The step clamps it there, so the frame still lands whole.
+#[test]
+fn a_border_wider_than_the_gap_lands_the_frame_on_the_edge() {
+    let mut f = Fixture::with_config(config(
+        "[snap]\nouter_gap = 2.0\n[decorations]\nborder_width = 6\n",
+    ));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+    let elem = StageWindow::Client(b.clone());
+    assert_eq!(
+        f.state().element_border_width(&elem),
+        6,
+        "precondition: b wears the border"
     );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    settle(&mut f);
+
+    let frame = frame_on_screen(&mut f, &elem);
+    assert_near(frame.right, 1920.0, "b's right frame edge");
+    assert!(f.state().window_fully_in_viewport(&b));
 }
 
 /// `center-nearest` parks a target that is already fully on screen.
@@ -153,12 +307,29 @@ fn center_nearest_still_parks_a_fully_visible_target() {
     );
     settle(&mut f);
 
-    let (_, center) = frame_on_screen(&mut f, &StageWindow::Client(b));
+    let center = frame_on_screen(&mut f, &StageWindow::Client(b)).center();
     let vc = f.state().usable_center_screen();
     assert!(
         (center.x - vc.x).abs() < 1e-6 && (center.y - vc.y).abs() < 1e-6,
         "b settles on the viewport center: {center:?} vs {vc:?}"
     );
+}
+
+/// `center-nearest` onto a clipped target parks it on `focus_placement`, not
+/// the minimal pan `focus-nearest` takes.
+#[test]
+fn center_nearest_still_parks_a_clipped_target_on_the_placement_point() {
+    let mut f = Fixture::with_config(config(&format!("focus_placement = \"left\"\n{GAP_CONFIG}")));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+
+    f.state()
+        .execute_action(&Action::CenterNearest(Direction::Right));
+    settle(&mut f);
+
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.left, GAP, "b's left edge");
 }
 
 /// A bare `navigation.anchors` point is handled as `center-nearest` handles
@@ -231,10 +402,11 @@ fn a_fully_visible_stand_in_is_focused_in_place() {
     f.state().dismiss_suspended(sid);
 }
 
-/// A clipped stand-in pans in like a clipped window.
+/// A clipped stand-in pans in like a clipped window: just far enough to show
+/// its frame, bar included, `outer_gap` in from the edge.
 #[test]
-fn a_clipped_stand_in_pans_in() {
-    let mut f = Fixture::new();
+fn a_clipped_stand_in_pans_in_just_far_enough() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -259,10 +431,11 @@ fn a_clipped_stand_in_pans_in() {
     );
     assert!(f.state().camera_target().is_some(), "and a pan was armed");
     settle(&mut f);
-    let s = f.state().find_suspended(sid).unwrap();
+    let s = StageWindow::Suspended(f.state().find_suspended(sid).unwrap());
+    let frame = frame_on_screen(&mut f, &s);
+    assert_near(frame.right, 1920.0 - GAP, "the stand-in's right edge");
     assert!(
-        f.state()
-            .window_fully_in_viewport(&StageWindow::Suspended(s)),
+        f.state().window_fully_in_viewport(&s),
         "the stand-in is on screen once the pan lands"
     );
 

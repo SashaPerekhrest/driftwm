@@ -5,7 +5,7 @@ use smithay::{
     wayland::seat::WaylandFocus,
 };
 
-use crate::state::{DriftWm, HomeReturn, NavZoom, StageWindow};
+use crate::state::{DriftWm, HomeReturn, NavZoom, RevealPan, StageWindow};
 use driftwm::canvas::{self};
 use driftwm::config::{Action, Direction, LayoutSwitch, Modifiers, SendEvents, TrackpadState};
 use driftwm::window_ext::WindowExt;
@@ -278,7 +278,7 @@ impl DriftWm {
             }
             Action::FocusNearest(dir) => {
                 match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
-                    Some(NavTarget::Window(elem)) => self.reveal_element(&elem, NavZoom::Keep),
+                    Some(NavTarget::Window(elem)) => self.reveal_element(&elem, RevealPan::Minimal),
                     Some(NavTarget::Anchor(p)) => self.center_on_anchor(p),
                     None => {}
                 }
@@ -301,7 +301,7 @@ impl DriftWm {
                 // Mark the focus change this navigate causes as cycle-initiated so
                 // `focus_changed` freezes the history instead of committing.
                 self.cycle_navigating = true;
-                self.reveal_element(&StageWindow::Client(window), NavZoom::Keep);
+                self.reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
                 self.cycle_navigating = false;
                 // A truly modifier-less fire (gesture, bare wheel, IPC) has no key
                 // release to end the session, so each fire is a single step with a
