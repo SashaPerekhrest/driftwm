@@ -616,7 +616,9 @@ impl XdgShellHandler for DriftWm {
 ///
 /// A pen's press grabs the pointer with no focus when the client under it
 /// takes the tool, so for that client the pen's own grab has to vouch: the
-/// tip that went down on it carried `serial`, the one the client cites.
+/// tip that went down on it carried `serial`, the one the client cites. The
+/// pointer grab must hold that serial too, which only the press forwarded to
+/// the client gives it — not a grab a binding took for the same tip.
 fn check_grab(
     pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
     pen: Option<&TabletToolHandle<DriftWm>>,
@@ -627,7 +629,7 @@ fn check_grab(
     let focus = match &start_data.focus {
         Some((focus, _)) => focus.clone(),
         None => {
-            pen.filter(|tool| tool.has_grab(serial))?
+            pen.filter(|tool| tool.has_grab(serial) && pointer.has_grab(serial))?
                 .grab_start_data()?
                 .focus?
                 .0

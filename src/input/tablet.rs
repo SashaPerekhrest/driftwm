@@ -237,9 +237,9 @@ impl DriftWm {
             tool.frame(self, time);
         }
 
-        // The press reuses the tip's serial: a client on tablet-v2 cites that
-        // one to start a drag, which smithay accepts only against the pointer
-        // grab this press installs.
+        // A forwarded press reuses the tip's serial: a client on tablet-v2
+        // cites that one to start a drag, which smithay accepts only against
+        // the pointer grab the press installs.
         self.on_pointer_button::<I, _>(
             TabletTipButtonEvent::new(event, button_state),
             Some(serial),

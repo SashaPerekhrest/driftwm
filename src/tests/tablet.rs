@@ -1334,3 +1334,60 @@ fn a_tip_after_a_mouse_motion_stays_off_wl_pointer() {
         "the tip must not also arrive as an emulated wl_pointer button: {buttons:?}"
     );
 }
+
+/// A press a compositor binding consumes still reaches a tablet client as the
+/// tool's `down`. That serial must not let the client swap the binding's grab
+/// for a move of its own: Super and a pen drag on a window pan the canvas, as
+/// they do with a mouse, whatever the client asks for under the tip.
+#[test]
+fn a_tablet_client_cannot_turn_a_bound_pen_drag_into_a_move() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+    let window = window_by_app_id(&mut f, "canvas").unwrap();
+    let at = origin + Point::from((100.0, 100.0));
+    key_press(&mut f, KEY_LEFTMETA);
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, id, at);
+    let before = f.state().stage.position_of(&window).unwrap();
+    let camera = f.state().camera();
+
+    f.client(id).window(&surface).move_(serial);
+    f.roundtrip(id);
+    pen_to(&mut f, &device, at + Point::from((60.0, 40.0)));
+
+    assert_eq!(
+        f.state().stage.position_of(&window).unwrap(),
+        before,
+        "the client must not take the binding's drag for a window move"
+    );
+    assert_ne!(
+        f.state().camera(),
+        camera,
+        "the pan the binding started carries on"
+    );
+}
+
+/// The drag counterpart: smithay starts a drag for any pointer grab holding
+/// the cited serial, so a binding's grab must not hold the tip's.
+#[test]
+fn a_tablet_client_cannot_turn_a_bound_pen_drag_into_a_drag_and_drop() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+    f.client(id).get_data_device();
+    f.double_roundtrip(id);
+    let at = origin + Point::from((100.0, 100.0));
+    key_press(&mut f, KEY_LEFTMETA);
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, id, at);
+    let camera = f.state().camera();
+
+    f.client(id).start_drag(&surface, serial);
+    f.roundtrip(id);
+    pen_to(&mut f, &device, at + Point::from((60.0, 40.0)));
+
+    assert_ne!(
+        f.state().camera(),
+        camera,
+        "the pan the binding started carries on instead of a drag"
+    );
+}

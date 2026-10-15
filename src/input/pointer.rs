@@ -203,12 +203,15 @@ impl DriftWm {
     /// 2. Normal click on window → focus + raise + forward to client
     /// 3. Left-click on empty canvas → pan canvas
     ///
-    /// `serial` is one another stream already announced this press with, or
-    /// `None` to mint one.
+    /// `forward_serial` is one another stream already announced this press
+    /// with. It goes only on a press forwarded to a client, and so on the
+    /// implicit grab that press installs; a grab the compositor takes for a
+    /// binding gets a serial of its own, or a client holding the other
+    /// stream's could cite it to replace that grab.
     pub(super) fn on_pointer_button<I: InputBackend, E: PointerButtonEvent<I>>(
         &mut self,
         event: E,
-        serial: Option<Serial>,
+        forward_serial: Option<Serial>,
     ) {
         let button = event.button_code();
         let button_state = event.state();
@@ -223,7 +226,8 @@ impl DriftWm {
         // the finger lands — and the routing below reads `pointer_over_layer`
         // and focus, which are only as fresh as the last pull.
         self.refresh_pointer_focus();
-        let serial = serial.unwrap_or_else(|| SERIAL_COUNTER.next_serial());
+        let serial = SERIAL_COUNTER.next_serial();
+        let forward_serial = forward_serial.unwrap_or(serial);
         let pointer = self.seat.get_pointer().unwrap();
 
         // Buffer BTN_MIDDLE release while a pending click is waiting
@@ -366,7 +370,7 @@ impl DriftWm {
                             &ButtonEvent {
                                 button,
                                 state: button_state,
-                                serial,
+                                serial: forward_serial,
                                 time: Event::time_msec(&event),
                             },
                         );
@@ -382,14 +386,14 @@ impl DriftWm {
                 if button_state == ButtonState::Pressed {
                     let layer = pen_pick.unwrap_or_else(|| pointer.current_focus().map(|f| f.0));
                     self.focus_layer_if_on_demand(layer, serial);
-                    self.maybe_grab_screen_space_click(&pointer, button, serial);
+                    self.maybe_grab_screen_space_click(&pointer, button, forward_serial);
                 }
                 pointer.button(
                     self,
                     &ButtonEvent {
                         button,
                         state: button_state,
-                        serial,
+                        serial: forward_serial,
                         time: Event::time_msec(&event),
                     },
                 );
@@ -406,6 +410,7 @@ impl DriftWm {
                 button,
                 button_state,
                 serial,
+                forward_serial,
                 mods,
                 Event::time_msec(&event),
             ) {
@@ -722,7 +727,7 @@ impl DriftWm {
                 &ButtonEvent {
                     button,
                     state: button_state,
-                    serial,
+                    serial: forward_serial,
                     time: Event::time_msec(&event),
                 },
             );
@@ -1141,6 +1146,7 @@ impl DriftWm {
         button: u32,
         button_state: ButtonState,
         serial: smithay::utils::Serial,
+        forward_serial: smithay::utils::Serial,
         mods: smithay::input::keyboard::ModifiersState,
         time: u32,
     ) -> bool {
@@ -1249,14 +1255,14 @@ impl DriftWm {
             self.raise_and_focus(&window, serial);
         }
         if button_state == ButtonState::Pressed {
-            self.maybe_grab_screen_space_click(pointer, button, serial);
+            self.maybe_grab_screen_space_click(pointer, button, forward_serial);
         }
         pointer.button(
             self,
             &ButtonEvent {
                 button,
                 state: button_state,
-                serial,
+                serial: forward_serial,
                 time,
             },
         );
