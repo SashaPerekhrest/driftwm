@@ -14,7 +14,7 @@ use smithay::utils::{Point, SERIAL_COUNTER};
 
 use crate::state::{NavZoom, StageWindow};
 
-use super::{Fixture, client::ClientId, map_window, settle, window_by_app_id};
+use super::{Fixture, TICK, client::ClientId, map_window, settle, window_by_app_id};
 
 /// Map toplevels a, b, c on a fresh client; focus history ends [c, b, a].
 /// Returns the client so callers can map more windows.
@@ -262,6 +262,23 @@ fn an_off_screen_step_still_pans_in() {
     );
 }
 
+/// Place a, b, c at fixed canvas spots and park the view at the canvas origin,
+/// zoom 1, nothing in flight.
+fn place_three(f: &mut Fixture, a: (i32, i32), b: (i32, i32), c: (i32, i32)) {
+    for (app_id, pos) in [("a", a), ("b", b), ("c", c)] {
+        let window = window_by_app_id(f, app_id).unwrap();
+        f.state()
+            .map_window(StageWindow::Client(window), Point::from(pos), false);
+    }
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((0.0, 0.0));
+        os.camera_target = None;
+        os.zoom = 1.0;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+}
+
 /// Tab-Tab faster than the animation: the second step lands on a window that
 /// is on screen at this frame but not where the first step's pan is heading,
 /// so it must re-target the pan rather than focus in place.
@@ -273,12 +290,8 @@ fn a_step_mid_pan_retargets_the_pan() {
     three_windows(&mut f);
     let win_a = window_by_app_id(&mut f, "a").unwrap();
     let win_b = window_by_app_id(&mut f, "b").unwrap();
-    f.state().map_window(
-        StageWindow::Client(win_b.clone()),
-        Point::from((6000, 6000)),
-        false,
-    );
-    settle(&mut f);
+    // Parking b on the center carries a off screen.
+    place_three(&mut f, (800, 400), (2600, 400), (100, 400));
 
     held_cycle_step(&mut f);
     let toward_b = f
@@ -286,6 +299,15 @@ fn a_step_mid_pan_retargets_the_pan() {
         .camera_target()
         .expect("the pan toward b is armed");
     assert_eq!(f.state().focused_window(), Some(win_b));
+    // The first frame of the flight: the zoom tick that drives a navigation
+    // pan clears `camera_target`, so it alone no longer says "in flight".
+    f.state().apply_zoom_animation(TICK);
+    assert_eq!(f.state().camera_target(), None);
+    assert!(f.state().zoom_target().is_some(), "still in flight");
+    assert!(
+        f.state().window_fully_in_viewport(&win_a),
+        "precondition: at this frame a still reads as fully on screen"
+    );
 
     held_cycle_step(&mut f);
 

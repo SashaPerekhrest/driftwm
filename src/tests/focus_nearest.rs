@@ -11,7 +11,7 @@ use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 
 use crate::state::{FocusIntent, StageWindow};
 
-use super::{Fixture, client::ClientId, config, map_window, settle, window_by_app_id};
+use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_by_app_id};
 
 /// Park the viewport at the canvas origin, zoom 1, nothing in flight: the
 /// usable area is then the canvas rect (0,0)–(1920,1080).
@@ -270,16 +270,17 @@ fn a_clipped_stand_in_pans_in() {
 }
 
 /// A step taken while the previous step's pan is still in flight re-targets
-/// the pan: the target is judged where the view will rest, not at the frame
-/// the animation happens to be on, so it is never left behind off screen.
+/// the pan rather than focusing in place, so its target is never left behind
+/// off screen while the camera carries on to the previous one.
 #[test]
 fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (100, 400));
-    let b = window_at(&mut f, id, "b", (1750, 400));
+    let a = window_at(&mut f, id, "a", (1300, 400));
+    // Far enough right that revealing it carries a off screen.
+    let b = window_at(&mut f, id, "b", (4000, 400));
     origin_view(&mut f);
     let serial = SERIAL_COUNTER.next_serial();
     f.state().raise_and_focus(&a, serial);
@@ -290,6 +291,11 @@ fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
         .state()
         .camera_target()
         .expect("the pan toward b is armed");
+    // The first frame of the flight: the zoom tick that drives a navigation
+    // pan clears `camera_target`, so it alone no longer says "in flight".
+    f.state().apply_zoom_animation(TICK);
+    assert_eq!(f.state().camera_target(), None);
+    assert!(f.state().zoom_target().is_some(), "still in flight");
     assert!(
         f.state().window_fully_in_viewport(&a),
         "precondition: at this frame a still reads as fully on screen"
