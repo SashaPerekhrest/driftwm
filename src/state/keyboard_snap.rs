@@ -90,12 +90,7 @@ impl DriftWm {
         #[allow(clippy::mutable_key_type)]
         let excludes = HashSet::new();
         let (others, bar, bw) = self.snap_targets(&element, &excludes);
-        let placed = super::fit::snap_rect_at(start.loc, start.size, bar, bw);
-        // A client that rounds to a cell answers short of, or past, the stop
-        // it was asked for. Walking on from that answer would find the same
-        // stop and re-ask for it on every press, so walk from the request too.
-        let requested =
-            super::fit::snap_rect_at(start.loc, self.requested_element_size(&element), bar, bw);
+        let frame = super::fit::snap_rect_at(start.loc, start.size, bar, bw);
         let Some(output) = self.output_for_window(&element) else {
             return;
         };
@@ -106,23 +101,26 @@ impl DriftWm {
         let fence = self
             .usable_canvas_bounds(&output)
             .inset(self.config.outer_frame_inset(bw));
-        if !requested.overlaps(&fence) {
+        if !frame.overlaps(&fence) {
             return;
         }
-        let q = self.stop_query(&requested, horizontal);
-        let (placed_edge, requested_edge, anchor, bound) = if horizontal {
-            (placed.x_high, requested.x_high, placed.x_low, fence.x_high)
+        let q = self.stop_query(&frame, horizontal);
+        // A client that rounds to a cell answers short of, or past, the stop
+        // it was asked for. Walking on from that answer would find the same
+        // stop and re-ask for it on every press, so the walk also has to pass
+        // the edge it asked for — which a rounded answer that happened to land
+        // on another stop is already beyond.
+        let requested =
+            super::fit::snap_rect_at(start.loc, self.requested_element_size(&element), bar, bw);
+        let (edge, requested_edge, anchor, bound) = if horizontal {
+            (frame.x_high, requested.x_high, frame.x_low, fence.x_high)
         } else {
-            (placed.y_high, requested.y_high, placed.y_low, fence.y_high)
+            (frame.y_high, requested.y_high, frame.y_low, fence.y_high)
         };
-        // Beyond both, so a stop the rounding happened to land on counts as
-        // reached rather than becoming a step of nothing.
         let target = if grow {
-            let edge = placed_edge.max(requested_edge);
-            snap::next_grow_line(edge, bound, &others, &q)
+            snap::next_grow_line(edge, edge.max(requested_edge), bound, &others, &q)
         } else {
-            let edge = placed_edge.min(requested_edge);
-            snap::next_shrink_line(edge, anchor, bound, &others, &q)
+            snap::next_shrink_line(edge.min(requested_edge), anchor, bound, &others, &q)
         };
         let Some(target) = target else {
             return;
@@ -132,9 +130,7 @@ impl DriftWm {
         } else {
             Direction::Down
         };
-        // `step_resize` adds the step to the placed size.
-        let step = (target - placed_edge).round() as i32;
-        self.step_resize(&element, start, &axis, step);
+        self.step_resize(&element, start, &axis, (target - edge).round() as i32);
     }
 
     /// The query for `frame`'s stops along one axis, with the alignment band a

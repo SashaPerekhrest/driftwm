@@ -299,10 +299,18 @@ fn edge_lines<'a>(
         .chain(std::iter::once(bound))
 }
 
-/// Where the primary's high edge at `edge` grows to next: the nearest stop
-/// offered that edge within `bound`, else `bound` itself — but never past the
-/// dock against the nearest window ahead, which growing on would cover.
-pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery) -> Option<f64> {
+/// Where the primary's high edge, at `edge` now, grows to next: the nearest
+/// stop offered that edge past `from` — `edge`, or further out when the walk
+/// is already heading there — within `bound`, else `bound` itself. Never past
+/// the dock against the nearest window ahead of `edge`, which growing on would
+/// cover.
+pub fn next_grow_line(
+    edge: f64,
+    from: f64,
+    bound: f64,
+    others: &[SnapRect],
+    q: &StopQuery,
+) -> Option<f64> {
     // A window the frame already overlaps meets it behind `edge`, so it isn't
     // in the way.
     let dock = stops(others, q)
@@ -311,7 +319,7 @@ pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery)
         .map(|s| s.at)
         .reduce(f64::min);
     let reach = dock.map_or(bound, |dock| dock.min(bound));
-    nearest_beyond(edge, true, edge_lines(reach, others, q))
+    nearest_beyond(from, true, edge_lines(reach, others, q))
 }
 
 /// Where the primary's high edge at `edge` pulls back to next: the nearest
@@ -821,10 +829,16 @@ mod tests {
             rect(0.0, 112.0, 500.0, 100.0),
         ];
         let q = query(true);
-        assert_eq!(next_grow_line(400.0, 1000.0, &others, &q), Some(500.0));
-        assert_eq!(next_grow_line(500.0, 1000.0, &others, &q), Some(588.0));
         assert_eq!(
-            next_grow_line(588.0, 1000.0, &others, &q),
+            next_grow_line(400.0, 400.0, 1000.0, &others, &q),
+            Some(500.0)
+        );
+        assert_eq!(
+            next_grow_line(500.0, 500.0, 1000.0, &others, &q),
+            Some(588.0)
+        );
+        assert_eq!(
+            next_grow_line(588.0, 588.0, 1000.0, &others, &q),
             None,
             "growing on would cover the neighbour"
         );
@@ -833,7 +847,24 @@ mod tests {
     #[test]
     fn a_grow_closer_than_the_gap_to_a_neighbour_goes_nowhere() {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
-        assert_eq!(next_grow_line(595.0, 1000.0, &others, &query(true)), None);
+        assert_eq!(
+            next_grow_line(595.0, 595.0, 1000.0, &others, &query(true)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_grow_walking_on_past_its_edge_still_stops_at_a_window_its_frame_meets() {
+        // The frame ends at 685 but the walk is already heading for 700; the
+        // window docked at 697 sits in between.
+        let others = [
+            rect(697.0, 50.0, 400.0, 100.0),
+            rect(0.0, 112.0, 700.0, 100.0),
+        ];
+        assert_eq!(
+            next_grow_line(685.0, 700.0, 1820.0, &others, &query(true)),
+            None
+        );
     }
 
     #[test]
@@ -843,7 +874,7 @@ mod tests {
             rect(700.0, 50.0, 200.0, 100.0),
         ];
         assert_eq!(
-            next_grow_line(400.0, 1000.0, &others, &query(true)),
+            next_grow_line(400.0, 400.0, 1000.0, &others, &query(true)),
             Some(688.0)
         );
     }
@@ -852,7 +883,7 @@ mod tests {
     fn a_grow_ignores_a_neighbour_line_past_the_bound() {
         let others = [rect(1100.0, 50.0, 200.0, 100.0)];
         assert_eq!(
-            next_grow_line(400.0, 1000.0, &others, &query(true)),
+            next_grow_line(400.0, 400.0, 1000.0, &others, &query(true)),
             Some(1000.0)
         );
     }
@@ -860,7 +891,7 @@ mod tests {
     #[test]
     fn a_grow_with_no_neighbour_reaches_the_bound() {
         assert_eq!(
-            next_grow_line(400.0, 1000.0, &[], &query(true)),
+            next_grow_line(400.0, 400.0, 1000.0, &[], &query(true)),
             Some(1000.0)
         );
     }
@@ -951,20 +982,23 @@ mod tests {
             }
         }
 
-        /// A grow never covers a window the frame wasn't already over, and
-        /// never passes the bound.
+        /// A grow never covers a window the frame wasn't already over, even
+        /// when the walk is already heading past its edge, and never passes
+        /// the bound.
         #[test]
         fn a_grow_never_covers_a_window(
             anchor in -1000.0..1000.0f64,
             width in 20.0..600.0f64,
+            ahead in 0.0..40.0f64,
             bound in -1000.0..2000.0f64,
             others in prop::collection::vec(any_rect(), 0..6),
         ) {
             let q = query(true);
             let edge = anchor + width;
+            let from = edge + ahead;
             let frame = |high: f64| rect(anchor, q.perp_low, high - anchor, q.perp_high - q.perp_low).inset(ON_STOP);
-            if let Some(line) = next_grow_line(edge, bound, &others, &q) {
-                prop_assert!(line - edge > ON_STOP);
+            if let Some(line) = next_grow_line(edge, from, bound, &others, &q) {
+                prop_assert!(line - from > ON_STOP);
                 prop_assert!(line <= bound);
                 let covered = others
                     .iter()

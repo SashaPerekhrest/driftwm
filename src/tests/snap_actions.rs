@@ -380,6 +380,40 @@ fn resize_to_snap_walks_on_past_a_cell_rounded_answer() {
     assert_eq!(window_position(&mut f, &a), Point::from((100, 100)));
 }
 
+/// What a grow would cover is judged from the frame the client committed, not
+/// the one it was asked for: a window docked against the rounded edge sits
+/// between the two, and growing on would cover it.
+#[test]
+fn resize_to_snap_stops_at_a_window_docked_against_a_rounded_answer() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    // Below `a`, offering its right edge at 700 as an alignment.
+    window_at(&mut f, id, "c", (100, 412), (600, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (600, 300));
+    ack_with_size(&mut f, id, &surface, (585, 300));
+    // Docked snap.gap off the edge `a` committed, at 685.
+    window_at(&mut f, id, "n", (697, 100), (400, 300));
+    focus(&mut f, &a);
+    // The refocus configure carries the size asked for again, and the client
+    // rounds it the same way.
+    ack_with_size(&mut f, id, &surface, (585, 300));
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    let configures = configure_count(&mut f, id, &surface);
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(
+        configure_count(&mut f, id, &surface),
+        configures,
+        "docked against n already: no configure"
+    );
+}
+
 /// A rounded answer that lands exactly on another stop has reached it: the
 /// walk goes on past it rather than re-asking for the size the window already
 /// has.

@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc b17fa32bdd9355c0fac0b9323526f87caa29528d564f9ffc32e02326bb5ed5cd # shrinks to anchor = -659.4577314261157, width = 137.55881470074337, bound = 0.0, others = [SnapRect { x_low: -522.3181241200776, x_high: -502.31812412007764, y_low: 0.0, y_high: 20.0 }]
 cc 71e76b8a4bdda74ed480cd982b5e5d285bdc304674dae6d5994c6ae2caba310b # shrinks to from = -322.43016366959154, forward = false, extent = 553.8833546907758, others = [SnapRect { x_low: -357.6578216470843, x_high: -327.9889402592885, y_low: 0.0, y_high: 20.0 }, SnapRect { x_low: 0.0, x_high: 20.0, y_low: 0.0, y_high: 20.0 }]
+cc 9fbdf70c6270190673485b86abb09e8900243380c2d351ba0b3d0bff1fd73941 # shrinks to anchor = 106.85511614253488, width = 368.8194397161628, ahead = 24.427393476538377, bound = 832.7219491998804, others = [SnapRect { x_low: 493.5983615223468, x_high: 513.5983615223467, y_low: 0.0, y_high: 20.0 }]
