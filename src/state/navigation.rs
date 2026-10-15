@@ -117,7 +117,7 @@ impl DriftWm {
 
     /// Focus + raise a stage element, panning the camera to it only when it
     /// isn't already fully on screen, unlike the centering navigations, which
-    /// always park. `pan` picks how far that pan goes.
+    /// always park.
     pub fn reveal_element(&mut self, element: &StageWindow, pan: RevealPan) {
         // Judged where the view will land, not at the current frame of a
         // flight still under way: a step onto a window the flight is about to
@@ -720,9 +720,8 @@ impl DriftWm {
     }
 
     /// Whether the active output's view at `camera` and `zoom` shows `w` as
-    /// fully as any pan could: its frame inside the usable area, or centered
-    /// on an axis it is too big for — where a `focus-nearest` reveal leaves
-    /// it, measured on the same frame.
+    /// fully as any pan could: its frame inside the usable area, or centered on
+    /// an axis it is too big for, as a `focus-nearest` reveal leaves it.
     pub fn window_shown_as_fully_at(
         &self,
         w: &StageWindow,

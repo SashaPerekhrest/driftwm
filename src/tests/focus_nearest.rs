@@ -112,7 +112,6 @@ fn frame_on_screen(f: &mut Fixture, elem: &StageWindow) -> ScreenFrame {
     }
 }
 
-/// Picks one edge out of a [`ScreenFrame`].
 type Edge = fn(&ScreenFrame) -> f64;
 
 fn assert_near(actual: f64, expected: f64, what: &str) {
@@ -467,8 +466,8 @@ fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
         .state()
         .camera_target()
         .expect("the pan toward b is armed");
-    // The first frame of the flight: the zoom tick that drives a navigation
-    // pan clears `camera_target`, so it alone no longer says "in flight".
+    // One frame in: the zoom tick driving a navigation pan has cleared
+    // `camera_target`, though the flight is still under way.
     f.state().apply_zoom_animation(TICK);
     assert_eq!(f.state().camera_target(), None);
     assert!(f.state().zoom_target().is_some(), "still in flight");

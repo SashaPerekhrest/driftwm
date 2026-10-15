@@ -34,8 +34,7 @@ fn cycle_forward(f: &mut Fixture) {
 }
 
 /// One step of a held-modifier cycle: the `CycleWindows` arm's step without
-/// its modifier-gated `end_cycle`. Stands in for a real held modifier the
-/// fixture can't inject.
+/// its modifier-gated `end_cycle`.
 fn held_cycle_step(f: &mut Fixture) {
     f.state().step_cycle(false);
 }
@@ -292,8 +291,8 @@ fn a_step_mid_pan_retargets_the_pan() {
         .camera_target()
         .expect("the pan toward b is armed");
     assert_eq!(f.state().focused_window(), Some(win_b));
-    // The first frame of the flight: the zoom tick that drives a navigation
-    // pan clears `camera_target`, so it alone no longer says "in flight".
+    // One frame in: the zoom tick driving a navigation pan has cleared
+    // `camera_target`, though the flight is still under way.
     f.state().apply_zoom_animation(TICK);
     assert_eq!(f.state().camera_target(), None);
     assert!(f.state().zoom_target().is_some(), "still in flight");

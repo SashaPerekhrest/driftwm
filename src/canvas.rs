@@ -482,9 +482,8 @@ pub fn zoom_anchor_camera(
 }
 
 /// The camera nearest `camera` that shows `frame` (canvas px) whole inside
-/// `usable` (screen px) at `zoom`, `inset` canvas px clear of its edges — the
-/// least pan that reveals it. On an axis where the frame and both insets don't
-/// fit, the frame centers on that axis instead, as a placement does.
+/// `usable` (screen px) at `zoom`, `inset` canvas px clear of its edges. On an
+/// axis where the frame and both insets don't fit, the frame centers instead.
 pub fn minimal_reveal_camera(
     frame: &SnapRect,
     camera: Point<f64, Logical>,
