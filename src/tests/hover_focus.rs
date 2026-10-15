@@ -2,8 +2,10 @@
 //! focus by hover must also flip the xdg-toplevel `Activated` state exclusively
 //! — matching what a click/raise already does — without raising the window.
 
+use driftwm::stage::PinnedSite;
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+use smithay::wayland::compositor::get_parent;
 
 use crate::decorations::DecorationHit;
 use crate::input::PinnedChrome;
@@ -494,6 +496,142 @@ size = [400, 300]
     assert!(
         is_activated(&pin),
         "hovering the pin's title bar must focus the pin drawn under the pointer"
+    );
+    assert!(!is_activated(&beneath));
+}
+
+/// A pin's resize band is invisible, so hovering it over a lower pin is
+/// hovering the lower pin — the same rule that lets a canvas window under an
+/// overhanging band take focus. Under the default `resize_on_border` the band
+/// is a live chrome hit, and rejecting it must not hand the point to the canvas
+/// window drawn behind both pins.
+#[test]
+fn hover_on_a_pins_resize_band_over_a_lower_pin_focuses_the_lower_pin() {
+    let mut f = Fixture::with_config(config(
+        r#"
+focus_follows_mouse = true
+
+[[window_rules]]
+app_id = "lower"
+pinned_to_screen = true
+size = [400, 300]
+
+[[window_rules]]
+app_id = "upper"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "lower", (400, 300));
+    let lower = window_by_app_id(&mut f, "lower").unwrap();
+    map_window(&mut f, id, "upper", (400, 300));
+    let upper = window_by_app_id(&mut f, "upper").unwrap();
+
+    // The upper pin's left edge halfway across the lower one, so its left band
+    // lies over the lower pin's content.
+    let lower_site = f.state().stage.pin_of(&lower).unwrap().clone();
+    let upper_site = PinnedSite {
+        output: lower_site.output.clone(),
+        screen_pos: lower_site.screen_pos + Point::from((200, 0)),
+    };
+    f.state().stage.set_pin(&upper, upper_site.clone());
+
+    let screen = Point::from((
+        upper_site.screen_pos.x as f64 - 4.0,
+        upper_site.screen_pos.y as f64 + 150.0,
+    ));
+    let canvas = to_canvas(&mut f, screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(screen),
+            PinnedChrome::Hit(ref w, DecorationHit::ResizeBorder(_)) if *w == upper
+        ),
+        "precondition: the probe point must land on the upper pin's resize band"
+    );
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    place(
+        &mut f,
+        &beneath,
+        Point::from((canvas.x as i32 - 80, canvas.y as i32 - 70)),
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&lower),
+        "precondition: the lower pin starts unfocused"
+    );
+
+    f.state().warp_pointer(canvas);
+    f.state().maybe_hover_focus(canvas);
+
+    assert!(
+        is_activated(&lower),
+        "the lower pin is what is drawn under the upper pin's invisible band"
+    );
+    assert!(!is_activated(&beneath));
+    assert!(!is_activated(&upper));
+}
+
+/// A subsurface is part of the pin as drawn, but it is not the toplevel's own
+/// surface — a lookup that matches only that one finds no window to focus.
+#[test]
+fn hover_on_a_pins_subsurface_focuses_the_pin() {
+    let mut f = Fixture::with_config(config(
+        r#"
+focus_follows_mouse = true
+
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let pin_surface = map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+    f.client(id)
+        .create_subsurface(&pin_surface, (100, 80), (120, 90));
+    f.double_roundtrip(id);
+
+    let screen = Point::from((site.x as f64 + 150.0, site.y as f64 + 120.0));
+    let canvas = to_canvas(&mut f, screen);
+    let focus = f
+        .state()
+        .pointer_focus_under(screen, canvas)
+        .map(|(t, _)| t.0);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|s| *s != server_surface(&pin) && get_parent(s).is_some()),
+        "precondition: the probe point must land on the pin's subsurface, got {focus:?}"
+    );
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    place(
+        &mut f,
+        &beneath,
+        Point::from((canvas.x as i32 - 80, canvas.y as i32 - 70)),
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused"
+    );
+
+    f.state().warp_pointer(canvas);
+    f.state().maybe_hover_focus(canvas);
+
+    assert!(
+        is_activated(&pin),
+        "hovering the pin's subsurface must focus the pin"
     );
     assert!(!is_activated(&beneath));
 }

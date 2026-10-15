@@ -677,20 +677,7 @@ impl DriftWm {
             self.zoom(),
         )
         .0;
-        if let Some((focus, _)) = self.pinned_window_under(screen_pos, canvas_pos) {
-            let Some(window) = self.window_for_surface(&focus.0) else {
-                return;
-            };
-            self.hover_focus_window(window);
-            return;
-        }
-        // Chrome gives no pointer focus, so `pinned_window_under` misses it,
-        // but the bar and close button are still the pin's for hover. Its resize
-        // band is rejected like a canvas window's below and falls through to the
-        // canvas walk only — a lower pin under the band is not probed.
-        if let PinnedChrome::Hit(window, hit) = self.pinned_decoration_under(screen_pos)
-            && !matches!(hit, DecorationHit::ResizeBorder(_))
-        {
+        if let Some(window) = self.pinned_hover_target(screen_pos) {
             self.hover_focus_window(window);
             return;
         }
@@ -1741,6 +1728,53 @@ impl DriftWm {
             root = parent;
         }
         self.window_for_surface(&root)
+    }
+
+    /// The screen-pinned window hover may focus at `screen_pos`: the topmost
+    /// one whose surface tree or title bar is there. Resize bands are passed
+    /// over as the canvas hover walk rejects them, so a pin under another
+    /// pin's invisible band still answers instead of the canvas window drawn
+    /// behind both.
+    fn pinned_hover_target(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
+        let output_name = self.pinned_hit_output()?;
+        let bar_height = self.config.decorations.title_bar_height;
+        self.stage
+            .windows()
+            .rev()
+            .filter_map(|w| w.client())
+            .find(|&window| {
+                let Some(p) = self.stage.pin_of(window) else {
+                    return false;
+                };
+                if p.output != output_name {
+                    return false;
+                }
+                let surface_origin = p.screen_pos - window.geometry().loc;
+                if window
+                    .surface_under(screen_pos - surface_origin.to_f64(), WindowSurfaceType::ALL)
+                    .is_some()
+                {
+                    return true;
+                }
+                let has_bar = window.wl_surface().is_some_and(|s| {
+                    self.decorations
+                        .contains_key(&DecorationKey::Surface(s.id()))
+                });
+                let width = window.geometry().size.w;
+                has_bar
+                    && (crate::decorations::title_bar_contains(
+                        screen_pos,
+                        p.screen_pos,
+                        width,
+                        bar_height,
+                    ) || crate::decorations::close_button_contains(
+                        screen_pos,
+                        p.screen_pos,
+                        width,
+                        bar_height,
+                    ))
+            })
+            .cloned()
     }
 
     /// Find the Wayland surface and local coordinates under the given canvas position.
