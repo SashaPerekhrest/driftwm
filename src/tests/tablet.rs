@@ -21,14 +21,17 @@ use crate::state::StageWindow;
 
 use super::client::{ClientId, LayerConfigureProps, TabletEvent, TabletToolEvent};
 use super::input_backend::{
-    FakeDevice, FakeTabletAxes, fake_tool, pen_proximity_in, pen_proximity_in_screen,
+    FakeDevice, FakeTabletAxes, fake_tool, key_press, pen_proximity_in, pen_proximity_in_screen,
     pen_proximity_out, pen_tip_down, pen_tip_up, pen_to, pen_to_screen_with, pen_to_with,
-    pointer_to, tablet_added, tablet_removed, touch_down,
+    pointer_to, tablet_added, tablet_removed, touch_down, trackpad_scroll,
 };
 use super::popups::grow_popup;
 use super::{
     Fixture, config, keyboard_focus, map_window, pointer_focus, server_surface, window_by_app_id,
 };
+
+/// evdev code of the left Super key, the default `mod_key`.
+const KEY_LEFTMETA: u32 = 125;
 
 /// A registered pen in proximity — the state every scenario below starts from.
 fn pen_in_proximity(f: &mut Fixture, at: Point<f64, Logical>) -> FakeDevice {
@@ -1043,6 +1046,40 @@ fn a_tablet_client_binding_late_still_gets_proximity() {
             .is_some_and(|frame| frame.contains(&TabletToolEvent::ProximityIn { surface })),
         "a tool already over the window when the client binds must open with \
          proximity_in: {frames:?}"
+    );
+}
+
+/// A scroll-pan slides windows under a cursor that has not moved, and the pen
+/// still owns the pointer then. Seating the client on `wl_pointer` at that
+/// point hands a tablet client the second stream it is withheld from, and every
+/// scroll event flaps it in and out.
+#[test]
+fn a_scroll_pan_does_not_seat_a_tablet_client_under_the_pen() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+
+    let above = origin + Point::from((100.0, -30.0));
+    let device = pen_in_proximity(&mut f, above);
+    pen_to(&mut f, &device, above);
+    key_press(&mut f, KEY_LEFTMETA);
+    let touchpad = FakeDevice::touchpad();
+    for _ in 0..20 {
+        trackpad_scroll(&mut f, &touchpad);
+    }
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    assert!(
+        cursor.y > origin.y,
+        "precondition: the pan must have slid the window under the cursor, now at {cursor:?}"
+    );
+
+    f.pump(3);
+    f.double_roundtrip(id);
+
+    let positions = &f.client(id).state.pointer_positions;
+    assert!(
+        positions.is_empty(),
+        "no wl_pointer enter or motion may reach a client the pen withholds: {positions:?}"
     );
 }
 

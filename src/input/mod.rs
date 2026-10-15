@@ -834,6 +834,9 @@ impl DriftWm {
     /// Frame handling deliberately stays with the caller. Two sites group this
     /// motion with a later `axis` or `relative_motion` under one frame, and a
     /// frame emitted here would split those groups.
+    ///
+    /// Callers hand over the plain pick: this is also where a pen withholds it
+    /// ([`Self::wl_pointer_under`]), and the record holds what was left.
     pub(crate) fn dispatch_pointer_motion(
         &mut self,
         under: Option<(FocusTarget, Point<f64, Logical>)>,
@@ -841,6 +844,7 @@ impl DriftWm {
         serial: Serial,
         time: u32,
     ) {
+        let under = self.wl_pointer_under(under);
         let pointer = self.seat.get_pointer().unwrap();
         let grab = self.pointer_grab_kind(&pointer);
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
@@ -1028,9 +1032,8 @@ impl DriftWm {
             self.update_pointer_constraint(old_focus);
             return;
         }
-        // Withheld here as well as at the motion: this re-pick runs every
-        // iteration and would otherwise re-seat the pen's client one pump
-        // after the motion left it out.
+        // Withheld before the compare, which has to weigh what the dispatch
+        // below would deliver, or every pull over the pen's client re-sends.
         let under = self.wl_pointer_under(under);
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
         let focus_unchanged = delivered.as_ref().map(|(focus, _)| focus) == old_focus.as_ref();
@@ -1171,8 +1174,7 @@ impl DriftWm {
         // Promote an armed pick to a move once the drag clears the slop. Before
         // pointer.motion so the freshly installed grab receives this event.
         self.maybe_promote_pick(canvas_pos);
-        let wl_under = self.wl_pointer_under(under.clone());
-        self.dispatch_pointer_motion(wl_under, canvas_pos, serial, time);
+        self.dispatch_pointer_motion(under.clone(), canvas_pos, serial, time);
         pointer.frame(self);
         self.update_decoration_cursor(canvas_pos);
         self.update_pointer_constraint(old_focus);
