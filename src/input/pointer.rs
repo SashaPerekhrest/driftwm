@@ -1175,19 +1175,12 @@ impl DriftWm {
         // unbound press focuses it. Neither band gives pointer focus, so the
         // forward below reaches no client, but it still installs the implicit
         // grab that keeps focus off a client until release.
-        let pinned_window = match self.pinned_window_under(screen_pos, pos) {
-            Some((focus, _)) => self.window_for_surface(&focus.0),
-            None => {
-                let over_chrome = match self.pinned_decoration_under(screen_pos) {
-                    PinnedChrome::Hit(window, _) => Some(window),
-                    _ => self.pinned_resize_margin_under(screen_pos),
-                };
-                let Some(window) = over_chrome else {
-                    return false;
-                };
-                Some(window)
-            }
-        };
+        let pinned_window = self.pinned_owner_under(screen_pos);
+        // A pin's popup has no owner here, but the press is still the popup's
+        // to receive through the forward below.
+        if pinned_window.is_none() && self.pinned_window_under(screen_pos, pos).is_none() {
+            return false;
+        }
         if let Some(action) = binding
             && let Some(ref window) = pinned_window
             && !window.is_widget()

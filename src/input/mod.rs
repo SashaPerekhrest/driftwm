@@ -1683,7 +1683,7 @@ impl DriftWm {
     /// The stage element a move or resize gesture at `canvas_pos` may drag — a
     /// client window or a suspended stand-in. Shared by the trackpad and touch
     /// paths of both. Screen-pinned windows are *not* resolved here; they
-    /// hit-test in screen space and each caller checks `pinned_element_under`
+    /// hit-test in screen space and each caller checks `pinned_owner_under`
     /// first.
     ///
     /// Pinned is a *skip* inside the walk — a pinned window's stale canvas rect
@@ -1698,8 +1698,10 @@ impl DriftWm {
         self.is_canvas_window(&element).then_some(element)
     }
 
-    /// The screen-pinned window under an output-relative screen position:
-    /// `pinned_window_under` resolved from focus surface to window element.
+    /// The screen-pinned window whose content is under an output-relative
+    /// screen position: `pinned_window_under` resolved from focus surface to
+    /// window element. Chrome gives no pointer focus, so a pin's title bar and
+    /// resize margin answer `None` here — `pinned_owner_under` covers them.
     ///
     /// The walk up to the root follows subsurface parents only, so a point over
     /// a pinned window's xdg *popup* resolves to no window rather than to the
@@ -1707,7 +1709,34 @@ impl DriftWm {
     /// owns the input before any of this runs.
     pub(crate) fn pinned_element_under(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
         let (target, _) = self.pinned_window_under(screen_pos, screen_pos)?;
-        let mut root = target.0;
+        self.window_for_subsurface_root(target.0)
+    }
+
+    /// The screen-pinned window that owns an output-relative screen position:
+    /// its content as `pinned_element_under` resolves it, else its title bar,
+    /// close button or resize margin, live or inert. For paths that act on the
+    /// window itself — a press, a gesture grab, a tap — where a `None` over
+    /// chrome would fall to the canvas walk, which skips pins and reaches the
+    /// window drawn behind this one.
+    pub(crate) fn pinned_owner_under(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
+        if let Some((target, _)) = self.pinned_window_under(screen_pos, screen_pos) {
+            return self.window_for_subsurface_root(target.0);
+        }
+        match self.pinned_decoration_under(screen_pos) {
+            PinnedChrome::Hit(window, _) => Some(window),
+            // The chrome walk passes over an inert margin, so `Covered` can come
+            // from a lower pin's content beneath one.
+            PinnedChrome::Covered | PinnedChrome::Miss => {
+                self.pinned_resize_margin_under(screen_pos)
+            }
+        }
+    }
+
+    fn window_for_subsurface_root(
+        &self,
+        surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    ) -> Option<Window> {
+        let mut root = surface;
         while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
             root = parent;
         }

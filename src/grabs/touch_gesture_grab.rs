@@ -187,7 +187,7 @@ impl TouchGestureGrab {
         // stay grab-proof like on the canvas.
         let (camera, zoom) = self.camera_zoom();
         let finger_screen = canvas_to_screen(CanvasPos(event.location), camera, zoom).0;
-        if let Some(window) = data.pinned_element_under(finger_screen) {
+        if let Some(window) = data.pinned_owner_under(finger_screen) {
             if window.is_widget() {
                 return false;
             }
@@ -247,7 +247,7 @@ impl TouchGestureGrab {
 
         // Pinned windows resize in screen space; `build_touch_resize_grab`
         // resolves the pinned anchor itself (snapped is moot — no cluster).
-        if let Some(window) = data.pinned_element_under(screen_centroid) {
+        if let Some(window) = data.pinned_owner_under(screen_centroid) {
             if window.is_widget() {
                 return false;
             }
@@ -411,12 +411,12 @@ impl TouchGestureGrab {
         // every other widget this function reaches gets the same treatment.
         //
         // `focus_at` is screen space against `self.output`, captured at grab
-        // start, while `pinned_element_under` filters pins by the *active*
+        // start, while `pinned_owner_under` filters pins by the *active*
         // output. They agree because touch-down sets the active output to the
         // one under the finger; a pointer motion to another output between the
         // finger's down and up would break that.
         let under = data
-            .pinned_element_under(focus_at)
+            .pinned_owner_under(focus_at)
             .or_else(|| data.element_under_raw(canvas).map(|(w, _)| w.clone()));
         if let Some(window) = &under {
             data.raise_and_focus(window, serial);
