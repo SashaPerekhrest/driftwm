@@ -839,6 +839,27 @@ impl DriftWm {
             .cloned()
     }
 
+    /// One Alt-Tab step: select the next window in the cycle and reveal it,
+    /// leaving the session open. `false` when there is no window to step to.
+    pub fn step_cycle(&mut self, backward: bool) -> bool {
+        let anchor = self.cycle_anchor();
+        let Some(window) = self
+            .stage
+            .cycle_step(backward, anchor.as_ref())
+            .as_ref()
+            .and_then(|w| w.client())
+            .cloned()
+        else {
+            return false;
+        };
+        // Mark the focus change this navigate causes as cycle-initiated so
+        // `focus_changed` freezes the history instead of committing.
+        self.cycle_navigating = true;
+        self.reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
+        self.cycle_navigating = false;
+        true
+    }
+
     /// End Alt-Tab cycling: commit the selected window to focus history.
     pub fn end_cycle(&mut self) {
         self.stage.end_cycle();

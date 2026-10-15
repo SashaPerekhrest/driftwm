@@ -5,14 +5,14 @@
 //! release or the next non-cycle focus change / action.
 //!
 //! Fixture limitation: the in-process harness has no synthetic keyboard input,
-//! so a real held modifier can't be driven. `held_cycle_step` reproduces the
-//! held-modifier arm (step + cycle-navigating reveal, no commit) to stand in.
+//! so a real held modifier can't be driven. `held_cycle_step` runs the arm's
+//! step without its modifier-gated commit to stand in.
 
 use driftwm::config::Action;
 use smithay::desktop::Window;
 use smithay::utils::{Point, SERIAL_COUNTER};
 
-use crate::state::{NavZoom, RevealPan, StageWindow};
+use crate::state::StageWindow;
 
 use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_by_app_id};
 
@@ -33,18 +33,11 @@ fn cycle_forward(f: &mut Fixture) {
         .execute_action(&Action::CycleWindows { backward: false });
 }
 
-/// One step of a held-modifier cycle: step + a cycle-navigating reveal, with no
-/// commit — exactly the `CycleWindows` arm minus the modifier-gated `end_cycle`.
-/// Stands in for a real held modifier the fixture can't inject.
+/// One step of a held-modifier cycle: the `CycleWindows` arm's step without
+/// its modifier-gated `end_cycle`. Stands in for a real held modifier the
+/// fixture can't inject.
 fn held_cycle_step(f: &mut Fixture) {
-    let anchor = f.state().cycle_anchor();
-    if let Some(target) = f.state().stage.cycle_step(false, anchor.as_ref()) {
-        let window = target.client().expect("cycle target is a client").clone();
-        f.state().cycle_navigating = true;
-        f.state()
-            .reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
-        f.state().cycle_navigating = false;
-    }
+    f.state().step_cycle(false);
 }
 
 /// Two held-modifier steps, returning the selected window (focus_history[state]).

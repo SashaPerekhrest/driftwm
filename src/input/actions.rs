@@ -288,21 +288,9 @@ impl DriftWm {
                 // allowlisted), so any fullscreen entry the stage skips is on
                 // another output — shown only on its own monitor, never a
                 // target here.
-                let anchor = self.cycle_anchor();
-                let Some(window) = self
-                    .stage
-                    .cycle_step(*backward, anchor.as_ref())
-                    .as_ref()
-                    .and_then(|w| w.client())
-                    .cloned()
-                else {
+                if !self.step_cycle(*backward) {
                     return;
-                };
-                // Mark the focus change this navigate causes as cycle-initiated so
-                // `focus_changed` freezes the history instead of committing.
-                self.cycle_navigating = true;
-                self.reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
-                self.cycle_navigating = false;
+                }
                 // A truly modifier-less fire (gesture, bare wheel, IPC) has no key
                 // release to end the session, so each fire is a single step with a
                 // fresh anchor and commits now. If any real modifier is physically
