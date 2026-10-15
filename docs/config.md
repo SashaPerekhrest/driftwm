@@ -760,10 +760,10 @@ Actions:
 - `close-window` — close the focused window
 - `suspend-window` — close the focused window but leave a suspended window in its place (Enter/click relaunches; needs a .desktop entry); on an already-suspended window, dismisses it
 - `nudge-window <dir>` — move focused window by nudge_step px
-- `move-to-snap <dir>` — move focused window along `<dir>` to the next snap stop: docked snap.gap off a neighbour, or aligned edge-to-edge or centre-to-centre with an adjacent one; the camera follows if it leaves the viewport; no stop that way does nothing
+- `move-to-snap <dir>` — move focused window along `<dir>` to the next snap stop: docked snap.gap off a neighbour, or aligned edge-to-edge or centre-to-centre with an adjacent one, skipping any that would land it on another window; the camera follows if it leaves the viewport; no stop that way does nothing
 - `grow-window <dir>` — grow focused window by resize_step px, moving its `<dir>` edge outward; the opposite edge stays put
 - `shrink-window <dir>` — shrink focused window by resize_step px, pulling its `<dir>` edge inward; the opposite edge stays put
-- `resize-to-snap <dir>` — right/down grow the focused window's right/bottom edge to the next snap stop (a neighbour's edge, then the usable area's snap.outer_gap in); left/up pull that edge back to the previous one
+- `resize-to-snap <dir>` — right/down grow the focused window's right/bottom edge to the next snap stop (a neighbour's edge, or the usable area's snap.outer_gap in), never over another window; left/up pull that edge back to the previous one
 - `pan-viewport <dir>` — pan camera by pan_step px
 - `center-window` — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 - `focus-center` — focus the window under the pointer and bring it there too + reset zoom; same fill exception

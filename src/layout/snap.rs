@@ -16,6 +16,17 @@ impl SnapRect {
             && self.y_low < other.y_high
             && other.y_low < self.y_high
     }
+
+    /// The rect pulled in by `by` on all four sides; a negative `by` pushes
+    /// it out.
+    pub fn inset(&self, by: f64) -> SnapRect {
+        SnapRect {
+            x_low: self.x_low + by,
+            x_high: self.x_high - by,
+            y_low: self.y_low + by,
+            y_high: self.y_high - by,
+        }
+    }
 }
 
 /// Parameters for snap candidate search along one axis.
@@ -233,7 +244,9 @@ fn nearest_beyond(
 }
 
 /// The origin a whole-window move from `from` lands on at the next stop in its
-/// direction, at any distance, from every [`stops`] family.
+/// direction, at any distance, from every [`stops`] family — passing over any
+/// stop that would land it on one of `others`. A window it already overlaps
+/// doesn't block it.
 pub fn next_origin(
     from: f64,
     forward: bool,
@@ -241,26 +254,69 @@ pub fn next_origin(
     others: &[SnapRect],
     q: &StopQuery,
 ) -> Option<f64> {
-    nearest_beyond(
-        from,
-        forward,
-        stops(others, q).map(|s| s.at - origin_shift(s.line, extent)),
-    )
+    // Half a pixel in, so a slot a fractional gap leaves that much short
+    // still takes the window.
+    let frame_at = |origin: f64| {
+        let frame = if q.horizontal {
+            SnapRect {
+                x_low: origin,
+                x_high: origin + extent,
+                y_low: q.perp_low,
+                y_high: q.perp_high,
+            }
+        } else {
+            SnapRect {
+                x_low: q.perp_low,
+                x_high: q.perp_high,
+                y_low: origin,
+                y_high: origin + extent,
+            }
+        };
+        frame.inset(ON_STOP)
+    };
+    let start = frame_at(from);
+    let blockers: Vec<&SnapRect> = others.iter().filter(|o| !start.overlaps(o)).collect();
+    let clear = stops(others, q)
+        .map(|s| s.at - origin_shift(s.line, extent))
+        .filter(|&origin| {
+            let landing = frame_at(origin);
+            !blockers.iter().any(|b| landing.overlaps(b))
+        });
+    nearest_beyond(from, forward, clear)
+}
+
+/// The lines the primary's high edge can stop on: every one offered that
+/// edge up to `bound`, and `bound` itself.
+fn edge_lines<'a>(
+    bound: f64,
+    others: &'a [SnapRect],
+    q: &'a StopQuery,
+) -> impl Iterator<Item = f64> + 'a {
+    stops(others, q)
+        .filter(|s| s.line == Line::High)
+        .map(|s| s.at)
+        .filter(move |&at| at <= bound)
+        .chain(std::iter::once(bound))
 }
 
 /// Where the primary's high edge at `edge` grows to next: the nearest stop
-/// offered that edge within `bound`, else `bound` itself.
+/// offered that edge within `bound`, else `bound` itself — but never past the
+/// dock against the nearest window ahead, which growing on would cover.
 pub fn next_grow_line(edge: f64, bound: f64, others: &[SnapRect], q: &StopQuery) -> Option<f64> {
-    let lines = stops(others, q)
-        .filter(|s| s.line == Line::High)
+    // A window the frame already overlaps meets it behind `edge`, so it isn't
+    // in the way.
+    let dock = stops(others, q)
+        .filter(|s| s.family == Family::Dock && s.line == Line::High)
+        .filter(|s| s.contact > edge - ON_STOP)
         .map(|s| s.at)
-        .filter(|&at| at <= bound)
-        .chain(std::iter::once(bound));
-    nearest_beyond(edge, true, lines)
+        .reduce(f64::min);
+    let reach = dock.map_or(bound, |dock| dock.min(bound));
+    nearest_beyond(edge, true, edge_lines(reach, others, q))
 }
 
 /// Where the primary's high edge at `edge` pulls back to next: the nearest
-/// stop offered that edge — or `bound` — still past `anchor`, the low edge.
+/// stop offered that edge within `bound` — or `bound` — still past `anchor`,
+/// the low edge.
 pub fn next_shrink_line(
     edge: f64,
     anchor: f64,
@@ -268,11 +324,7 @@ pub fn next_shrink_line(
     others: &[SnapRect],
     q: &StopQuery,
 ) -> Option<f64> {
-    let lines = stops(others, q)
-        .filter(|s| s.line == Line::High)
-        .map(|s| s.at)
-        .chain(std::iter::once(bound))
-        .filter(|&at| at - anchor > ON_STOP);
+    let lines = edge_lines(bound, others, q).filter(|&at| at - anchor > ON_STOP);
     nearest_beyond(edge, false, lines)
 }
 
@@ -711,12 +763,89 @@ mod tests {
     }
 
     #[test]
-    fn a_grow_walks_neighbour_lines_then_the_bound() {
-        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+    fn a_move_passes_over_stops_that_land_on_a_window() {
+        // A docked row of 200-wide windows: the docks either side of the
+        // middle one are the outer ones' slots.
+        let others = [
+            rect(212.0, 0.0, 200.0, 100.0),
+            rect(424.0, 0.0, 200.0, 100.0),
+        ];
         let q = query(true);
-        assert_eq!(next_grow_line(400.0, 1000.0, &others, &q), Some(588.0));
-        assert_eq!(next_grow_line(588.0, 1000.0, &others, &q), Some(1000.0));
-        assert_eq!(next_grow_line(1000.0, 1000.0, &others, &q), None);
+        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(636.0));
+        assert_eq!(next_origin(636.0, false, 200.0, &others, &q), Some(0.0));
+    }
+
+    #[test]
+    fn a_move_along_y_passes_over_a_window_too() {
+        let others = [
+            rect(0.0, 212.0, 100.0, 200.0),
+            rect(0.0, 424.0, 100.0, 200.0),
+        ];
+        assert_eq!(
+            next_origin(0.0, true, 200.0, &others, &query(false)),
+            Some(636.0)
+        );
+    }
+
+    #[test]
+    fn a_move_is_not_blocked_by_a_window_it_already_overlaps() {
+        let others = [
+            rect(100.0, 50.0, 500.0, 100.0),
+            // Below the primary: its edges and centre all align at 300.
+            rect(300.0, 112.0, 200.0, 100.0),
+        ];
+        assert_eq!(
+            next_origin(0.0, true, 200.0, &others, &query(true)),
+            Some(300.0),
+            "still over the wide neighbour, which it was over already"
+        );
+    }
+
+    #[test]
+    fn a_slot_half_a_pixel_short_still_takes_the_window() {
+        // Docked a 12.5 gap before the first window, the next stop docks
+        // before the second at 199.5, half a pixel into the first.
+        let others = [rect(0.0, 0.0, 200.0, 100.0), rect(412.0, 0.0, 200.0, 100.0)];
+        let q = StopQuery {
+            gap: 12.5,
+            ..query(true)
+        };
+        assert_eq!(next_origin(-212.5, true, 200.0, &others, &q), Some(199.5));
+    }
+
+    #[test]
+    fn a_grow_walks_neighbour_lines_up_to_the_dock_and_stops_there() {
+        let others = [
+            rect(600.0, 50.0, 200.0, 100.0),
+            // Below the primary, offering its right edge as an alignment.
+            rect(0.0, 112.0, 500.0, 100.0),
+        ];
+        let q = query(true);
+        assert_eq!(next_grow_line(400.0, 1000.0, &others, &q), Some(500.0));
+        assert_eq!(next_grow_line(500.0, 1000.0, &others, &q), Some(588.0));
+        assert_eq!(
+            next_grow_line(588.0, 1000.0, &others, &q),
+            None,
+            "growing on would cover the neighbour"
+        );
+    }
+
+    #[test]
+    fn a_grow_closer_than_the_gap_to_a_neighbour_goes_nowhere() {
+        let others = [rect(600.0, 50.0, 200.0, 100.0)];
+        assert_eq!(next_grow_line(595.0, 1000.0, &others, &query(true)), None);
+    }
+
+    #[test]
+    fn a_grow_passes_a_window_it_already_overlaps_and_docks_at_the_next() {
+        let others = [
+            rect(300.0, 50.0, 200.0, 100.0),
+            rect(700.0, 50.0, 200.0, 100.0),
+        ];
+        assert_eq!(
+            next_grow_line(400.0, 1000.0, &others, &query(true)),
+            Some(688.0)
+        );
     }
 
     #[test]
@@ -757,6 +886,16 @@ mod tests {
     }
 
     #[test]
+    fn a_shrink_past_the_bound_skips_lines_past_it_too() {
+        // Below the primary, its right edge at 1100 is off the usable area.
+        let others = [rect(0.0, 112.0, 1100.0, 100.0)];
+        assert_eq!(
+            next_shrink_line(1200.0, 0.0, 1000.0, &others, &query(true)),
+            Some(1000.0)
+        );
+    }
+
+    #[test]
     fn a_shrink_never_closes_the_span_onto_its_anchor() {
         let others = [rect(600.0, 50.0, 200.0, 100.0)];
         assert_eq!(
@@ -777,10 +916,11 @@ mod tests {
 
     proptest! {
         /// The walk's ordering: it lands on an enumerated stop strictly
-        /// beyond its origin and skips none on the way. The stops' own
-        /// coordinates are pinned by the table cases above.
+        /// beyond its origin, clear of every window it wasn't already over,
+        /// and skips no such stop on the way. The stops' own coordinates are
+        /// pinned by the table cases above.
         #[test]
-        fn next_origin_takes_the_nearest_stop_beyond_and_skips_none(
+        fn next_origin_takes_the_nearest_clear_stop_beyond_and_skips_none(
             from in -1000.0..1000.0f64,
             forward in any::<bool>(),
             extent in 20.0..600.0f64,
@@ -790,17 +930,46 @@ mod tests {
             let origins: Vec<f64> = stops(&others, &q)
                 .map(|s| s.at - origin_shift(s.line, extent))
                 .collect();
-            let beyond = |o: f64| if forward { o - from > ON_STOP } else { from - o > ON_STOP };
+            let frame = |o: f64| rect(o, q.perp_low, extent, q.perp_high - q.perp_low).inset(ON_STOP);
+            let lands_on_a_window = |o: f64| {
+                others.iter().any(|n| frame(o).overlaps(n) && !frame(from).overlaps(n))
+            };
+            let open = |o: f64| {
+                let beyond = if forward { o - from > ON_STOP } else { from - o > ON_STOP };
+                beyond && !lands_on_a_window(o)
+            };
             match next_origin(from, forward, extent, &others, &q) {
                 Some(o) => {
-                    prop_assert!(beyond(o));
+                    prop_assert!(open(o));
                     prop_assert!(origins.contains(&o));
                     let none_skipped = origins
                         .iter()
-                        .all(|&c| !beyond(c) || if forward { c >= o } else { c <= o });
+                        .all(|&c| !open(c) || if forward { c >= o } else { c <= o });
                     prop_assert!(none_skipped);
                 }
-                None => prop_assert!(origins.iter().all(|&c| !beyond(c))),
+                None => prop_assert!(origins.iter().all(|&c| !open(c))),
+            }
+        }
+
+        /// A grow never covers a window the frame wasn't already over, and
+        /// never passes the bound.
+        #[test]
+        fn a_grow_never_covers_a_window(
+            anchor in -1000.0..1000.0f64,
+            width in 20.0..600.0f64,
+            bound in -1000.0..2000.0f64,
+            others in prop::collection::vec(any_rect(), 0..6),
+        ) {
+            let q = query(true);
+            let edge = anchor + width;
+            let frame = |high: f64| rect(anchor, q.perp_low, high - anchor, q.perp_high - q.perp_low).inset(ON_STOP);
+            if let Some(line) = next_grow_line(edge, bound, &others, &q) {
+                prop_assert!(line - edge > ON_STOP);
+                prop_assert!(line <= bound);
+                let covered = others
+                    .iter()
+                    .any(|n| frame(line).overlaps(n) && !frame(edge).overlaps(n));
+                prop_assert!(!covered);
             }
         }
     }

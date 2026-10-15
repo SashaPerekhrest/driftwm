@@ -1,6 +1,7 @@
 //! Keyboard snapping: `move-to-snap` walks the focused element to the stops
 //! drag snapping offers, `resize-to-snap` walks its right or bottom edge
-//! between them and the usable area's edge — clients and stand-ins alike.
+//! between them and the usable area's edge — clients and stand-ins alike —
+//! and neither ever lands the element on another window.
 
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::Resource;
@@ -9,8 +10,8 @@ use wayland_client::protocol::wl_surface::WlSurface as ClientSurface;
 
 use super::client::ClientId;
 use super::{
-    Fixture, config, configure_count, last_configured, map_window, settle, window_by_app_id,
-    window_position,
+    Fixture, config, configure_count, give_ssd, last_configured, map_window, settle,
+    window_by_app_id, window_position,
 };
 use crate::state::StageWindow;
 use driftwm::config::{Action, Direction};
@@ -113,6 +114,56 @@ fn move_to_snap_aligns_with_an_adjacent_neighbour_whatever_the_magnetism_knobs()
     );
 }
 
+/// A stop that would land the window on another one is passed over: in a
+/// docked row, the docks either side of the middle window are the outer
+/// windows' own slots.
+#[test]
+fn move_to_snap_skips_stops_that_land_on_a_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, _) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "n", (512, 100), (400, 300));
+    window_at(&mut f, id, "m", (924, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((1336, 100)),
+        "past n's and m's slots to the dock beyond m"
+    );
+
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((100, 100)),
+        "and back past both to the dock before n"
+    );
+}
+
+/// An alignment can land on a window too: `w`, wide below both, offers its
+/// left edge, which is where `x` already sits.
+#[test]
+fn move_to_snap_skips_an_alignment_that_lands_on_a_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    window_at(&mut f, id, "x", (500, 100), (400, 300));
+    let (a, _) = window_at(&mut f, id, "a", (912, 100), (400, 300));
+    window_at(&mut f, id, "w", (500, 412), (1224, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &a),
+        Point::from((88, 100)),
+        "past w's left edge, which is x's slot, to the dock before x"
+    );
+}
+
 /// The camera follows through the directional-focus navigation, so
 /// `focus_placement` decides where the window lands on screen.
 #[test]
@@ -154,12 +205,14 @@ fn move_to_snap_reveals_a_far_stop_on_the_focus_placement_point() {
 }
 
 #[test]
-fn resize_to_snap_walks_the_right_edge_out_and_back() {
+fn resize_to_snap_walks_the_right_edge_out_to_a_dock_and_back() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
     window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    // Below `a`, offering its right edge at 700 as an alignment.
+    window_at(&mut f, id, "c", (100, 412), (600, 300));
     focus(&mut f, &a);
     park_view(&mut f, Point::from((0.0, 0.0)));
     let before = window_position(&mut f, &a);
@@ -167,16 +220,16 @@ fn resize_to_snap_walks_the_right_edge_out_and_back() {
     act(&mut f, Action::ResizeToSnap(Direction::Right));
     assert_eq!(
         last_configured(&mut f, id, &surface),
-        (888, 300),
-        "the right edge stops snap.gap short of the neighbour"
+        (600, 300),
+        "the right edge aligns with c's"
     );
     assert_eq!(window_position(&mut f, &a), before, "the left edge holds");
 
     act(&mut f, Action::ResizeToSnap(Direction::Right));
     assert_eq!(
         last_configured(&mut f, id, &surface),
-        (1820, 300),
-        "then the usable area's right edge"
+        (888, 300),
+        "then stops snap.gap short of b"
     );
 
     let configures = configure_count(&mut f, id, &surface);
@@ -184,13 +237,13 @@ fn resize_to_snap_walks_the_right_edge_out_and_back() {
     assert_eq!(
         configure_count(&mut f, id, &surface),
         configures,
-        "nothing past the screen: no configure at all"
+        "docked: growing on would cover b, so no configure at all"
     );
 
     act(&mut f, Action::ResizeToSnap(Direction::Left));
     assert_eq!(
         last_configured(&mut f, id, &surface),
-        (888, 300),
+        (600, 300),
         "back to the previous stop"
     );
 
@@ -228,6 +281,76 @@ fn resize_to_snap_with_no_neighbour_grows_to_the_fill_edge() {
     );
 }
 
+/// Only a window the frame would newly cover is in the way: one it already
+/// overlaps doesn't stop it short of the fill edge.
+#[test]
+fn resize_to_snap_grows_over_a_window_it_already_overlaps() {
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 12.0\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (400, 200), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (1808, 300));
+}
+
+/// The fence is the usable area in canvas px, so at zoom 0.5 it reaches twice
+/// as far — and `outer_gap` stays canvas px, as `fill-window` measures it.
+#[test]
+fn resize_to_snap_grows_to_the_fill_edge_at_the_current_zoom() {
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 12.0\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    f.state().with_output_state(|os| os.zoom = 0.5);
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (3728, 300));
+    act(&mut f, Action::ResizeToSnap(Direction::Down));
+    assert_eq!(last_configured(&mut f, id, &surface), (3728, 2048));
+}
+
+/// A title bar sits above the content: the bottom edge the walk moves is the
+/// content's own, and a neighbour's frame starts a bar above its content.
+#[test]
+fn resize_to_snap_down_measures_title_bars() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    let (b, _) = window_at(&mut f, id, "b", (100, 700), (400, 300));
+    // Beside `a`, offering its bottom edge at 300 as an alignment.
+    window_at(&mut f, id, "c", (512, 100), (400, 200));
+    give_ssd(&mut f, &a);
+    give_ssd(&mut f, &b);
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Down));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (400, 563),
+        "b's frame starts at 675, so the bottom docks at 663"
+    );
+    assert_eq!(window_position(&mut f, &a), Point::from((100, 100)));
+
+    let configures = configure_count(&mut f, id, &surface);
+    act(&mut f, Action::ResizeToSnap(Direction::Down));
+    assert_eq!(configure_count(&mut f, id, &surface), configures);
+
+    act(&mut f, Action::ResizeToSnap(Direction::Up));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (400, 200),
+        "up to c's bottom edge, the bar staying above the content"
+    );
+}
+
 #[test]
 fn a_stand_in_resizes_and_moves_to_snap_like_a_client() {
     let mut f = Fixture::new();
@@ -249,9 +372,7 @@ fn a_stand_in_resizes_and_moves_to_snap_like_a_client() {
     act(&mut f, Action::ResizeToSnap(Direction::Right));
     assert_eq!(s.size.get(), Size::from((888, 300)));
     act(&mut f, Action::ResizeToSnap(Direction::Right));
-    assert_eq!(s.size.get(), Size::from((1820, 300)));
-    act(&mut f, Action::ResizeToSnap(Direction::Left));
-    assert_eq!(s.size.get(), Size::from((888, 300)));
+    assert_eq!(s.size.get(), Size::from((888, 300)), "docked: a no-op");
 
     // Docked at snap.gap already, the next stop right is the neighbour's far
     // side.
@@ -370,10 +491,10 @@ fn a_border_widens_the_frames_the_stops_measure() {
         "frames 98..502 and 998..1402 dock at 986, so the content starts at 584"
     );
 
-    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    act(&mut f, Action::ResizeToSnap(Direction::Down));
     assert_eq!(
         last_configured(&mut f, id, &surface),
-        (1336, 300),
-        "the frame grows to 1922, a border past the usable edge at outer_gap 0"
+        (400, 980),
+        "the frame grows to 1082, a border past the usable edge at outer_gap 0"
     );
 }
