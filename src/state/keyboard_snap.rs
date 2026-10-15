@@ -64,7 +64,8 @@ impl DriftWm {
 
     /// Resize the focused canvas element by walking its right or bottom edge:
     /// `right` / `down` grow it out to the next stop, `left` / `up` pull it
-    /// back to the previous one, never past the usable area.
+    /// back to the previous one, never past the usable area or over another
+    /// window.
     pub(crate) fn resize_to_snap_focused(&mut self, dir: &Direction) {
         let Some((horizontal, grow)) = axis_of(dir) else {
             return;
@@ -75,7 +76,12 @@ impl DriftWm {
         #[allow(clippy::mutable_key_type)]
         let excludes = HashSet::new();
         let (others, bar, bw) = self.snap_targets(&element, &excludes);
-        let frame = super::fit::snap_rect_at(start.loc, start.size, bar, bw);
+        let placed = super::fit::snap_rect_at(start.loc, start.size, bar, bw);
+        // A client that rounds to a cell answers short of, or past, the stop
+        // it was asked for. Walking on from that answer would find the same
+        // stop and re-ask for it on every press, so walk from the request too.
+        let requested =
+            super::fit::snap_rect_at(start.loc, self.requested_element_size(&element), bar, bw);
         let Some(output) = self.output_for_window(&element) else {
             return;
         };
@@ -83,26 +89,25 @@ impl DriftWm {
         // window lying entirely outside it: `output_for_window` falls back to
         // the active output for a window no viewport shows, and that
         // viewport's far edge is no bound for a window screens away.
-        let inset = self.config.outer_frame_inset(bw);
-        let bounds = self.usable_canvas_bounds(&output);
-        let fence = SnapRect {
-            x_low: bounds.x_low + inset,
-            x_high: bounds.x_high - inset,
-            y_low: bounds.y_low + inset,
-            y_high: bounds.y_high - inset,
-        };
-        if !frame.overlaps(&fence) {
+        let fence = self
+            .usable_canvas_bounds(&output)
+            .inset(self.config.outer_frame_inset(bw));
+        if !requested.overlaps(&fence) {
             return;
         }
-        let q = self.stop_query(&frame, horizontal);
-        let (edge, anchor, bound) = if horizontal {
-            (frame.x_high, frame.x_low, fence.x_high)
+        let q = self.stop_query(&requested, horizontal);
+        let (placed_edge, requested_edge, anchor, bound) = if horizontal {
+            (placed.x_high, requested.x_high, placed.x_low, fence.x_high)
         } else {
-            (frame.y_high, frame.y_low, fence.y_high)
+            (placed.y_high, requested.y_high, placed.y_low, fence.y_high)
         };
+        // Beyond both, so a stop the rounding happened to land on counts as
+        // reached rather than becoming a step of nothing.
         let target = if grow {
+            let edge = placed_edge.max(requested_edge);
             snap::next_grow_line(edge, bound, &others, &q)
         } else {
+            let edge = placed_edge.min(requested_edge);
             snap::next_shrink_line(edge, anchor, bound, &others, &q)
         };
         let Some(target) = target else {
@@ -113,7 +118,9 @@ impl DriftWm {
         } else {
             Direction::Down
         };
-        self.step_resize(&element, start, &axis, (target - edge).round() as i32);
+        // `step_resize` adds the step to the placed size.
+        let step = (target - placed_edge).round() as i32;
+        self.step_resize(&element, start, &axis, step);
     }
 
     /// The query for `frame`'s stops along one axis, with the alignment band a

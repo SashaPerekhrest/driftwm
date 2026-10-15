@@ -289,6 +289,22 @@ fn adopt_last_configure(
     f.double_roundtrip(id);
 }
 
+/// Ack the configure and commit `size` instead of the one asked for — a
+/// cell-snapping terminal rounding to a whole character cell.
+fn ack_with_size(
+    f: &mut Fixture,
+    id: client::ClientId,
+    surface: &wayland_client::protocol::wl_surface::WlSurface,
+    size: (u16, u16),
+) {
+    f.double_roundtrip(id);
+    let window = f.client(id).window(surface);
+    window.set_size(size.0, size.1);
+    window.attach_new_buffer();
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+}
+
 /// Ack the configure and commit without taking the size that came with it — a
 /// fixed-size dialog's answer. smithay drops the pending configure at *ack*, so
 /// afterwards the compositor sees no outstanding configure and a committed

@@ -6,13 +6,11 @@
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Point, SERIAL_COUNTER, Size};
-use wayland_client::protocol::wl_surface::WlSurface as ClientSurface;
 
-use super::client::ClientId;
 use super::real::TempDir;
 use super::{
-    Fixture, ack_but_keep_size, adopt_last_configure, config, configure_count, end_grab,
-    install_client_resize_grab, last_configured, map_window, map_window_with_limits,
+    Fixture, ack_but_keep_size, ack_with_size, adopt_last_configure, config, configure_count,
+    end_grab, install_client_resize_grab, last_configured, map_window, map_window_with_limits,
     window_by_app_id, window_position,
 };
 use crate::state::{ClusterResizeSnapshot, StageWindow};
@@ -20,17 +18,6 @@ use driftwm::config::{Action, Direction};
 
 fn step(f: &mut Fixture, action: Action) {
     f.state().execute_action(&action);
-}
-
-/// Ack the configure and commit `size` instead of the one asked for — a
-/// cell-snapping terminal rounding down to a whole character cell.
-fn ack_with_size(f: &mut Fixture, id: ClientId, surface: &ClientSurface, size: (u16, u16)) {
-    f.double_roundtrip(id);
-    let window = f.client(id).window(surface);
-    window.set_size(size.0, size.1);
-    window.attach_new_buffer();
-    window.ack_last_and_commit();
-    f.double_roundtrip(id);
 }
 
 #[test]

@@ -10,7 +10,7 @@ use wayland_client::protocol::wl_surface::WlSurface as ClientSurface;
 
 use super::client::ClientId;
 use super::{
-    Fixture, config, configure_count, give_ssd, last_configured, map_window, settle,
+    Fixture, ack_with_size, config, configure_count, give_ssd, last_configured, map_window, settle,
     window_by_app_id, window_position,
 };
 use crate::state::StageWindow;
@@ -295,6 +295,78 @@ fn resize_to_snap_grows_over_a_window_it_already_overlaps() {
 
     act(&mut f, Action::ResizeToSnap(Direction::Right));
     assert_eq!(last_configured(&mut f, id, &surface), (1808, 300));
+}
+
+/// A client that rounds to a cell answers short of the stop, or past it. The
+/// walk goes on from the stop it asked for — measured from the rounded edge,
+/// every press would re-ask for the same size and the window never moves on.
+#[test]
+fn resize_to_snap_walks_on_past_a_cell_rounded_answer() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    // Above and below `a`, offering their right edges at 350 and 700.
+    window_at(&mut f, id, "d", (100, -212), (250, 300));
+    window_at(&mut f, id, "c", (100, 412), (600, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (600, 300));
+    ack_with_size(&mut f, id, &surface, (595, 300));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (888, 300),
+        "rounded down: on to the dock, not back to c's edge"
+    );
+    ack_with_size(&mut f, id, &surface, (883, 300));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Left));
+    assert_eq!(last_configured(&mut f, id, &surface), (600, 300));
+    ack_with_size(&mut f, id, &surface, (605, 300));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Left));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (250, 300),
+        "rounded up: on to d's edge, not back to c's"
+    );
+    assert_eq!(window_position(&mut f, &a), Point::from((100, 100)));
+}
+
+/// A rounded answer that lands exactly on another stop has reached it: the
+/// walk goes on past it rather than re-asking for the size the window already
+/// has.
+#[test]
+fn resize_to_snap_counts_a_stop_the_rounding_landed_on_as_reached() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    // Above and below `a`, offering their right edges at 350 and 983.
+    window_at(&mut f, id, "d", (100, -212), (250, 300));
+    window_at(&mut f, id, "c", (100, 412), (883, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (883, 300));
+    ack_with_size(&mut f, id, &surface, (880, 300));
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (888, 300));
+    ack_with_size(&mut f, id, &surface, (883, 300));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Left));
+    assert_eq!(
+        last_configured(&mut f, id, &surface),
+        (250, 300),
+        "sitting on c's edge already, the walk goes on to d's"
+    );
 }
 
 /// The fence is the usable area in canvas px, so at zoom 0.5 it reaches twice
