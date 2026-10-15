@@ -243,10 +243,10 @@ fn nearest_beyond(
         .reduce(|a, b| if forward { a.min(b) } else { a.max(b) })
 }
 
-/// The origin a whole-window move from `from` lands on at the next stop in its
-/// direction, at any distance, from every [`stops`] family — passing over any
-/// stop that would land it on one of `others`. A window it already overlaps
-/// doesn't block it.
+/// The whole-pixel origin a whole-window move from `from` lands on at the next
+/// stop in its direction, at any distance, from every [`stops`] family —
+/// passing over any stop that would land it on one of `others`. A window it
+/// already overlaps doesn't block it.
 pub fn next_origin(
     from: f64,
     forward: bool,
@@ -254,10 +254,8 @@ pub fn next_origin(
     others: &[SnapRect],
     q: &StopQuery,
 ) -> Option<f64> {
-    // Half a pixel in, so a slot a fractional gap leaves that much short
-    // still takes the window.
     let frame_at = |origin: f64| {
-        let frame = if q.horizontal {
+        if q.horizontal {
             SnapRect {
                 x_low: origin,
                 x_high: origin + extent,
@@ -271,13 +269,15 @@ pub fn next_origin(
                 y_low: origin,
                 y_high: origin + extent,
             }
-        };
-        frame.inset(ON_STOP)
+        }
     };
     let start = frame_at(from);
     let blockers: Vec<&SnapRect> = others.iter().filter(|o| !start.overlaps(o)).collect();
+    // Rounded before the occupancy test, since that's where the window will
+    // sit: a slot a fractional gap leaves half a pixel short takes it or not
+    // depending on which way the half rounds.
     let clear = stops(others, q)
-        .map(|s| s.at - origin_shift(s.line, extent))
+        .map(|s| (s.at - origin_shift(s.line, extent)).round())
         .filter(|&origin| {
             let landing = frame_at(origin);
             !blockers.iter().any(|b| landing.overlaps(b))
@@ -738,15 +738,15 @@ mod tests {
 
     #[test]
     fn a_stop_the_window_rounded_onto_does_not_count() {
-        // A 12.5 gap lands the dock at 287.5, which a placement rounds to 288;
+        // A 12.5 gap puts the dock at 287.5, which the move rounds to 288;
         // from 288 that stop is neither ahead nor behind.
         let others = [rect(500.0, 50.0, 200.0, 100.0)];
         let q = StopQuery {
             gap: 12.5,
             ..query(true)
         };
-        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(287.5));
-        assert_eq!(next_origin(288.0, true, 200.0, &others, &q), Some(712.5));
+        assert_eq!(next_origin(0.0, true, 200.0, &others, &q), Some(288.0));
+        assert_eq!(next_origin(288.0, true, 200.0, &others, &q), Some(713.0));
         assert_eq!(next_origin(288.0, false, 200.0, &others, &q), None);
     }
 
@@ -810,15 +810,18 @@ mod tests {
     }
 
     #[test]
-    fn a_slot_half_a_pixel_short_still_takes_the_window() {
-        // Docked a 12.5 gap before the first window, the next stop docks
-        // before the second at 199.5, half a pixel into the first.
+    fn a_slot_half_a_pixel_short_takes_the_window_only_where_it_rounds_clear() {
+        // A 12.5 gap leaves the slot between the two windows half a pixel
+        // short: docked before the second, the window starts at 199.5 and
+        // rounds clear of the first; docked after the first, at 212.5, it
+        // rounds a whole pixel onto the second.
         let others = [rect(0.0, 0.0, 200.0, 100.0), rect(412.0, 0.0, 200.0, 100.0)];
         let q = StopQuery {
             gap: 12.5,
             ..query(true)
         };
-        assert_eq!(next_origin(-212.5, true, 200.0, &others, &q), Some(199.5));
+        assert_eq!(next_origin(-213.0, true, 200.0, &others, &q), Some(200.0));
+        assert_eq!(next_origin(200.0, true, 200.0, &others, &q), Some(625.0));
     }
 
     #[test]
@@ -959,9 +962,9 @@ mod tests {
         ) {
             let q = query(true);
             let origins: Vec<f64> = stops(&others, &q)
-                .map(|s| s.at - origin_shift(s.line, extent))
+                .map(|s| (s.at - origin_shift(s.line, extent)).round())
                 .collect();
-            let frame = |o: f64| rect(o, q.perp_low, extent, q.perp_high - q.perp_low).inset(ON_STOP);
+            let frame = |o: f64| rect(o, q.perp_low, extent, q.perp_high - q.perp_low);
             let lands_on_a_window = |o: f64| {
                 others.iter().any(|n| frame(o).overlaps(n) && !frame(from).overlaps(n))
             };

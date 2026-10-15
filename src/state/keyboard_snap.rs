@@ -44,9 +44,9 @@ impl DriftWm {
         // The stop places the visual frame; the stage holds the content
         // top-left, one border in and the bar down from it.
         let new_loc = if horizontal {
-            Point::from(((origin + bw as f64).round() as i32, loc.y))
+            Point::from((origin as i32 + bw, loc.y))
         } else {
-            Point::from((loc.x, (origin + (bar + bw) as f64).round() as i32))
+            Point::from((loc.x, origin as i32 + bar + bw))
         };
         self.keyboard_move_element(&element, loc, new_loc);
 
