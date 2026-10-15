@@ -33,6 +33,8 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
+use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
+use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle, WEnum};
@@ -106,6 +108,7 @@ pub struct State {
     pub outputs: HashMap<WlOutput, String>,
 
     pub compositor: Option<WlCompositor>,
+    pub subcompositor: Option<WlSubcompositor>,
     pub xdg_wm_base: Option<XdgWmBase>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
@@ -529,6 +532,7 @@ impl Client {
             globals: Vec::new(),
             outputs: HashMap::new(),
             compositor: None,
+            subcompositor: None,
             xdg_wm_base: None,
             layer_shell: None,
             spbm: None,
@@ -651,6 +655,15 @@ impl Client {
 
     pub fn window(&mut self, surface: &WlSurface) -> &mut Window {
         self.state.window(surface)
+    }
+
+    pub fn create_subsurface(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> WlSurface {
+        self.state.create_subsurface(parent, position, size)
     }
 
     pub fn set_opaque_region(&mut self, surface: &WlSurface, rects: &[(i32, i32, i32, i32)]) {
@@ -982,6 +995,32 @@ impl State {
             .iter_mut()
             .find(|w| w.surface == *surface)
             .unwrap()
+    }
+
+    /// Give `parent` a subsurface of `size` at surface-local `position`. A new
+    /// subsurface is synchronized, so its own commit only caches its state and
+    /// the parent's commit here is what applies it.
+    pub fn create_subsurface(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> WlSurface {
+        let compositor = self.compositor.as_ref().unwrap();
+        let subcompositor = self.subcompositor.as_ref().unwrap();
+        let viewporter = self.viewporter.as_ref().unwrap();
+        let spbm = self.spbm.as_ref().unwrap();
+
+        let surface = compositor.create_surface(&self.qh, ());
+        let subsurface = subcompositor.get_subsurface(&surface, parent, &self.qh, ());
+        subsurface.set_position(position.0, position.1);
+        let viewport = viewporter.get_viewport(&surface, &self.qh, ());
+        viewport.set_destination(i32::from(size.0), i32::from(size.1));
+        let buffer = spbm.create_u32_rgba_buffer(0, 0, 0, 0, &self.qh, ());
+        surface.attach(Some(&buffer), 0, 0);
+        surface.commit();
+        parent.commit();
+        surface
     }
 
     /// Set `surface`'s pending opaque region to the union of `rects`
@@ -1763,6 +1802,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 if interface == WlCompositor::interface().name {
                     let version = min(version, WlCompositor::interface().version);
                     state.compositor = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlSubcompositor::interface().name {
+                    let version = min(version, WlSubcompositor::interface().version);
+                    state.subcompositor = Some(registry.bind(name, version, qh, ()));
                 } else if interface == XdgWmBase::interface().name {
                     let version = min(version, XdgWmBase::interface().version);
                     state.xdg_wm_base = Some(registry.bind(name, version, qh, ()));
@@ -1954,6 +1996,32 @@ impl Dispatch<WlCompositor, ()> for State {
         _state: &mut Self,
         _proxy: &WlCompositor,
         _event: <WlCompositor as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<WlSubcompositor, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlSubcompositor,
+        _event: <WlSubcompositor as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<WlSubsurface, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlSubsurface,
+        _event: <WlSubsurface as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
