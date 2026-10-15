@@ -19,13 +19,16 @@ use smithay::{
             GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent, MotionEvent,
             PointerTarget, RelativeMotionEvent,
         },
-        tablet::{self, Tablet, tool::TabletToolTarget},
+        tablet::{
+            self, Tablet, TabletSeatTrait,
+            tool::{TabletToolHandle, TabletToolTarget},
+        },
         touch::{
             DownEvent as TouchDownEvent, FrameMarker, MotionEvent as TouchMotionEvent, TouchTarget,
             UpEvent as TouchUpEvent,
         },
     },
-    reexports::wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
+    reexports::wayland_server::{DisplayHandle, Resource, protocol::wl_surface::WlSurface},
     utils::{IsAlive, Logical, Point, Serial},
     wayland::seat::WaylandFocus,
 };
@@ -39,6 +42,16 @@ use crate::state::DriftWm;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusTarget(pub WlSurface);
+
+impl FocusTarget {
+    /// Whether this surface's client has `tool` bound. Such a client takes
+    /// the pen on tablet-v2, and `wl_pointer` is not its stream for it.
+    pub fn takes_tool(&self, tool: &TabletToolHandle<DriftWm>) -> bool {
+        self.0
+            .client()
+            .is_some_and(|client| tool.client_tools(&client).next().is_some())
+    }
+}
 
 /// Window-level keyboard-focus intent: either a real surface, or a suspended
 /// window (which holds no seat keyboard focus — the actual focus derives to
@@ -297,7 +310,15 @@ impl TabletToolTarget<DriftWm> for FocusTarget {
         // smithay drops a client's cursor on the `wl_pointer` leave, which a
         // client withheld from `wl_pointer` never gets; the image its tool
         // set — hidden, for a drawing canvas — would outlive the pen's visit.
-        data.cursor_image(seat, CursorImageStatus::default_named());
+        // A client without the tool still holds `wl_pointer` and its own
+        // cursor, which no pull would set again.
+        if seat
+            .tablet_seat()
+            .get_tool(tool_descriptor)
+            .is_some_and(|tool| self.takes_tool(&tool))
+        {
+            data.cursor_image(seat, CursorImageStatus::default_named());
+        }
     }
 
     fn down(

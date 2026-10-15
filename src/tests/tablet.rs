@@ -1045,3 +1045,37 @@ fn a_tablet_client_binding_late_still_gets_proximity() {
          proximity_in: {frames:?}"
     );
 }
+
+/// A client with no tablet seat gets the pen as a pointer, so its cursor image
+/// is a plain `wl_pointer` one. The pen leaving proximity is not the pointer
+/// leaving the client, and resetting the cursor to the arrow there overrides
+/// what a pointer-only app asked for.
+#[test]
+fn proximity_out_keeps_a_pointer_only_clients_cursor() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "canvas", (800, 600));
+    let window = window_by_app_id(&mut f, "canvas").unwrap();
+    let origin = f.state().stage.position_of(&window).unwrap().to_f64();
+    let at = origin + Point::from((100.0, 100.0));
+    let device = pen_in_proximity(&mut f, at);
+    pen_to(&mut f, &device, at);
+    f.double_roundtrip(id);
+
+    f.client(id).hide_pointer_cursor();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().cursor.cursor_status,
+        CursorImageStatus::Hidden,
+        "precondition: the client's own cursor is in effect"
+    );
+
+    pen_proximity_out(&mut f, &device);
+
+    assert_eq!(
+        f.state().cursor.cursor_status,
+        CursorImageStatus::Hidden,
+        "the pointer-only client's cursor must survive the pen leaving proximity"
+    );
+}

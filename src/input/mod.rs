@@ -21,6 +21,7 @@ use smithay::desktop::space::SpaceElement;
 use smithay::desktop::{PopupPointerGrab, Window};
 use smithay::input::pointer::{ClickGrab, PointerHandle};
 use smithay::input::tablet::TabletSeatTrait;
+use smithay::input::tablet::tool::TabletToolHandle;
 use smithay::reexports::wayland_server::Resource;
 use smithay::wayland::seat::WaylandFocus;
 
@@ -878,6 +879,11 @@ impl DriftWm {
         }
     }
 
+    /// The tool of the pen that owns the seat pointer, if one does.
+    pub(crate) fn pointer_pen_tool(&self) -> Option<TabletToolHandle<DriftWm>> {
+        self.seat.tablet_seat().get_tool(self.pointer_pen.as_ref()?)
+    }
+
     /// `under` as `wl_pointer` may see it: a client with the pen's tool bound
     /// takes the pen on tablet-v2 alone, since fed the emulated pointer as well
     /// a drawing app reads the tip as a second press and restarts the stroke.
@@ -887,18 +893,10 @@ impl DriftWm {
         &self,
         under: Option<(FocusTarget, Point<f64, Logical>)>,
     ) -> Option<(FocusTarget, Point<f64, Logical>)> {
-        let Some(pen) = &self.pointer_pen else {
+        let Some(tool) = self.pointer_pen_tool() else {
             return under;
         };
-        let Some(tool) = self.seat.tablet_seat().get_tool(pen) else {
-            return under;
-        };
-        under.filter(|(focus, _)| {
-            focus
-                .0
-                .client()
-                .is_none_or(|client| tool.client_tools(&client).next().is_none())
-        })
+        under.filter(|(focus, _)| !focus.takes_tool(&tool))
     }
 
     /// `under` as the live grab, if any, will hand it to the client; see
