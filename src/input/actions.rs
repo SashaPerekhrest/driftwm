@@ -184,22 +184,13 @@ impl DriftWm {
                 if let Some(element) = self.focused_element().filter(|e| self.is_canvas_window(e))
                     && let Some(loc) = self.stage.position_of(&element)
                 {
-                    // Nudging re-anchors the window, invalidating any fill restore point.
-                    self.stage.clear_fill(&element);
                     let step = self.config.nudge_step;
                     let (ux, uy) = dir.to_unit_vec();
                     let offset = (
                         (ux * step as f64).round() as i32,
                         (uy * step as f64).round() as i32,
                     );
-                    let new_loc = loc + Point::from(offset);
-                    // The nudge is the window's new position.
-                    self.drop_owed_recenter(&element);
-                    self.map_window(element.clone(), new_loc, false);
-                    self.animate_element_move_from(&element, loc, None);
-                    // The element's canvas position is durable — persist the
-                    // nudge on the session-store debounce.
-                    self.session_store_mark_dirty();
+                    self.keyboard_move_element(&element, loc, loc + Point::from(offset));
                 }
             }
             Action::MoveToSnap(dir) => self.move_to_snap_focused(dir),

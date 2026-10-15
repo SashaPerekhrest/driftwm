@@ -3,9 +3,9 @@
 
 use std::collections::HashSet;
 
-use smithay::utils::Point;
+use smithay::utils::{Logical, Point};
 
-use super::{DriftWm, NavZoom};
+use super::{DriftWm, NavZoom, StageWindow};
 use driftwm::config::Direction;
 use driftwm::layout::snap::{self, SnapRect, StopQuery};
 
@@ -48,14 +48,7 @@ impl DriftWm {
         } else {
             Point::from((loc.x, (origin + (bar + bw) as f64).round() as i32))
         };
-
-        // The move re-anchors the element: its fill restore point and any owed
-        // recenter are stale, and its position is session state.
-        self.stage.clear_fill(&element);
-        self.drop_owed_recenter(&element);
-        self.map_window(element.clone(), new_loc, false);
-        self.animate_element_move_from(&element, loc, None);
-        self.session_store_mark_dirty();
+        self.keyboard_move_element(&element, loc, new_loc);
 
         // A pan still in flight is heading for a view picked for the last
         // stop, wherever its current frame shows. `camera_target` alone can't
@@ -65,6 +58,22 @@ impl DriftWm {
         if !at_rest || !self.frame_fully_in_view_at(&landed, self.camera(), self.zoom()) {
             self.navigate_to_element(&element, NavZoom::Keep);
         }
+    }
+
+    /// Move `element` from `from` to `to` as a keyboard move does. The move
+    /// re-anchors it: its fill restore point and any owed recenter are stale,
+    /// and its position is session state.
+    pub(crate) fn keyboard_move_element(
+        &mut self,
+        element: &StageWindow,
+        from: Point<i32, Logical>,
+        to: Point<i32, Logical>,
+    ) {
+        self.stage.clear_fill(element);
+        self.drop_owed_recenter(element);
+        self.map_window(element.clone(), to, false);
+        self.animate_element_move_from(element, from, None);
+        self.session_store_mark_dirty();
     }
 
     /// Resize the focused canvas element by walking its right or bottom edge:
