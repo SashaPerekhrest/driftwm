@@ -50,8 +50,8 @@ impl DriftWm {
         };
         self.keyboard_move_element(&element, loc, new_loc);
 
-        // A pan still in flight is heading for a view picked for the last
-        // stop, wherever its current frame shows. `camera_target` alone can't
+        // A pan still in flight is heading for a view picked for the previous
+        // stop, whatever its current frame shows. `camera_target` alone can't
         // tell: the zoom anchor every navigation pan rides clears it each tick.
         let at_rest = self.camera_target().is_none() && self.zoom_target().is_none();
         let landed = super::fit::snap_rect_at(new_loc, size, bar, bw);
@@ -60,9 +60,8 @@ impl DriftWm {
         }
     }
 
-    /// Move `element` from `from` to `to` as a keyboard move does. The move
-    /// re-anchors it: its fill restore point and any owed recenter are stale,
-    /// and its position is session state.
+    /// Move `element` from `from` to `to`, re-anchoring it: its fill restore
+    /// point and any owed recenter go stale, and its position is session state.
     pub(crate) fn keyboard_move_element(
         &mut self,
         element: &StageWindow,
@@ -105,11 +104,10 @@ impl DriftWm {
             return;
         }
         let q = self.stop_query(&frame, horizontal);
-        // A client that rounds to a cell answers short of, or past, the stop
-        // it was asked for. Walking on from that answer would find the same
-        // stop and re-ask for it on every press, so the walk also has to pass
-        // the edge it asked for — which a rounded answer that happened to land
-        // on another stop is already beyond.
+        // A cell-rounding client answers short of, or past, the stop it was
+        // asked for. Walking on from that answer would re-ask for the same
+        // stop on every press, so the walk starts from whichever of the
+        // answered and requested edges is further along.
         let requested =
             super::fit::snap_rect_at(start.loc, self.requested_element_size(&element), bar, bw);
         let (edge, requested_edge, anchor, bound) = if horizontal {

@@ -299,11 +299,10 @@ fn edge_lines<'a>(
         .chain(std::iter::once(bound))
 }
 
-/// Where the primary's high edge, at `edge` now, grows to next: the nearest
-/// stop offered that edge past `from` — `edge`, or further out when the walk
-/// is already heading there — within `bound`, else `bound` itself. Never past
-/// the dock against the nearest window ahead of `edge`, which growing on would
-/// cover.
+/// Where the primary's high edge at `edge` grows to next: the nearest stop
+/// past `from` (`edge`, or further out when the walk is already heading there)
+/// within `bound`, else `bound` itself — but never past the dock against the
+/// nearest window ahead of `edge`, which growing on would cover.
 pub fn next_grow_line(
     edge: f64,
     from: f64,

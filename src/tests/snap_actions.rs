@@ -339,9 +339,8 @@ fn resize_to_snap_grows_over_a_window_it_already_overlaps() {
     assert_eq!(last_configured(&mut f, id, &surface), (1808, 300));
 }
 
-/// A client that rounds to a cell answers short of the stop, or past it. The
-/// walk goes on from the stop it asked for — measured from the rounded edge,
-/// every press would re-ask for the same size and the window never moves on.
+/// A cell-rounding client answers short of the stop or past it; the walk goes
+/// on from the stop it asked for, else every press re-asks for the same size.
 #[test]
 fn resize_to_snap_walks_on_past_a_cell_rounded_answer() {
     let mut f = Fixture::new();
