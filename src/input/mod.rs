@@ -677,7 +677,11 @@ impl DriftWm {
             self.zoom(),
         )
         .0;
-        if let Some(window) = self.pinned_hover_target(screen_pos) {
+        // Resize bands are rejected for the same reason as the canvas walk's
+        // below, so a pin drawn under another pin's band takes focus there.
+        if let Some(window) = self.pinned_topmost_under(screen_pos, |hit| {
+            !matches!(hit, HitKind::Decoration(DecorationHit::ResizeBorder(_)))
+        }) {
             self.hover_focus_window(window);
             return;
         }
@@ -1685,96 +1689,60 @@ impl DriftWm {
         self.is_canvas_window(&element).then_some(element)
     }
 
-    /// The screen-pinned window whose content is under an output-relative
-    /// screen position: `pinned_window_under` resolved from focus surface to
-    /// window element. Chrome gives no pointer focus, so a pin's title bar and
-    /// resize margin answer `None` here — `pinned_owner_under` covers them.
-    ///
-    /// The walk up to the root follows subsurface parents only, so a point over
-    /// a pinned window's xdg *popup* resolves to no window rather than to the
-    /// popup's toplevel. Harmless in practice: an open popup holds a grab that
-    /// owns the input before any of this runs.
+    /// The screen-pinned window whose content — popups and subsurfaces
+    /// included — is under an output-relative screen position. Chrome gives no
+    /// pointer focus, so a pin's title bar and resize margin answer `None` here;
+    /// `pinned_owner_under` covers them.
     pub(crate) fn pinned_element_under(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
         let (target, _) = self.pinned_window_under(screen_pos, screen_pos)?;
-        self.window_for_subsurface_root(target.0)
+        self.window_for_surface_root(&target.0)
     }
 
     /// The screen-pinned window that owns an output-relative screen position:
-    /// its content as `pinned_element_under` resolves it, else its title bar,
-    /// close button or resize margin, live or inert. For paths that act on the
-    /// window itself — a press, a gesture grab, a tap — where a `None` over
-    /// chrome would fall to the canvas walk, which skips pins and reaches the
-    /// window drawn behind this one.
+    /// its content, or its chrome or resize margin, live or inert. For paths
+    /// that act on the window itself — a press, a gesture grab, a tap — where a
+    /// `None` over chrome would fall to the canvas walk, which skips pins and
+    /// reaches the window drawn behind this one.
     pub(crate) fn pinned_owner_under(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
-        if let Some((target, _)) = self.pinned_window_under(screen_pos, screen_pos) {
-            return self.window_for_subsurface_root(target.0);
-        }
-        match self.pinned_decoration_under(screen_pos) {
-            PinnedChrome::Hit(window, _) => Some(window),
-            // The chrome walk passes over an inert margin, so `Covered` can come
-            // from a lower pin's content beneath one.
-            PinnedChrome::Covered | PinnedChrome::Miss => {
-                self.pinned_resize_margin_under(screen_pos)
+        self.pinned_topmost_under(screen_pos, |_| true)
+    }
+
+    /// `topmost_under` for screen-pinned windows, at an output-relative screen
+    /// position. Per pin, content first — its whole surface tree, popups and
+    /// subsurfaces included — then its chrome, the resize margin counted
+    /// whether or not `resize_on_border` lets it be dragged. A band `accept`
+    /// rejects falls through to the pins below.
+    fn pinned_topmost_under(
+        &self,
+        screen_pos: Point<f64, Logical>,
+        mut accept: impl FnMut(HitKind) -> bool,
+    ) -> Option<Window> {
+        let output_name = self.pinned_hit_output()?;
+        for window in self.stage.windows().rev().filter_map(|w| w.client()) {
+            let Some(p) = self.stage.pin_of(window) else {
+                continue;
+            };
+            if p.output != output_name {
+                continue;
+            }
+            let surface_origin = p.screen_pos - window.geometry().loc;
+            let hit = if window
+                .surface_under(screen_pos - surface_origin.to_f64(), WindowSurfaceType::ALL)
+                .is_some()
+            {
+                Some(HitKind::Content)
+            } else {
+                self.decoration_hit_for(window, p.screen_pos, screen_pos)
+                    .or_else(|| self.resize_margin_hit_for(window, p.screen_pos, screen_pos))
+                    .map(HitKind::Decoration)
+            };
+            if let Some(hit) = hit
+                && accept(hit)
+            {
+                return Some(window.clone());
             }
         }
-    }
-
-    fn window_for_subsurface_root(
-        &self,
-        surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
-    ) -> Option<Window> {
-        let mut root = surface;
-        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
-            root = parent;
-        }
-        self.window_for_surface(&root)
-    }
-
-    /// The screen-pinned window hover may focus at `screen_pos`: the topmost
-    /// one whose surface tree or title bar is there. Resize bands are passed
-    /// over as the canvas hover walk rejects them, so a pin under another
-    /// pin's invisible band still answers instead of the canvas window drawn
-    /// behind both.
-    fn pinned_hover_target(&self, screen_pos: Point<f64, Logical>) -> Option<Window> {
-        let output_name = self.pinned_hit_output()?;
-        let bar_height = self.config.decorations.title_bar_height;
-        self.stage
-            .windows()
-            .rev()
-            .filter_map(|w| w.client())
-            .find(|&window| {
-                let Some(p) = self.stage.pin_of(window) else {
-                    return false;
-                };
-                if p.output != output_name {
-                    return false;
-                }
-                let surface_origin = p.screen_pos - window.geometry().loc;
-                if window
-                    .surface_under(screen_pos - surface_origin.to_f64(), WindowSurfaceType::ALL)
-                    .is_some()
-                {
-                    return true;
-                }
-                let has_bar = window.wl_surface().is_some_and(|s| {
-                    self.decorations
-                        .contains_key(&DecorationKey::Surface(s.id()))
-                });
-                let width = window.geometry().size.w;
-                has_bar
-                    && (crate::decorations::title_bar_contains(
-                        screen_pos,
-                        p.screen_pos,
-                        width,
-                        bar_height,
-                    ) || crate::decorations::close_button_contains(
-                        screen_pos,
-                        p.screen_pos,
-                        width,
-                        bar_height,
-                    ))
-            })
-            .cloned()
+        None
     }
 
     /// Find the Wayland surface and local coordinates under the given canvas position.

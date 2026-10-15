@@ -26,6 +26,7 @@
 
 use driftwm::canvas::{CanvasPos, canvas_to_screen};
 use driftwm::config::{BTN_LEFT, BTN_RIGHT, BindingContext};
+use driftwm::stage::PinnedSite;
 use smithay::desktop::Window;
 use smithay::input::keyboard::ModifiersState;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus};
@@ -45,8 +46,8 @@ use super::input_backend::{
 };
 use super::popups::grow_popup;
 use super::{
-    Fixture, adopt_last_configure, config, give_ssd, is_activated, map_popup, map_window,
-    server_surface, to_canvas, window_by_app_id,
+    Fixture, adopt_last_configure, config, end_grab, give_ssd, is_activated, map_popup, map_window,
+    motion, server_surface, to_canvas, window_by_app_id,
 };
 
 /// Every window here is 400x300 so a rect test needs only its origin.
@@ -1127,6 +1128,144 @@ fn a_popup_over_a_pinned_band_does_not_fall_through_either() {
 
     f.client(id).popup(&popup_surface).destroy();
     f.double_roundtrip(id);
+}
+
+/// A pin's popup is part of the pin as drawn — the canvas counts a window's
+/// popups as its own — so a swipe starting on one moves the pin, not the
+/// canvas window behind the popup. The test popup takes no grab, like a
+/// tooltip or an autocomplete list, so nothing else claims the input first.
+#[test]
+fn a_swipe_move_from_a_pins_popup_moves_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(PIN_RULE_SMALL));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (client_surface, site) = map_small_pin(&mut f, id);
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let popup_surface = map_popup(&mut f, id, &client_surface);
+    grow_popup(&mut f, id, &popup_surface, (200, 100));
+
+    // The popup is centered on P's top-left corner, so up and left of it the
+    // popup overhangs clear of P and its margin.
+    let probe = pt(site.x as f64 - 50.0, site.y as f64 - 20.0);
+    let canvas_probe = to_canvas(&mut f, probe);
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((canvas_probe.x as i32 - 80, canvas_probe.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, canvas_probe),
+        "precondition: the canvas window covers the swipe point"
+    );
+    let focus = f
+        .state()
+        .pointer_focus_under(probe, canvas_probe)
+        .map(|(t, _)| t.0);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|s| *s != server_surface(&pin) && get_parent(s).is_none()),
+        "precondition: the probe point must land on the pin's popup, got {focus:?}"
+    );
+
+    assert!(
+        f.state().try_start_gesture_move(canvas_probe, false),
+        "the swipe found something to drag"
+    );
+    motion(&mut f, canvas_probe + pt(50.0, 30.0));
+    end_grab(&mut f);
+
+    assert_ne!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        site,
+        "the swipe started on the pin's own popup, so the pin moves"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&beneath),
+        Some(origin),
+        "the window drawn behind the popup stays put"
+    );
+
+    f.client(id).popup(&popup_surface).destroy();
+    f.double_roundtrip(id);
+}
+
+/// An inert margin still belongs to its pin, whatever is drawn beneath it. The
+/// upper pin's margin here lies over the lower pin's title bar: a bound drag
+/// there is the upper pin's, exactly as it is over the lower pin's content.
+#[test]
+fn alt_left_on_a_pins_inert_margin_over_a_lower_pins_bar_moves_the_upper_pin() {
+    let mut f = Fixture::with_config(config(
+        r#"
+[mouse]
+resize_on_border = false
+
+[[window_rules]]
+app_id = "lower"
+pinned_to_screen = true
+size = [400, 300]
+
+[[window_rules]]
+app_id = "upper"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "lower", (400, 300));
+    let lower = window_by_app_id(&mut f, "lower").unwrap();
+    give_ssd(&mut f, &lower);
+    map_window(&mut f, id, "upper", (400, 300));
+    let upper = window_by_app_id(&mut f, "upper").unwrap();
+
+    // The upper pin's bottom edge on the top of the lower pin's bar, so its
+    // 8 px bottom margin covers the bar's top 8 px.
+    let bar = f.state().config.decorations.title_bar_height;
+    let lower_site = f.state().stage.pin_of(&lower).unwrap().clone();
+    let upper_site = PinnedSite {
+        output: lower_site.output.clone(),
+        screen_pos: lower_site.screen_pos - Point::from((0, bar + 300)),
+    };
+    f.state().stage.set_pin(&upper, upper_site.clone());
+
+    let probe = pt(
+        lower_site.screen_pos.x as f64 + 100.0,
+        (lower_site.screen_pos.y - bar) as f64 + 4.0,
+    );
+    let canvas_probe = to_canvas(&mut f, probe);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(probe),
+            PinnedChrome::Hit(ref w, DecorationHit::TitleBar) if *w == lower
+        ),
+        "precondition: the lower pin's title bar must be what is drawn here"
+    );
+    assert_eq!(
+        f.state().pinned_resize_margin_under(probe),
+        Some(upper.clone()),
+        "precondition: the upper pin's inert margin must cover the probe point"
+    );
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTALT);
+    pointer_to(&mut f, &mouse, canvas_probe);
+    press(&mut f, &mouse, BTN_LEFT);
+    pointer_to(&mut f, &mouse, canvas_probe + pt(60.0, -40.0));
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTALT);
+
+    assert_ne!(
+        f.state().stage.pin_of(&upper).unwrap().screen_pos,
+        upper_site.screen_pos,
+        "the margin is the upper pin's, so the drag moves it"
+    );
+    assert_eq!(
+        f.state().stage.pin_of(&lower).unwrap().screen_pos,
+        lower_site.screen_pos,
+        "the lower pin stays put"
+    );
 }
 
 /// The `Miss` non-vacuity guard: a pin exists on the output, but nowhere near

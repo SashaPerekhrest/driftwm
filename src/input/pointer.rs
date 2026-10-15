@@ -1126,9 +1126,9 @@ impl DriftWm {
         let (mut binding, mut modifier_binding) =
             self.modifier_button_binding(&mods, button, BindingContext::OnWindow);
 
-        // `pass_mouse` resolves its subject here rather than reusing the
-        // `pinned_window_under` below: the chrome arm in between deliberately
-        // hits outside the surface, and clearing `modifier_binding` has to reach it.
+        // `pass_mouse` resolves its subject here rather than reusing the owner
+        // lookup below: the chrome arm in between deliberately hits outside the
+        // surface, and clearing `modifier_binding` has to reach it.
         if binding.is_some() && self.target_claims(pos, &mods, config::MouseTrigger::Button(button))
         {
             binding = None;
@@ -1175,37 +1175,33 @@ impl DriftWm {
         // unbound press focuses it. Neither band gives pointer focus, so the
         // forward below reaches no client, but it still installs the implicit
         // grab that keeps focus off a client until release.
-        let pinned_window = self.pinned_owner_under(screen_pos);
-        // A pin's popup has no owner here, but the press is still the popup's
-        // to receive through the forward below.
-        if pinned_window.is_none() && self.pinned_window_under(screen_pos, pos).is_none() {
+        let Some(window) = self.pinned_owner_under(screen_pos) else {
             return false;
-        }
+        };
         if let Some(action) = binding
-            && let Some(ref window) = pinned_window
             && !window.is_widget()
         {
             match action {
                 MouseAction::MoveWindow | MouseAction::MoveSnappedWindows => {
-                    self.raise_and_focus(window, serial);
-                    self.start_pinned_move(pointer, window, pos, button, serial);
+                    self.raise_and_focus(&window, serial);
+                    self.start_pinned_move(pointer, &window, pos, button, serial);
                     return true;
                 }
                 MouseAction::ResizeWindow | MouseAction::ResizeWindowSnapped => {
-                    self.raise_and_focus(window, serial);
+                    self.raise_and_focus(&window, serial);
                     // Infer the edge in screen space against the pinned rect.
                     let edge = self
                         .stage
-                        .pin_of(window)
+                        .pin_of(&window)
                         .map(|site| site.screen_pos)
                         .map(|sp| edges_from_position(screen_pos, sp, window.geometry().size));
                     self.start_compositor_resize_with_edge(
-                        pointer, window, pos, button, serial, edge, false,
+                        pointer, &window, pos, button, serial, edge, false,
                     );
                     return true;
                 }
                 MouseAction::Action(ref a) => {
-                    self.raise_and_focus(window, serial);
+                    self.raise_and_focus(&window, serial);
                     let a = a.clone();
                     self.execute_action(&a);
                     return true;
@@ -1215,17 +1211,15 @@ impl DriftWm {
                 _ => {}
             }
         }
-        if let Some(ref window) = pinned_window {
-            // Same policy as the unpinned click branch: a widget takes keyboard
-            // focus without a raise (or MRU entry).
-            if window.is_widget() {
-                self.set_window_focus(
-                    window.wl_surface().map(|s| FocusTarget(s.into_owned())),
-                    serial,
-                );
-            } else {
-                self.raise_and_focus(window, serial);
-            }
+        // Same policy as the unpinned click branch: a widget takes keyboard
+        // focus without a raise (or MRU entry).
+        if window.is_widget() {
+            self.set_window_focus(
+                window.wl_surface().map(|s| FocusTarget(s.into_owned())),
+                serial,
+            );
+        } else {
+            self.raise_and_focus(&window, serial);
         }
         if button_state == ButtonState::Pressed {
             self.maybe_grab_screen_space_click(pointer, button, serial);
