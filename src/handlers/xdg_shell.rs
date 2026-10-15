@@ -10,7 +10,10 @@ use smithay::{
         PopupKeyboardGrab, PopupKind, PopupPointerGrab, PopupUngrabStrategy, Window,
         find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output,
     },
-    input::pointer::{CursorIcon, CursorImageStatus, Focus, GrabStartData},
+    input::{
+        pointer::{CursorIcon, CursorImageStatus, Focus, GrabStartData},
+        tablet::tool::TabletToolHandle,
+    },
     output::Output,
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -434,7 +437,8 @@ impl XdgShellHandler for DriftWm {
         // not its cluster neighbors. Clients don't know about clusters, so
         // always single-window.
         let pointer = self.seat.get_pointer().unwrap();
-        if let Some(start_data) = check_grab(&pointer, &wl_surface) {
+        let pen = self.pointer_pen_tool();
+        if let Some(start_data) = check_grab(&pointer, pen.as_ref(), &wl_surface, serial) {
             // Pinned windows move in screen space. A canvas grab would only
             // shuffle the loc-synced canvas position while the window keeps
             // rendering at its fixed `screen_pos` — i.e. the drag would do nothing.
@@ -533,7 +537,8 @@ impl XdgShellHandler for DriftWm {
         };
 
         let pointer = self.seat.get_pointer().unwrap();
-        let Some(start_data) = check_grab(&pointer, &wl_surface) else {
+        let pen = self.pointer_pen_tool();
+        let Some(start_data) = check_grab(&pointer, pen.as_ref(), &wl_surface, serial) else {
             return;
         };
 
@@ -608,12 +613,26 @@ impl XdgShellHandler for DriftWm {
 /// Validate that the pointer has an active grab starting on the given surface.
 /// Returns the `GrabStartData` if the button click that started the grab
 /// originated on this surface (preventing a client from stealing another's grab).
+///
+/// A pen's press grabs the pointer with no focus when the client under it
+/// takes the tool, so for that client the pen's own grab has to vouch: the
+/// tip that went down on it carried `serial`, the one the client cites.
 fn check_grab(
     pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
+    pen: Option<&TabletToolHandle<DriftWm>>,
     surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+    serial: Serial,
 ) -> Option<GrabStartData<DriftWm>> {
     let start_data = pointer.grab_start_data()?;
-    let (focus, _) = start_data.focus.as_ref()?;
+    let focus = match &start_data.focus {
+        Some((focus, _)) => focus.clone(),
+        None => {
+            pen.filter(|tool| tool.has_grab(serial))?
+                .grab_start_data()?
+                .focus?
+                .0
+        }
+    };
 
     // The button press must have been on this surface (or a child of it)
     if !focus.same_client_as(&surface.id()) {

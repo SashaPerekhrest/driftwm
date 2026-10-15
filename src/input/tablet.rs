@@ -237,7 +237,13 @@ impl DriftWm {
             tool.frame(self, time);
         }
 
-        self.on_pointer_button::<I, _>(TabletTipButtonEvent::new(event, button_state));
+        // The press reuses the tip's serial: a client on tablet-v2 cites that
+        // one to start a drag, which smithay accepts only against the pointer
+        // grab this press installs.
+        self.on_pointer_button::<I, _>(
+            TabletTipButtonEvent::new(event, button_state),
+            Some(serial),
+        );
     }
 
     pub fn on_tablet_tool_button<I: InputBackend>(&mut self, event: I::TabletToolButtonEvent) {

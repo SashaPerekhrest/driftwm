@@ -19,10 +19,14 @@ use smithay::{
 
 use smithay::desktop::space::SpaceElement;
 use smithay::desktop::{PopupPointerGrab, Window};
+use smithay::input::dnd::DnDGrab;
 use smithay::input::pointer::{ClickGrab, PointerHandle};
 use smithay::input::tablet::TabletSeatTrait;
 use smithay::input::tablet::tool::TabletToolHandle;
 use smithay::reexports::wayland_server::Resource;
+use smithay::reexports::wayland_server::protocol::{
+    wl_data_source::WlDataSource, wl_surface::WlSurface,
+};
 use smithay::wayland::seat::WaylandFocus;
 
 use smithay::utils::Logical;
@@ -54,6 +58,17 @@ pub(crate) enum PointerGrabKind {
     Click,
     /// A grab that supplies its own focus and location.
     Other,
+}
+
+/// Whether a drag-and-drop holds the pointer. Its source is a client's data
+/// source, or the origin surface for a drag that carries none.
+fn pointer_drags(pointer: &PointerHandle<DriftWm>) -> bool {
+    pointer
+        .with_grab(|_, grab| {
+            grab.is::<DnDGrab<DriftWm, WlDataSource, FocusTarget>>()
+                || grab.is::<DnDGrab<DriftWm, WlSurface, FocusTarget>>()
+        })
+        .unwrap_or(false)
 }
 
 /// Milliseconds on the clock libinput stamps its events with, for the motions
@@ -464,7 +479,7 @@ impl DriftWm {
             InputEvent::PointerMotionAbsolute { event } => {
                 self.on_pointer_motion_absolute::<I>(event)
             }
-            InputEvent::PointerButton { event } => self.on_pointer_button::<I, _>(event),
+            InputEvent::PointerButton { event } => self.on_pointer_button::<I, _>(event, None),
             InputEvent::PointerAxis { event } => self.on_pointer_axis::<I>(event),
             InputEvent::GestureSwipeBegin { event } => self.on_gesture_swipe_begin::<I>(event),
             InputEvent::GestureSwipeUpdate { event } => self.on_gesture_swipe_update::<I>(event),
@@ -900,6 +915,11 @@ impl DriftWm {
         let Some(tool) = self.pointer_pen_tool() else {
             return under;
         };
+        // A drag hands `under` to `wl_data_device` as the drop target, a
+        // stream the pen has no tablet-v2 counterpart for.
+        if pointer_drags(&self.seat.get_pointer().unwrap()) {
+            return under;
+        }
         under.filter(|(focus, _)| !focus.takes_tool(&tool))
     }
 

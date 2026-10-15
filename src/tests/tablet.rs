@@ -13,13 +13,14 @@
 use smithay::input::pointer::CursorImageStatus;
 use smithay::input::tablet::{TabletSeatHandler, TabletSeatTrait};
 use smithay::utils::{Logical, Point};
+use wayland_protocols::xdg::shell::client::xdg_toplevel::ResizeEdge;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use driftwm::config::BTN_LEFT;
 
 use crate::state::StageWindow;
 
-use super::client::{ClientId, LayerConfigureProps, TabletEvent, TabletToolEvent};
+use super::client::{ClientId, DataDeviceEvent, LayerConfigureProps, TabletEvent, TabletToolEvent};
 use super::input_backend::{
     FakeDevice, FakeTabletAxes, fake_tool, key_press, pen_proximity_in, pen_proximity_in_screen,
     pen_proximity_out, pen_tip_down, pen_tip_up, pen_to, pen_to_screen_with, pen_to_with,
@@ -1046,6 +1047,186 @@ fn a_tablet_client_binding_late_still_gets_proximity() {
             .is_some_and(|frame| frame.contains(&TabletToolEvent::ProximityIn { surface })),
         "a tool already over the window when the client binds must open with \
          proximity_in: {frames:?}"
+    );
+}
+
+/// A second tablet-aware client with a window of its own, for scenarios where
+/// the pen and the client acting on the seat differ. It maps centred inside
+/// the first client's window, which a tip on that window raises over it, so
+/// it is moved out to the right of it. Fails loudly if the window landed
+/// under `pen_at`, which would make the pen its client too.
+fn another_tablet_client_with_window(
+    f: &mut Fixture,
+    app_id: &str,
+    pen_at: Point<f64, Logical>,
+) -> (
+    ClientId,
+    wayland_client::protocol::wl_surface::WlSurface,
+    Point<f64, Logical>,
+) {
+    let id = f.add_client();
+    let surface = map_window(f, id, app_id, (300, 300));
+    f.client(id).get_tablet_seat();
+    f.double_roundtrip(id);
+    let window = window_by_app_id(f, app_id).unwrap();
+    f.state()
+        .stage
+        .set_position(&window, Point::from((450, -150)));
+    let origin = f.state().stage.position_of(&window).unwrap().to_f64();
+    let covers = pen_at.x >= origin.x
+        && pen_at.x < origin.x + 300.0
+        && pen_at.y >= origin.y
+        && pen_at.y < origin.y + 300.0;
+    assert!(
+        !covers,
+        "the second window must sit clear of the pen, or this scenario tests nothing"
+    );
+    (id, surface, origin)
+}
+
+/// A pen with its tip down on the tablet client's window, and the serial that
+/// tip's `down` carried — the one a client cites to start an interactive
+/// request from it.
+fn pen_tip_down_on_tablet_client(
+    f: &mut Fixture,
+    id: ClientId,
+    at: Point<f64, Logical>,
+) -> (FakeDevice, u32) {
+    let device = pen_in_proximity(f, at);
+    pen_to(f, &device, at);
+    pen_tip_down(f, &device);
+    f.double_roundtrip(id);
+    let serial =
+        f.client(id).state.tablet_down_serial.expect(
+            "the tip must reach the client as a tablet down, or there is no serial to cite",
+        );
+    (device, serial)
+}
+
+/// A tablet client is withheld from `wl_pointer`, so the seat pointer's grab
+/// has no focus to match its move request against. The pen's own `down` serial
+/// is the only proof of a press the client has, and it has to be enough, or a
+/// CSD title bar cannot be dragged with a pen.
+#[test]
+fn a_tablet_client_can_start_a_move_from_its_pen_tip() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+    let window = window_by_app_id(&mut f, "canvas").unwrap();
+    let at = origin + Point::from((100.0, 100.0));
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, id, at);
+
+    f.client(id).window(&surface).move_(serial);
+    f.roundtrip(id);
+    let before = f.state().stage.position_of(&window).unwrap();
+    pen_to(&mut f, &device, at + Point::from((60.0, 40.0)));
+
+    assert_eq!(
+        f.state().stage.position_of(&window).unwrap(),
+        before + Point::from((60, 40)),
+        "the window must follow the pen while its tip is down"
+    );
+
+    // The move belongs to the stroke: once the tip lifts the pen is just
+    // hovering, and a window that kept following it would be unplaceable.
+    pen_tip_up(&mut f, &device);
+    let released = f.state().stage.position_of(&window).unwrap();
+    pen_to(&mut f, &device, at + Point::from((200.0, 120.0)));
+
+    assert_eq!(
+        f.state().stage.position_of(&window).unwrap(),
+        released,
+        "a hovering pen must not keep dragging the window"
+    );
+}
+
+/// Same gap as the move: the resize request is matched against a pointer grab
+/// whose start focus a withheld client never has.
+#[test]
+fn a_tablet_client_can_start_a_resize_from_its_pen_tip() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, surface, origin) = tablet_client_with_window(&mut f);
+    let at = origin + Point::from((790.0, 590.0));
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, id, at);
+
+    f.client(id)
+        .window(&surface)
+        .resize(ResizeEdge::BottomRight, serial);
+    f.roundtrip(id);
+    pen_to(&mut f, &device, at + Point::from((100.0, 80.0)));
+    f.double_roundtrip(id);
+
+    let size = f
+        .client(id)
+        .window(&surface)
+        .configures_received
+        .last()
+        .unwrap()
+        .1
+        .size;
+    assert!(
+        size.0 > 800 && size.1 > 600,
+        "the pen dragging the corner must configure the window larger than 800x600, got {size:?}"
+    );
+}
+
+/// A serial is only proof of a press for the client that was sent it. Another
+/// tablet client citing the pen's `down` serial must not take the window grab
+/// for itself, or any client could move its own window off someone else's
+/// stroke. Holds with and without the pen-serial acceptance.
+#[test]
+fn another_client_cannot_start_a_move_from_the_pens_serial() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (id, _surface, origin) = tablet_client_with_window(&mut f);
+    let at = origin + Point::from((100.0, 100.0));
+    let (other, other_surface, _) = another_tablet_client_with_window(&mut f, "other", at);
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, id, at);
+    let other_window = window_by_app_id(&mut f, "other").unwrap();
+    let before = f.state().stage.position_of(&other_window).unwrap();
+
+    f.client(other).window(&other_surface).move_(serial);
+    f.roundtrip(other);
+    pen_to(&mut f, &device, at + Point::from((60.0, 40.0)));
+
+    assert_eq!(
+        f.state().stage.position_of(&other_window).unwrap(),
+        before,
+        "a window not under the pen must not follow it"
+    );
+}
+
+/// smithay accepts a drag only when the seat pointer's grab carries the cited
+/// serial, and a tablet client has only its tip's to cite. Once started, the
+/// drag finds its target in what lies under the pen, which a pen withholding
+/// tablet clients from `wl_pointer` must not hide from it, or nothing can be
+/// dropped onto one.
+#[test]
+fn a_pen_can_drag_and_drop_between_tablet_clients() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let (a, a_surface, a_origin) = tablet_client_with_window(&mut f);
+    let at = a_origin + Point::from((100.0, 100.0));
+    let (b, b_surface, b_origin) = another_tablet_client_with_window(&mut f, "other", at);
+    f.client(a).get_data_device();
+    f.client(b).get_data_device();
+    f.double_roundtrip(a);
+    f.double_roundtrip(b);
+    let (device, serial) = pen_tip_down_on_tablet_client(&mut f, a, at);
+
+    f.client(a).start_drag(&a_surface, serial);
+    f.roundtrip(a);
+    pen_to(&mut f, &device, b_origin + Point::from((100.0, 100.0)));
+    f.double_roundtrip(b);
+
+    assert!(
+        f.client(b)
+            .state
+            .data_device_events
+            .contains(&DataDeviceEvent::Enter { surface: b_surface }),
+        "dragging the pen onto another window must offer the drop to it: {:?}",
+        f.client(b).state.data_device_events
     );
 }
 

@@ -10,7 +10,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_protocols::xdg::shell::server::xdg_toplevel,
     },
-    utils::{Point, SERIAL_COUNTER},
+    utils::{Point, SERIAL_COUNTER, Serial},
 };
 
 use smithay::wayland::seat::WaylandFocus;
@@ -202,9 +202,13 @@ impl DriftWm {
     /// 1. Configured mouse bindings (move, resize, pan, etc.)
     /// 2. Normal click on window → focus + raise + forward to client
     /// 3. Left-click on empty canvas → pan canvas
+    ///
+    /// `serial` is one another stream already announced this press with, or
+    /// `None` to mint one.
     pub(super) fn on_pointer_button<I: InputBackend, E: PointerButtonEvent<I>>(
         &mut self,
         event: E,
+        serial: Option<Serial>,
     ) {
         let button = event.button_code();
         let button_state = event.state();
@@ -219,7 +223,7 @@ impl DriftWm {
         // the finger lands — and the routing below reads `pointer_over_layer`
         // and focus, which are only as fresh as the last pull.
         self.refresh_pointer_focus();
-        let serial = SERIAL_COUNTER.next_serial();
+        let serial = serial.unwrap_or_else(|| SERIAL_COUNTER.next_serial());
         let pointer = self.seat.get_pointer().unwrap();
 
         // Buffer BTN_MIDDLE release while a pending click is waiting
