@@ -214,7 +214,7 @@ fn move_to_snap_during_a_zoom_out_lets_the_zoom_land() {
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let (a, _) = window_at(&mut f, id, "a", (100, 100), (400, 300));
-    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    window_at(&mut f, id, "b", (5000, 100), (400, 300));
     focus(&mut f, &a);
     park_view(&mut f, Point::from((0.0, 0.0)));
     let resting = f.state().zoom_target();
@@ -230,9 +230,41 @@ fn move_to_snap_during_a_zoom_out_lets_the_zoom_land() {
     );
 
     act(&mut f, Action::MoveToSnap(Direction::Right));
-    assert_eq!(window_position(&mut f, &a), Point::from((588, 100)));
+    assert_eq!(window_position(&mut f, &a), Point::from((4588, 100)));
     settle(&mut f);
     assert_eq!(f.state().zoom(), heading, "the zoom-out landed");
+    assert!(
+        f.state().window_fully_in_viewport(&a),
+        "the camera followed the window"
+    );
+}
+
+/// A press while the view is flying leaves the flight alone when the stop is
+/// on screen where it lands, the way a press at rest leaves a visible stop
+/// alone: how quickly the keys follow each other doesn't change the view.
+#[test]
+fn move_to_snap_during_a_zoom_out_leaves_a_stop_the_view_lands_on_alone() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, _) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ZoomOut);
+    let landing = f.state().landing_view();
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(window_position(&mut f, &a), Point::from((588, 100)));
+    settle(&mut f);
+    assert_eq!(
+        (f.state().camera(), f.state().zoom()),
+        landing,
+        "the zoom-out landed where it was heading"
+    );
 }
 
 /// The camera follows through the directional-focus navigation, so

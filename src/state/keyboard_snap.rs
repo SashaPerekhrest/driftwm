@@ -50,12 +50,11 @@ impl DriftWm {
         };
         self.keyboard_move_element(&element, loc, new_loc);
 
-        // A pan still in flight is heading for a view picked for the previous
-        // stop, whatever its current frame shows. `camera_target` alone can't
-        // tell: the zoom anchor every navigation pan rides clears it each tick.
-        let at_rest = self.camera_target().is_none() && self.zoom_target().is_none();
+        // Judged where a flight still under way lands, not at its current
+        // frame: a pan heading for the previous stop would leave this one.
+        let (camera, zoom) = self.landing_view();
         let landed = super::fit::snap_rect_at(new_loc, size, bar, bw);
-        if !at_rest || !self.frame_fully_in_view_at(&landed, self.camera(), self.zoom()) {
+        if !self.frame_fully_in_view_at(&landed, camera, zoom) {
             self.navigate_to_element(&element, NavZoom::Keep);
         }
     }
