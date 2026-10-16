@@ -206,6 +206,35 @@ fn move_to_snap_mid_pan_brings_the_camera_back_with_the_window() {
     );
 }
 
+/// A press during a zoom animation follows the window at the zoom the view is
+/// heading to, so the zoom lands instead of freezing where this frame caught it.
+#[test]
+fn move_to_snap_during_a_zoom_out_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, _) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    window_at(&mut f, id, "b", (1000, 100), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    let resting = f.state().zoom_target();
+
+    act(&mut f, Action::ZoomOut);
+    let heading = f.state().zoom_target().expect("zoom-out armed a zoom");
+    assert_ne!(Some(heading), resting, "the zoom target moved");
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > heading,
+        "precondition: the zoom is under way"
+    );
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(window_position(&mut f, &a), Point::from((588, 100)));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), heading, "the zoom-out landed");
+}
+
 /// The camera follows through the directional-focus navigation, so
 /// `focus_placement` decides where the window lands on screen.
 #[test]

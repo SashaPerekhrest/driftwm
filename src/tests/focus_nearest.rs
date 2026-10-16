@@ -617,6 +617,41 @@ fn a_step_during_a_zoom_animation_lets_the_zoom_land() {
     assert!(f.state().window_fully_in_viewport(&b));
 }
 
+/// A step during a zoom-out onto a window clipped where the zoom lands pans at
+/// the zoom the view is heading to, so the zoom lands instead of freezing
+/// where this frame caught it.
+#[test]
+fn a_clipped_step_during_a_zoom_out_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b) = focused_a_and_b(&mut f, (2100, 440), (300, 200));
+    let resting = f.state().zoom_target();
+
+    f.state().execute_action(&Action::ZoomOut);
+    let heading = f.state().zoom_target().expect("zoom-out armed a zoom");
+    assert_ne!(Some(heading), resting, "the zoom target moved");
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > heading,
+        "precondition: the zoom is under way"
+    );
+    let (camera, zoom) = f.state().landing_view();
+    assert!(
+        !f.state().window_fully_in_view_at(&b, camera, zoom),
+        "precondition: b is clipped where the zoom lands"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), heading, "the zoom-out landed");
+    assert!(f.state().window_fully_in_viewport(&b));
+}
+
 /// Whether a too-big window counts as shown is judged on the frame the reveal
 /// moves: a window whose committed size lags the size it was configured to
 /// still counts once revealed, so the next step walks on past it.

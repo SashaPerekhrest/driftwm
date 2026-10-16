@@ -48,9 +48,10 @@ pub enum NavZoom {
     /// Bring the window to the `focus_placement` point, animating zoom to 1.0 —
     /// an intentional navigation to a specific window.
     Reset,
-    /// Bring the window to the `focus_placement` point, leaving the current zoom
-    /// alone. Directional and gesture-driven navigation rides this, where a zoom
-    /// jump would break the direction correspondence.
+    /// Bring the window to the `focus_placement` point, leaving the zoom alone:
+    /// the current one, or the one a zoom animation is heading to. Directional
+    /// and gesture-driven navigation rides this, where a zoom jump would break
+    /// the direction correspondence.
     Keep,
     /// A window still in `fill` state returns to the camera *and* zoom its fill
     /// was computed in, rather than being placed — see `fill_restore_view`.
@@ -299,12 +300,13 @@ impl DriftWm {
     }
 
     /// The zoom a navigation animates to on `output`: 1.0 when `reset_zoom`
-    /// (intentional navigation), else the zoom already in effect.
+    /// (intentional navigation), else the zoom the view is heading to. The
+    /// live zoom would stop a zoom animation where this frame caught it.
     pub(crate) fn navigation_target_zoom(&self, output: &Output, reset_zoom: bool) -> f64 {
         if reset_zoom {
             1.0
         } else {
-            output_state(output).zoom
+            self.landing_view_on(output).1
         }
     }
 

@@ -313,6 +313,41 @@ fn a_step_mid_pan_retargets_the_pan() {
     );
 }
 
+/// A step during a zoom animation onto a window clipped where the zoom lands
+/// parks it at the zoom the view is heading to, so the zoom lands instead of
+/// freezing where this frame caught it.
+#[test]
+fn a_clipped_step_during_a_zoom_out_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    three_windows(&mut f);
+    let win_b = window_by_app_id(&mut f, "b").unwrap();
+    place_three(&mut f, (800, 400), (2600, 400), (100, 400));
+    let resting = f.state().zoom_target();
+
+    f.state().execute_action(&Action::ZoomOut);
+    let heading = f.state().zoom_target().expect("zoom-out armed a zoom");
+    assert_ne!(Some(heading), resting, "the zoom target moved");
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > heading,
+        "precondition: the zoom is under way"
+    );
+    let (camera, zoom) = f.state().landing_view();
+    assert!(
+        !f.state().window_fully_in_view_at(&win_b, camera, zoom),
+        "precondition: b is clipped where the zoom lands"
+    );
+
+    cycle_forward(&mut f);
+    assert_eq!(f.state().focused_window(), Some(win_b.clone()));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), heading, "the zoom-out landed");
+    assert!(f.state().window_fully_in_viewport(&win_b));
+}
+
 /// Alt-Tab is a jump, not a walk: a clipped target parks on `focus_placement`
 /// rather than taking the minimal pan `focus-nearest` does.
 #[test]

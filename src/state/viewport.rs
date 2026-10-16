@@ -281,10 +281,15 @@ impl DriftWm {
     /// — the live view when nothing is in flight. Momentum isn't a flight: it
     /// has no destination.
     pub(crate) fn landing_view(&self) -> (Point<f64, Logical>, f64) {
-        let Some(output) = self.active_output() else {
-            return (self.camera(), self.zoom());
-        };
-        let os = output_state(&output);
+        match self.active_output() {
+            Some(output) => self.landing_view_on(&output),
+            None => (self.camera(), self.zoom()),
+        }
+    }
+
+    /// As `landing_view`, for `output`.
+    pub(crate) fn landing_view_on(&self, output: &Output) -> (Point<f64, Logical>, f64) {
+        let os = output_state(output);
         let zoom = os.zoom_target.unwrap_or(os.zoom);
         // The zoom tick steers by the anchor and clears `camera_target`, so
         // while one is armed it alone says where the camera lands.
