@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use driftwm::config::{Action, parse_action};
+use driftwm::config::{Action, Direction, parse_action};
 use driftwm::session::{self, SessionEnvelope};
 use smithay::utils::{Logical, Point};
 
 use super::real::TempDir;
-use super::{Fixture, adopt_last_configure, config, map_window, window_by_app_id};
+use super::{Fixture, TICK, adopt_last_configure, config, map_window, window_by_app_id};
 use crate::ipc::dispatch;
 use crate::ipc::protocol::{Request, Response};
 
@@ -108,6 +108,33 @@ fn set_bookmark_captures_pending_target_not_a_stale_camera() {
     // The bookmark captures the animation's destination, not the stale
     // mid-flight camera.
     assert_eq!(f.state().bookmarks["mid"], [500.0, -300.0]);
+}
+
+/// One frame into a navigation, the zoom anchor steering it has already
+/// cleared `camera_target`; set-bookmark still captures where the view lands.
+#[test]
+fn set_bookmark_one_frame_into_an_anchor_step_captures_the_anchor() {
+    let mut f = Fixture::with_config(config("[navigation]\nanchors = [[2000, -400]]\n"));
+    f.add_output(1, (1920, 1080));
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((0.0, 0.0));
+        os.camera_target = None;
+        os.zoom = 1.0;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+
+    f.state()
+        .execute_action(&Action::CenterNearest(Direction::Right));
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().camera_target().is_none(),
+        "precondition: the anchor alone says where the camera lands"
+    );
+
+    f.state().execute_action(&Action::SetBookmark("mid".into()));
+    assert_eq!(f.state().bookmarks["mid"], [2000.0, -400.0]);
 }
 
 #[test]

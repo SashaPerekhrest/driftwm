@@ -393,11 +393,10 @@ impl DriftWm {
             },
             Action::SetBookmark(name) => {
                 let vc = self.usable_center_screen();
-                let zoom = self.zoom();
                 // Capture the destination of an in-flight animation, not a
                 // mid-flight frame, so set → go-to-bookmark round-trips exactly.
                 // This is the exact inverse of `go_to_canvas_point`'s camera math.
-                let cam = self.camera_target().unwrap_or_else(|| self.camera());
+                let (cam, zoom) = self.landing_view();
                 let x = cam.x + vc.x / zoom;
                 let y = -(cam.y + vc.y / zoom);
                 self.bookmarks.insert(name.clone(), [x, y]);
