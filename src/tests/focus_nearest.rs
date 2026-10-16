@@ -365,6 +365,39 @@ fn an_anchor_target_centers_and_clears_focus_like_center_nearest() {
     );
 }
 
+/// An anchor step taken while the view is flying overrides the flight: the
+/// anchor still lands on the viewport center, at the zoom the view is heading
+/// to.
+#[test]
+fn an_anchor_step_during_a_zoom_out_lands_on_the_anchor() {
+    let mut f = Fixture::with_config(config("[navigation]\nanchors = [[2000, -400]]\n"));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (100, 400));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    f.state().execute_action(&Action::ZoomOut);
+    let heading = f.state().zoom_target().expect("zoom-out armed a zoom");
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert!(f.state().window_focus.is_none(), "focus cleared");
+    settle(&mut f);
+    let (camera, zoom) = (f.state().camera(), f.state().zoom());
+    let vc = f.state().usable_center_screen();
+    let on_screen = ((2000.0 - camera.x) * zoom, (400.0 - camera.y) * zoom);
+    assert!(
+        (on_screen.0 - vc.x).abs() < 1e-6 && (on_screen.1 - vc.y).abs() < 1e-6,
+        "the anchor landed on the viewport center: {on_screen:?} vs {vc:?}"
+    );
+    assert_eq!(zoom, heading, "and the zoom-out landed");
+}
+
 /// A suspended stand-in fully on screen is focused in place, the way a live
 /// window is; the camera holds.
 #[test]

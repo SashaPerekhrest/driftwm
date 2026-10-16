@@ -104,13 +104,14 @@ impl DriftWm {
     fn center_on_anchor(&mut self, p: Point<f64, Logical>) {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.set_window_focus(None, serial);
-        self.with_output_state(|os| {
-            os.overview_return = None;
-            os.momentum.stop();
-        });
-        let vc = self.usable_center_screen();
-        let zoom = self.zoom();
-        self.set_camera_target(Some(Point::from((p.x - vc.x / zoom, p.y - vc.y / zoom))));
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        // Through the anchor, not a bare `camera_target`: the anchor of a
+        // flight still under way would steer the camera back every tick.
+        let vc = self.usable_center_screen_on(&output);
+        let zoom = self.navigation_target_zoom(&output, false);
+        self.set_camera_anchor(&output, p, vc, zoom);
     }
 
     /// Spawn a command and reveal the cursor briefly so the launched app is
