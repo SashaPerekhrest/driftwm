@@ -170,7 +170,7 @@ impl DriftWm {
         let Some(output) = self.active_output() else {
             return;
         };
-        let zoom = crate::state::output_state(&output).zoom;
+        let zoom = self.navigation_target_zoom(&output, false);
         self.center_camera_on_suspended(&s, &output, zoom);
     }
 
