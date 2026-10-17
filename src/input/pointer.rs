@@ -385,9 +385,8 @@ impl DriftWm {
                 }
             }
 
-            // Layer surfaces: an `anywhere` binding, else forward (no compositor
-            // grabs). A press grants keyboard focus to an `OnDemand` layer under
-            // the pointer.
+            // A press grants keyboard focus to an `OnDemand` layer under the
+            // pointer.
             if self.pointer_over_layer {
                 if self.try_layer_button(&pointer, pos, button, serial, &mods) {
                     return;
@@ -1782,8 +1781,6 @@ impl DriftWm {
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
-    /// Start a NavigateGrab, which centers the nearest window in the drag's
-    /// direction.
     fn start_navigate_grab(
         &mut self,
         pointer: &smithay::input::pointer::PointerHandle<DriftWm>,

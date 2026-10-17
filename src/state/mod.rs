@@ -908,12 +908,11 @@ pub struct DriftWm {
     /// pause alongside `suppressed_keys`.
     pub held_buttons: HashSet<u32>,
 
-    /// Buttons whose press was swallowed — by pick mode (below
-    /// `zoom_interact_min`) or by an `anywhere` action over a layer surface —
-    /// so their release is swallowed too rather than forwarded to a client that
-    /// never saw the press. Drained in `track_held_button` (not on the release
-    /// path) so a release missed while locked or after an output drop can't
-    /// leave a stale entry that suppresses a later real release.
+    /// Buttons whose press was swallowed, so their release is swallowed too
+    /// rather than forwarded to a client that never saw the press. Drained in
+    /// `track_held_button` (not on the release path) so a release missed while
+    /// locked or after an output drop can't leave a stale entry that suppresses
+    /// a later real release.
     pub swallowed_buttons: HashSet<u32>,
 
     pub gesture_state: Option<GestureState>,

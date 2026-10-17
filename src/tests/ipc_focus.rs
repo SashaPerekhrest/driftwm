@@ -15,7 +15,6 @@ use super::{Fixture, map_window, settle, window_by_app_id};
 /// near the canvas origin is off screen once it lands.
 const FAR_CAMERA: (f64, f64) = (5000.0, 0.0);
 
-/// Camera at the canvas origin, zoom 1, nothing in flight.
 fn origin_view(f: &mut Fixture) {
     f.state().with_output_state(|os| {
         os.camera = Point::from((0.0, 0.0));

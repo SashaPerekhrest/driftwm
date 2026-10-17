@@ -2,8 +2,7 @@
 //! Bottom, a bar on Top). Only `[mouse.anywhere]` bindings apply there: a
 //! layer is neither a window nor empty canvas, so on-window and on-canvas
 //! bindings stay off, and whatever `anywhere` leaves unbound is the layer's
-//! own click or scroll. Each scenario asserts what the compositor did and what
-//! the layer's client received.
+//! own click or scroll.
 
 use driftwm::config::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use smithay::utils::{Logical, Point, Size};
@@ -63,8 +62,6 @@ fn cursor_on(layer: Layer) -> Point<f64, Logical> {
     }
 }
 
-/// Map `layer` on the first output with a buffer: a bottom-anchored bar on
-/// Top, a centred 400x300 widget otherwise.
 fn map_layer(f: &mut Fixture, id: ClientId, layer: Layer) {
     let (size, anchor) = match layer {
         Layer::Top => (
@@ -105,8 +102,6 @@ fn point_at_layer(f: &mut Fixture, layer: Layer) {
     );
 }
 
-/// One output, one `layer` surface, the pointer resting on it. Returns the
-/// layer's client.
 fn pointer_on_layer(f: &mut Fixture, layer: Layer) -> ClientId {
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
