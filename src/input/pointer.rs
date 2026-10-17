@@ -1778,9 +1778,8 @@ impl DriftWm {
             output,
             last_clamped_location: canvas_pos,
         };
-        // A press on the canvas catches a flight in progress, like
-        // any grab install. The grab ignores the warps a flight
-        // sends it, so it would otherwise fly on under the hand.
+        // The grab ignores the warps a flight sends it, so a
+        // flight left running would fly on under the hand.
         self.cancel_animations_on(&grab.output);
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }

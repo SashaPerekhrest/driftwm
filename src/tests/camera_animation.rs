@@ -643,8 +643,8 @@ fn edge_pan_still_drives_the_camera_under_a_live_move_grab() {
 
 /// A wheel zoom anchors the canvas point under the cursor, and every zoom tick
 /// rebuilds the camera from that anchor. Edge-pan moving the camera underneath
-/// it gets pulled straight back, so a drag in the edge zone stalls — and the
-/// zoom never finishes either, because the pan keeps it off its anchor.
+/// it would get pulled straight back, stalling a drag in the edge zone — and the
+/// zoom would never finish either, the pan keeping it off its anchor.
 ///
 /// `frame` runs one frame's edge-pan and zoom ticks, so each backend's own
 /// entry points can drive the same drag.
