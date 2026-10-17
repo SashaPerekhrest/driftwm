@@ -708,6 +708,53 @@ fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on() {
     key_release(&mut f, KEY_LEFTMETA);
 }
 
+/// The zoom tick warps the pointer to hold its screen spot, and under a pan
+/// grab that warp arrives as a motion. A cursor that has not moved on screen is
+/// no pan, so it must not end the wheel zoom that caused it.
+#[test]
+fn a_wheel_zoom_under_a_held_still_pan_grab_lands() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    // Far from the origin, so the warp's canvas-to-screen round trip leaves
+    // float noise instead of the exact zero it happens to give at the origin.
+    let camera = Point::from((12345.678, -9876.543));
+    f.state().with_output_state(|os| {
+        os.camera = camera;
+        os.zoom = 1.0;
+    });
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTMETA);
+    pointer_to(&mut f, &mouse, camera + Point::from((600.37, 450.71)));
+    press(&mut f, &mouse, BTN_LEFT);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .with_grab(|_, g| g.is::<PanGrab>())
+            .unwrap_or(false),
+        "precondition: mod+left started a PanGrab"
+    );
+
+    wheel_notch_down(&mut f, &mouse);
+    let target = f
+        .state()
+        .zoom_target()
+        .expect("precondition: the notch armed a zoom");
+    assert!(target < 1.0, "precondition: the notch zooms out");
+
+    run_zoom_animation(&mut f);
+    assert_eq!(
+        f.state().zoom(),
+        target,
+        "the zoom lands where the notch aimed it"
+    );
+
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTMETA);
+}
+
 /// Drag the right edge out by a fractional amount, so the grab is carrying a
 /// real displacement rather than sitting on its origin where every delta reads
 /// as zero regardless. Fractional because the delta feeds an `as i32`
