@@ -154,31 +154,6 @@ impl DriftWm {
         self.set_suspended_focus(id, serial);
     }
 
-    /// Focus + raise a suspended window and, if it isn't fully on screen where
-    /// the view lands, pan the active output's camera to bring it to the
-    /// `focus_placement` point (no zoom change). Backs `msg focus <id>` on a
-    /// suspended window — the centering actions want `center_on_suspended`
-    /// instead, which pans unconditionally.
-    pub fn reveal_suspended(&mut self, id: SuspendedId) {
-        self.focus_and_raise_suspended(id);
-        let Some(s) = self.find_suspended(id) else {
-            return;
-        };
-        let (landing_camera, landing_zoom) = self.landing_view();
-        if self.window_fully_in_view_at(
-            &StageWindow::Suspended(s.clone()),
-            landing_camera,
-            landing_zoom,
-        ) {
-            return;
-        }
-        let Some(output) = self.active_output() else {
-            return;
-        };
-        let zoom = self.navigation_target_zoom(&output, false);
-        self.center_camera_on_suspended(&s, &output, zoom);
-    }
-
     /// Focus + raise a suspended window and pan the active output's camera to
     /// bring it to the `focus_placement` point unconditionally — the stand-in
     /// counterpart of `navigate_to_window`; `reset_zoom` is that call's

@@ -12,7 +12,7 @@ use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size};
 use smithay::wayland::seat::WaylandFocus;
 
 use crate::decorations::DecorationKey;
-use crate::state::{DriftWm, NavZoom, StageWindow, SuspendedId};
+use crate::state::{DriftWm, NavZoom, RevealPan, StageWindow, SuspendedId};
 use driftwm::window_ext::WindowExt;
 
 pub mod client;
@@ -496,7 +496,9 @@ fn cmd_focus(arg: Option<WindowSelector>, state: &mut DriftWm) -> Reply {
                 return Err(e);
             };
             let info = suspended_focused_info(state, id);
-            state.reveal_suspended(id);
+            if let Some(s) = state.find_suspended(id) {
+                state.reveal_element(&StageWindow::Suspended(s), RevealPan::Park(NavZoom::Keep));
+            }
             return Ok(Response::Focused(info));
         }
     };
@@ -516,18 +518,8 @@ fn cmd_focus(arg: Option<WindowSelector>, state: &mut DriftWm) -> Reply {
         ));
     }
     let info = focused_window_info(state, &window);
-    // Already on screen where the view lands: just raise + focus, don't move
-    // the camera. Pinned windows are always on screen and have no canvas
-    // position to navigate to.
-    let (camera, zoom) = state.landing_view();
-    if state.is_pinned(&window) || state.window_fully_in_view_at(&window, camera, zoom) {
-        state.raise_and_focus(&window, SERIAL_COUNTER.next_serial());
-    } else {
-        state.navigate_to_window(
-            &window,
-            NavZoom::from_reset(state.config.zoom_reset_on_activation),
-        );
-    }
+    let zoom = NavZoom::from_reset(state.config.zoom_reset_on_activation);
+    state.reveal_element(&StageWindow::Client(window), RevealPan::Park(zoom));
     Ok(Response::Focused(Some(info)))
 }
 
