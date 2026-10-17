@@ -17,20 +17,23 @@ use smithay::input::keyboard::ModifiersState;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 
-use driftwm::config::{Action, BTN_LEFT, Config, Direction};
+use driftwm::config::{Action, BTN_LEFT, BTN_MIDDLE, Config, Direction};
 
 use crate::grabs::PanGrab;
 use crate::state::{StageWindow, ZoomAnimationAnchor, output_state};
 
 use super::client::ClientId;
 use super::input_backend::{
-    FakeDevice, pointer_relative_motion, pointer_relative_motion_at, pointer_to, press, release,
-    touch_down, touch_motion, touch_up,
+    FakeDevice, key_press, key_release, pointer_relative_motion, pointer_relative_motion_at,
+    pointer_to, press, release, touch_down, touch_motion, touch_up, wheel_notch_down,
 };
-use super::{Fixture, end_grab, map_window, motion, window_by_app_id, window_position};
+use super::{Fixture, config, end_grab, map_window, motion, window_by_app_id, window_position};
 
 const TICK: Duration = Duration::from_millis(16);
 const MAX_TICKS: usize = 600;
+
+/// evdev code for Super, the default `mod_key`.
+const KEY_LEFTMETA: u32 = 125;
 
 fn approx(a: Point<f64, Logical>, b: Point<f64, Logical>, tol: f64) -> bool {
     (a.x - b.x).abs() <= tol && (a.y - b.y).abs() <= tol
@@ -636,6 +639,73 @@ fn edge_pan_still_drives_the_camera_under_a_live_move_grab() {
         previous = now;
     }
     end_grab(&mut f);
+}
+
+/// A wheel zoom anchors the canvas point under the cursor, and every zoom tick
+/// rebuilds the camera from that anchor. Edge-pan moving the camera underneath
+/// it gets pulled straight back, so a drag in the edge zone stalls — and the
+/// zoom never finishes either, because the pan keeps it off its anchor.
+#[test]
+fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on() {
+    let mut f = Fixture::with_config(config(
+        r#"
+        [mouse.on-window]
+        "mod+middle" = "move-window"
+    "#,
+    ));
+    let out = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "a", (400, 300));
+    let window = window_by_app_id(&mut f, "a").unwrap();
+    origin_view(&mut f);
+    f.state().map_window(
+        StageWindow::Client(window.clone()),
+        Point::from((400, 300)),
+        true,
+    );
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTMETA);
+    pointer_to(&mut f, &mouse, Point::from((600.0, 450.0)));
+    press(&mut f, &mouse, BTN_MIDDLE);
+    pointer_to(&mut f, &mouse, Point::from((50.0, 500.0)));
+    assert!(
+        { output_state(&out).edge_pan_velocity }.is_some(),
+        "precondition: the drag armed edge-pan"
+    );
+
+    let resting = f.state().zoom_target();
+    wheel_notch_down(&mut f, &mouse);
+    assert_ne!(
+        f.state().zoom_target(),
+        resting,
+        "precondition: the notch armed a zoom-out"
+    );
+
+    let mut trace = Vec::new();
+    for _ in 0..60 {
+        f.state().apply_edge_pan();
+        f.state().apply_zoom_animation(TICK);
+        trace.push((f.state().camera().x, window_position(&mut f, &window).x));
+    }
+
+    // A whole pixel per tick: the stall is an asymptotic approach, so a bare
+    // "still decreasing" passes on the vanishing steps it ends in.
+    for pair in trace[trace.len() - 10..].windows(2) {
+        let ((camera_before, window_before), (camera_after, window_after)) = (pair[0], pair[1]);
+        assert!(
+            camera_before - camera_after >= 1.0,
+            "the edge-pan keeps moving the camera: {camera_before} -> {camera_after}"
+        );
+        assert!(
+            window_before - window_after >= 1,
+            "and the dragged window with it: {window_before} -> {window_after}"
+        );
+    }
+    assert_eq!(f.state().zoom_target(), None, "the zoom lands");
+
+    release(&mut f, &mouse, BTN_MIDDLE);
+    key_release(&mut f, KEY_LEFTMETA);
 }
 
 /// Drag the right edge out by a fractional amount, so the grab is carrying a

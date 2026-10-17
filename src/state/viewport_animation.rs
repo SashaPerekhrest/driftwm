@@ -288,7 +288,7 @@ impl DriftWm {
         // velocity is screen-space speed; convert to canvas delta
         let zoom = self.zoom();
         let canvas_delta = Point::from((velocity.x / zoom, velocity.y / zoom));
-        self.set_camera(self.camera() + canvas_delta);
+        self.edge_pan_camera_on(&output, canvas_delta);
         self.update_output_from_camera();
 
         // Touch move: re-drive the grab instead of warping the (hidden) pointer.
@@ -300,6 +300,20 @@ impl DriftWm {
 
         let pos = self.seat.get_pointer().unwrap().current_location();
         self.warp_pointer(pos + canvas_delta);
+    }
+
+    /// Pan `output`'s camera by one edge-pan step. A zoom in flight rebuilds the
+    /// camera from its anchor every tick and would pull the step straight back,
+    /// so the anchor's canvas point travels with the camera.
+    fn edge_pan_camera_on(&mut self, output: &Output, canvas_delta: Point<f64, Logical>) {
+        let camera = {
+            let mut os = output_state(output);
+            if let Some(anchor) = &mut os.zoom_animation_anchor {
+                anchor.canvas += canvas_delta;
+            }
+            os.camera
+        };
+        self.set_camera_on(output, camera + canvas_delta);
     }
 
     /// Apply a viewport pan delta with momentum accumulation.
@@ -643,11 +657,7 @@ impl DriftWm {
             Point::from((velocity.x / os.zoom, velocity.y / os.zoom))
         };
 
-        let cam = output_state(output).camera;
-        self.set_camera_on(
-            output,
-            Point::from((cam.x + canvas_delta.x, cam.y + canvas_delta.y)),
-        );
+        self.edge_pan_camera_on(output, canvas_delta);
 
         // Touch move: re-drive the grab instead of warping the (hidden) pointer.
         if self.redrive_touch_edge_pan(output) {
