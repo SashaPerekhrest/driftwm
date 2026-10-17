@@ -80,8 +80,9 @@ impl PointerGrab<DriftWm> for PanGrab {
         let screen_delta = current_screen_pos - self.last_screen_pos;
 
         let mouse_speed = data.config.mouse_speed;
-        // A cursor that kept its screen spot is a camera or zoom tick's own
-        // warp, not a drag, and even a zero pan ends the animation that sent it.
+        // A cursor that kept its screen spot (a camera or zoom tick's own warp,
+        // or a push against the clamp) is no drag, and even a zero pan would end
+        // whatever animation is running.
         let held_still = screen_delta.x.abs() < WARP_NOISE && screen_delta.y.abs() < WARP_NOISE;
         // drift_pan_on returns zero while fullscreen locks the camera; the grab
         // stays live regardless, so a fullscreen exit mid-drag resumes without a jump.

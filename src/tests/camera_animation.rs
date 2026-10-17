@@ -726,6 +726,39 @@ fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on_udev() {
     });
 }
 
+/// A press on the canvas catches a flight in progress, as every grab install
+/// does — even though the pan grab, held still, ignores the warps the flight
+/// sends it.
+#[test]
+fn a_press_on_the_canvas_catches_a_camera_flight() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    origin_view(&mut f);
+    arm_distant_flight(&mut f);
+
+    let mouse = FakeDevice::mouse();
+    pointer_to(&mut f, &mouse, Point::from((600.0, 450.0)));
+    press(&mut f, &mouse, BTN_LEFT);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .with_grab(|_, g| g.is::<PanGrab>())
+            .unwrap_or(false),
+        "precondition: a press on empty canvas starts a PanGrab"
+    );
+
+    for _ in 0..10 {
+        f.state().apply_zoom_animation(TICK);
+        f.state().apply_camera_animation(TICK);
+    }
+    assert!(f.state().camera_target().is_none(), "the pan is called off");
+    assert!(f.state().zoom_target().is_none(), "and so is the zoom");
+
+    release(&mut f, &mouse, BTN_LEFT);
+}
+
 /// The zoom tick warps the pointer to hold its screen spot, and under a pan
 /// grab that warp arrives as a motion. A cursor that has not moved on screen is
 /// no pan, so it must not end the wheel zoom that caused it.

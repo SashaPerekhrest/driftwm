@@ -9,7 +9,7 @@ use smithay::utils::{Logical, Point, Size};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
-use crate::grabs::NavigateGrab;
+use crate::grabs::{NavigateGrab, PanGrab};
 use crate::state::StageWindow;
 
 use super::client::{ClientId, LayerConfigureProps};
@@ -17,7 +17,7 @@ use super::input_backend::{
     FakeDevice, key_press, key_release, pointer_to_screen, press, release, trackpad_scroll,
     wheel_notch_down,
 };
-use super::{Fixture, config, map_window, to_canvas, window_by_app_id};
+use super::{Fixture, TICK, config, map_window, to_canvas, window_by_app_id};
 
 /// evdev codes, the space `key_press` reports in. Super is the default
 /// `mod_key`.
@@ -165,6 +165,47 @@ fn mod_drag_over_a_layer_pans_the_canvas_and_the_layer_never_hears_it() {
             Vec::new(),
             "{layer:?}: the pan consumed the press, so the layer must see no button"
         );
+    }
+}
+
+/// A mod+drag over a layer catches a flight in progress, as a press on the
+/// canvas does, even though the pan grab ignores the warps the flight sends it.
+#[test]
+fn mod_drag_over_a_layer_catches_a_camera_flight() {
+    for layer in LAYERS {
+        let mut f = Fixture::new();
+        pointer_on_layer(&mut f, layer);
+        f.state().with_output_state(|os| {
+            os.camera_target = Some(Point::from((2000.0, 0.0)));
+            os.zoom_target = Some(2.0);
+        });
+
+        key_press(&mut f, KEY_LEFTMETA);
+        press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+        assert!(
+            f.state()
+                .seat
+                .get_pointer()
+                .unwrap()
+                .with_grab(|_, g| g.is::<PanGrab>())
+                .unwrap_or(false),
+            "{layer:?}: precondition: mod+left over a layer starts a PanGrab"
+        );
+
+        for _ in 0..10 {
+            f.state().apply_zoom_animation(TICK);
+            f.state().apply_camera_animation(TICK);
+        }
+        assert!(
+            f.state().camera_target().is_none(),
+            "{layer:?}: the pan is called off"
+        );
+        assert!(
+            f.state().zoom_target().is_none(),
+            "{layer:?}: and so is the zoom"
+        );
+
+        release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
     }
 }
 
