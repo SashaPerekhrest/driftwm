@@ -39,7 +39,6 @@ fn jump_to(f: &mut Fixture, name: &str, x: f64, y: f64) -> Point<f64, Logical> {
 fn set_bookmark_then_go_to_round_trips_the_camera() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
-    let zoom = f.state().zoom();
 
     let dest = jump_to(&mut f, "dest", 500.0, -300.0);
 
@@ -52,11 +51,9 @@ fn set_bookmark_then_go_to_round_trips_the_camera() {
     jump_to(&mut f, "away", -2000.0, 1000.0);
     f.state().execute_action(&Action::GoToBookmark("a".into()));
 
-    let (restored, landing_zoom) = f.state().landing_view();
+    let restored = f.state().landing_view().0;
     assert!((restored.x - dest.x).abs() < 1e-6);
     assert!((restored.y - dest.y).abs() < 1e-6);
-    // Bookmarks never touch zoom.
-    assert_eq!(landing_zoom, zoom);
 }
 
 #[test]
@@ -153,6 +150,36 @@ fn go_to_bookmark_one_frame_into_an_anchor_step_lands_on_the_bookmark() {
     settle(&mut f);
 
     // The bookmark is Y-up; the view center is the canvas's Y-down.
+    let center = f.state().viewport_center_canvas();
+    assert!(
+        (center.x - 500.0).abs() < 1e-6 && (center.y - 300.0).abs() < 1e-6,
+        "the view must center on the bookmark, got {center:?}"
+    );
+}
+
+/// A go-to-bookmark one frame into a zoom animation keeps the zoom it is
+/// heading to: armed at the live zoom, the jump would stop the zoom where this
+/// frame caught it.
+#[test]
+fn go_to_bookmark_during_a_zoom_animation_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.state().bookmarks.insert("b".into(), [500.0, -300.0]);
+
+    assert_eq!(
+        dispatch(Request::Zoom(Some(0.5)), f.state()),
+        Ok(Response::Zoom(0.5))
+    );
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > 0.5,
+        "precondition: the zoom is under way"
+    );
+    f.state().execute_action(&Action::GoToBookmark("b".into()));
+    settle(&mut f);
+
+    assert_eq!(f.state().zoom(), 0.5, "the zoom must land");
     let center = f.state().viewport_center_canvas();
     assert!(
         (center.x - 500.0).abs() < 1e-6 && (center.y - 300.0).abs() < 1e-6,

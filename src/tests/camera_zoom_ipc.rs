@@ -91,12 +91,12 @@ fn camera_set_on_fullscreen_output_exits_fullscreen_and_applies() {
     );
 }
 
-/// The ordering trap: `cmd_camera` derives its target from `state.zoom()`,
-/// which a fullscreen park pins at 1.0 — the exit has to run *before* that
-/// read, or the target is derived from the wrong (parked) zoom while the
-/// camera actually converges under the restored one. A pre-fullscreen zoom of
-/// 1.0 can't tell the two orderings apart (both read the same value), so this
-/// deliberately zooms out first.
+/// The ordering trap: `cmd_camera` derives its target from the zoom the view
+/// is heading to, which a fullscreen park pins at 1.0 — the exit has to run
+/// *before* that read, or the target is derived from the wrong (parked) zoom
+/// while the camera actually converges under the restored one. A
+/// pre-fullscreen zoom of 1.0 can't tell the two orderings apart (both read
+/// the same value), so this deliberately zooms out first.
 #[test]
 fn camera_set_on_fullscreen_output_uses_the_restored_zoom_not_the_parked_one() {
     let mut f = Fixture::new();
@@ -237,7 +237,7 @@ fn camera_set_rejecting_a_non_finite_target_leaves_fullscreen_intact() {
 /// camera by its anchor, so a camera move sent during it has to land through
 /// that anchor or the next tick drops it.
 #[test]
-fn camera_set_right_behind_a_zoom_set_lands_at_both() {
+fn camera_set_right_behind_a_zoom_set_lands_at_the_point_and_the_zoom() {
     for ticks_between in [0, 1] {
         let mut f = Fixture::new();
         f.skip_baseline_check();
