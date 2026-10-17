@@ -11,7 +11,7 @@
 //! reads to it as user input. Installing one takes the viewport out of flight —
 //! except for edge-pan, the one camera motion a grab does cause.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::input::keyboard::ModifiersState;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
@@ -645,8 +645,10 @@ fn edge_pan_still_drives_the_camera_under_a_live_move_grab() {
 /// rebuilds the camera from that anchor. Edge-pan moving the camera underneath
 /// it gets pulled straight back, so a drag in the edge zone stalls — and the
 /// zoom never finishes either, because the pan keeps it off its anchor.
-#[test]
-fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on() {
+///
+/// `frame` runs one frame's edge-pan and zoom ticks, so each backend's own
+/// entry points can drive the same drag.
+fn wheel_zoom_during_an_edge_pan_drag(frame: impl Fn(&mut Fixture)) {
     let mut f = Fixture::with_config(config(
         r#"
         [mouse.on-window]
@@ -684,8 +686,7 @@ fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on() {
 
     let mut trace = Vec::new();
     for _ in 0..60 {
-        f.state().apply_edge_pan();
-        f.state().apply_zoom_animation(TICK);
+        frame(&mut f);
         trace.push((f.state().camera().x, window_position(&mut f, &window).x));
     }
 
@@ -706,6 +707,23 @@ fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on() {
 
     release(&mut f, &mouse, BTN_MIDDLE);
     key_release(&mut f, KEY_LEFTMETA);
+}
+
+#[test]
+fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on_winit() {
+    wheel_zoom_during_an_edge_pan_drag(|f| {
+        f.state().apply_edge_pan();
+        f.state().apply_zoom_animation(TICK);
+    });
+}
+
+#[test]
+fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on_udev() {
+    wheel_zoom_during_an_edge_pan_drag(|f| {
+        // The udev turn measures its own dt off the wall clock.
+        f.state().last_animation_tick = Instant::now() - TICK;
+        f.state().tick_all_animations();
+    });
 }
 
 /// The zoom tick warps the pointer to hold its screen spot, and under a pan
