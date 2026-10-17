@@ -322,17 +322,15 @@ impl DriftWm {
             // keybindings (execute_action's guard exits when needed); unbound
             // clicks forward to the app.
             if self.is_fullscreen() {
-                // An Overlay layer still renders over the window, and over a
-                // layer only `anywhere` applies.
-                let fs_context = if self.pointer_over_layer {
-                    BindingContext::Anywhere
+                // An Overlay layer still renders over the window, and only what
+                // the layer branch below runs applies over it.
+                let mut fs_lookup = if self.pointer_over_layer {
+                    self.layer_button_binding(&pointer, &mods, button)
                 } else {
-                    BindingContext::OnWindow
+                    self.config
+                        .mouse_button_lookup_ctx(&mods, button, BindingContext::OnWindow)
+                        .cloned()
                 };
-                let mut fs_lookup = self
-                    .config
-                    .mouse_button_lookup_ctx(&mods, button, fs_context)
-                    .cloned();
                 // A `pass_mouse` claim becomes "no binding", so the `None` arm
                 // below reclaims keyboard focus and forwards to the client. It
                 // needs its own gate here: the `Action(_)` arm falls through
@@ -787,11 +785,36 @@ impl DriftWm {
         pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
     }
 
-    /// Dispatch an `anywhere` binding pressed over a screen-space layer surface,
-    /// where on-window and on-canvas bindings never apply (`pointer_context`
-    /// would read the canvas beneath the layer). Returns `true` when the press
-    /// is consumed; the layer then sees neither it nor its release. A window
-    /// binding has no window to act on here, so its press stays the layer's.
+    /// The binding a press over a screen-space layer surface runs: an
+    /// `anywhere` one, since on-window and on-canvas bindings never apply there
+    /// (`pointer_context` would read the canvas beneath the layer). A window
+    /// binding has no window to act on over a layer, so it counts as unbound.
+    /// So does everything while a grab owns the pointer: a layer's open popup
+    /// or a click held on it keeps routing the press, and a binding's grab
+    /// would replace it, orphaning the popup.
+    fn layer_button_binding(
+        &self,
+        pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
+        mods: &smithay::input::keyboard::ModifiersState,
+        button: u32,
+    ) -> Option<MouseAction> {
+        if pointer.is_grabbed() {
+            return None;
+        }
+        self.config
+            .mouse_button_lookup_ctx(mods, button, BindingContext::Anywhere)
+            .filter(|b| {
+                matches!(
+                    b,
+                    MouseAction::PanViewport | MouseAction::CenterNearest | MouseAction::Action(_)
+                )
+            })
+            .cloned()
+    }
+
+    /// Run [`Self::layer_button_binding`] for a press over a layer. Returns
+    /// `true` when the press is consumed; the layer then sees neither it nor
+    /// its release.
     fn try_layer_button(
         &mut self,
         pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
@@ -800,34 +823,21 @@ impl DriftWm {
         serial: Serial,
         mods: &smithay::input::keyboard::ModifiersState,
     ) -> bool {
-        let Some(binding) = self
-            .config
-            .mouse_button_lookup_ctx(mods, button, BindingContext::Anywhere)
-            .cloned()
-        else {
-            return false;
-        };
-        match binding {
-            MouseAction::PanViewport => {
+        match self.layer_button_binding(pointer, mods, button) {
+            Some(MouseAction::PanViewport) => {
                 self.start_pan_grab(pointer, pos, button, serial, false);
-                true
             }
-            MouseAction::CenterNearest => {
+            Some(MouseAction::CenterNearest) => {
                 self.start_navigate_grab(pointer, pos, button, serial);
-                true
             }
-            MouseAction::Action(action) => {
+            Some(MouseAction::Action(action)) => {
                 // No grab is left to take the release.
                 self.swallowed_buttons.insert(button);
                 self.execute_action(&action);
-                true
             }
-            MouseAction::MoveWindow
-            | MouseAction::MoveSnappedWindows
-            | MouseAction::ResizeWindow
-            | MouseAction::ResizeWindowSnapped
-            | MouseAction::Zoom => false,
+            _ => return false,
         }
+        true
     }
 
     /// Dispatch a button press over a suspended window. Suspended windows are

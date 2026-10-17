@@ -5,22 +5,25 @@
 //! own click or scroll. Each scenario asserts what the compositor did and what
 //! the layer's client received.
 
-use driftwm::config::{BTN_LEFT, BTN_RIGHT};
+use driftwm::config::{BTN_LEFT, BTN_MIDDLE, BTN_RIGHT};
 use smithay::utils::{Logical, Point, Size};
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_shell_v1::Layer;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
+use crate::grabs::NavigateGrab;
 use crate::state::StageWindow;
 
 use super::client::{ClientId, LayerConfigureProps};
 use super::input_backend::{
-    FakeDevice, key_press, pointer_to_screen, press, release, trackpad_scroll, wheel_notch_down,
+    FakeDevice, key_press, key_release, pointer_to_screen, press, release, trackpad_scroll,
+    wheel_notch_down,
 };
 use super::{Fixture, config, map_window, to_canvas, window_by_app_id};
 
 /// evdev codes, the space `key_press` reports in. Super is the default
 /// `mod_key`.
 const KEY_LEFTALT: u32 = 56;
+const KEY_LEFTCTRL: u32 = 29;
 const KEY_LEFTSHIFT: u32 = 42;
 const KEY_LEFTMETA: u32 = 125;
 
@@ -327,8 +330,9 @@ fn a_bare_scroll_over_a_layer_reaches_the_layer() {
     }
 }
 
-/// An on-window binding stays off over a bar even with a window right beneath
-/// it: the default `alt+left` move must not grab the hidden window.
+/// On-window bindings stay off over a bar even with a window right beneath it:
+/// neither the default `alt+left` move nor the default `mod+middle`
+/// toggle-fullscreen may act on the hidden window.
 #[test]
 fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
     let mut f = Fixture::new();
@@ -337,6 +341,11 @@ fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
     map_layer(&mut f, bar, Layer::Top);
     let window = window_under(&mut f, cursor_on(Layer::Top));
     point_at_layer(&mut f, Layer::Top);
+    assert_eq!(
+        f.state().focused_window(),
+        Some(window.clone()),
+        "precondition: toggle-fullscreen acts on the focused window"
+    );
     let before = f.state().stage.position_of(&window).expect("staged");
 
     key_press(&mut f, KEY_LEFTALT);
@@ -347,17 +356,97 @@ fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
         cursor_on(Layer::Top) - Point::from((200.0, 0.0)),
     );
     release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+    key_release(&mut f, KEY_LEFTALT);
+
+    key_press(&mut f, KEY_LEFTMETA);
+    press(&mut f, &FakeDevice::mouse(), BTN_MIDDLE);
+    release(&mut f, &FakeDevice::mouse(), BTN_MIDDLE);
 
     assert_eq!(
         f.state().stage.position_of(&window).expect("staged"),
         before,
         "alt+left is an on-window binding, so it must not move the window under the bar"
     );
+    assert!(
+        !f.state().is_fullscreen(),
+        "mod+middle is an on-window binding, so it must not fullscreen the window under the bar"
+    );
     assert_eq!(
         layer_buttons(&mut f, bar),
-        vec![(BTN_LEFT, PRESSED), (BTN_LEFT, RELEASED)],
-        "the unbound alt+left click is the bar's"
+        vec![
+            (BTN_LEFT, PRESSED),
+            (BTN_LEFT, RELEASED),
+            (BTN_MIDDLE, PRESSED),
+            (BTN_MIDDLE, RELEASED)
+        ],
+        "both unbound clicks are the bar's"
     );
+}
+
+/// The default `mod+ctrl+left` center-nearest starts its grab over a layer
+/// too, and the grab owns the release.
+#[test]
+fn mod_ctrl_drag_over_a_layer_starts_center_nearest() {
+    for layer in LAYERS {
+        let mut f = Fixture::new();
+        let id = pointer_on_layer(&mut f, layer);
+
+        key_press(&mut f, KEY_LEFTMETA);
+        key_press(&mut f, KEY_LEFTCTRL);
+        press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+        let navigating = f
+            .state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .with_grab(|_, g| g.is::<NavigateGrab>())
+            .unwrap_or(false);
+        release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+
+        assert!(
+            navigating,
+            "{layer:?}: mod+ctrl+left must start center-nearest over a layer"
+        );
+        assert_eq!(
+            layer_buttons(&mut f, id),
+            Vec::new(),
+            "{layer:?}: the grab consumed the click, so the layer must see no button"
+        );
+    }
+}
+
+/// A click held on a layer keeps routing the buttons pressed during it: an
+/// `anywhere` action chorded onto it stays the layer's, press and release,
+/// rather than firing and leaking its release through the held click.
+#[test]
+fn an_anywhere_action_chorded_onto_a_held_layer_click_stays_the_layers() {
+    for layer in LAYERS {
+        let mut f = Fixture::with_config(config(CLICK_ACTION));
+        let id = pointer_on_layer(&mut f, layer);
+        let resting = f.state().zoom_target();
+
+        press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+        key_press(&mut f, KEY_LEFTMETA);
+        press(&mut f, &FakeDevice::mouse(), BTN_RIGHT);
+        release(&mut f, &FakeDevice::mouse(), BTN_RIGHT);
+        release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+
+        assert_eq!(
+            f.state().zoom_target(),
+            resting,
+            "{layer:?}: the held click owns the pointer, so mod+right must not fire"
+        );
+        assert_eq!(
+            layer_buttons(&mut f, id),
+            vec![
+                (BTN_LEFT, PRESSED),
+                (BTN_RIGHT, PRESSED),
+                (BTN_RIGHT, RELEASED),
+                (BTN_LEFT, RELEASED)
+            ],
+            "{layer:?}: every button of the chord is the layer's"
+        );
+    }
 }
 
 /// Below `interact_min` a bare scroll over a canvas window pans instead of
@@ -484,4 +573,91 @@ fn an_anywhere_zoom_over_an_overlay_exits_fullscreen_and_zooms() {
         Vec::<f64>::new(),
         "the zoom consumed the scroll, so the overlay must see no axis"
     );
+}
+
+const ANYWHERE_MOVE: &str = r#"
+[mouse.anywhere]
+"mod+shift+left" = "move-window"
+"#;
+
+/// A window binding has no window to act on over a layer, even one bound in
+/// `anywhere`, so over an Overlay it must not exit fullscreen for a move that
+/// never starts.
+#[test]
+fn an_anywhere_window_binding_over_an_overlay_leaves_fullscreen_alone() {
+    let mut f = Fixture::with_config(config(ANYWHERE_MOVE));
+    let overlay = overlay_over_fullscreen(&mut f);
+
+    key_press(&mut f, KEY_LEFTMETA);
+    key_press(&mut f, KEY_LEFTSHIFT);
+    press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+    release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+
+    assert!(
+        f.state().is_fullscreen(),
+        "a move binding over an overlay must not exit fullscreen"
+    );
+    assert_eq!(
+        layer_buttons(&mut f, overlay),
+        vec![(BTN_LEFT, PRESSED), (BTN_LEFT, RELEASED)],
+        "the move has nothing to move over a layer, so the click is the overlay's"
+    );
+}
+
+/// The fullscreen window claims every trigger below with `pass_mouse`. That is
+/// a window rule, so over an Overlay layer it claims nothing.
+const FULLSCREEN_CLAIMS: &str = r#"
+[mouse.anywhere]
+"mod+shift+wheel-down" = "toggle-fullscreen"
+
+[[window_rules]]
+app_id = "app"
+pass_mouse = ["mod+left", "mod+wheel-scroll", "mod+shift+wheel-down"]
+"#;
+
+#[test]
+fn pass_mouse_on_a_fullscreen_window_does_not_claim_a_click_over_an_overlay() {
+    let mut f = Fixture::with_config(config(FULLSCREEN_CLAIMS));
+    let overlay = overlay_over_fullscreen(&mut f);
+
+    key_press(&mut f, KEY_LEFTMETA);
+    press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+    release(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+
+    assert!(
+        !f.state().is_fullscreen(),
+        "the mod+left pan must fire over the overlay, exiting fullscreen first"
+    );
+    assert_eq!(layer_buttons(&mut f, overlay), Vec::new());
+}
+
+#[test]
+fn pass_mouse_on_a_fullscreen_window_does_not_claim_a_scroll_over_an_overlay() {
+    let mut f = Fixture::with_config(config(FULLSCREEN_CLAIMS));
+    let overlay = overlay_over_fullscreen(&mut f);
+
+    key_press(&mut f, KEY_LEFTMETA);
+    wheel_notch_down(&mut f, &FakeDevice::mouse());
+
+    assert!(
+        !f.state().is_fullscreen(),
+        "the mod+wheel zoom must fire over the overlay, exiting fullscreen first"
+    );
+    assert_eq!(layer_axes(&mut f, overlay), Vec::<f64>::new());
+}
+
+#[test]
+fn pass_mouse_on_a_fullscreen_window_does_not_claim_a_notch_over_an_overlay() {
+    let mut f = Fixture::with_config(config(FULLSCREEN_CLAIMS));
+    let overlay = overlay_over_fullscreen(&mut f);
+
+    key_press(&mut f, KEY_LEFTMETA);
+    key_press(&mut f, KEY_LEFTSHIFT);
+    wheel_notch_down(&mut f, &FakeDevice::mouse());
+
+    assert!(
+        !f.state().is_fullscreen(),
+        "the mod+shift+wheel-down toggle-fullscreen must fire over the overlay"
+    );
+    assert_eq!(layer_axes(&mut f, overlay), Vec::<f64>::new());
 }
