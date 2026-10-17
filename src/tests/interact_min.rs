@@ -651,7 +651,7 @@ fn left_press_records_swallowed_button() {
         .try_pick_button(&pointer, pt(700.0, 550.0), BTN_LEFT, serial, mods());
 
     assert!(
-        f.state().pick_swallowed_buttons.contains(&BTN_LEFT),
+        f.state().swallowed_buttons.contains(&BTN_LEFT),
         "the swallowed press is recorded so its release is swallowed too"
     );
 }
@@ -674,7 +674,7 @@ fn non_left_press_is_swallowed_without_arming() {
 
     assert!(consumed, "a right press over a window is consumed too");
     assert!(
-        f.state().pick_swallowed_buttons.contains(&BTN_RIGHT),
+        f.state().swallowed_buttons.contains(&BTN_RIGHT),
         "the right press is recorded for release suppression"
     );
     assert!(

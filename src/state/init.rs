@@ -379,7 +379,7 @@ impl DriftWm {
             pending_tap_action: None,
             suppressed_keys: HashSet::new(),
             held_buttons: HashSet::new(),
-            pick_swallowed_buttons: HashSet::new(),
+            swallowed_buttons: HashSet::new(),
             gesture_state: None,
             pending_middle_click: None,
             momentum_timer: None,
