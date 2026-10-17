@@ -516,9 +516,11 @@ fn cmd_focus(arg: Option<WindowSelector>, state: &mut DriftWm) -> Reply {
         ));
     }
     let info = focused_window_info(state, &window);
-    // Already on screen: just raise + focus, don't move the camera. Pinned
-    // windows are always on screen and have no canvas position to navigate to.
-    if state.is_pinned(&window) || state.window_fully_in_viewport(&window) {
+    // Already on screen where the view lands: just raise + focus, don't move
+    // the camera. Pinned windows are always on screen and have no canvas
+    // position to navigate to.
+    let (camera, zoom) = state.landing_view();
+    if state.is_pinned(&window) || state.window_fully_in_view_at(&window, camera, zoom) {
         state.raise_and_focus(&window, SERIAL_COUNTER.next_serial());
     } else {
         state.navigate_to_window(

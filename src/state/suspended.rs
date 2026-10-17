@@ -154,8 +154,8 @@ impl DriftWm {
         self.set_suspended_focus(id, serial);
     }
 
-    /// Focus + raise a suspended window and, if it isn't already fully on
-    /// screen, pan the active output's camera to bring it to the
+    /// Focus + raise a suspended window and, if it isn't fully on screen where
+    /// the view lands, pan the active output's camera to bring it to the
     /// `focus_placement` point (no zoom change). Backs `msg focus <id>` on a
     /// suspended window — the centering actions want `center_on_suspended`
     /// instead, which pans unconditionally.
@@ -164,7 +164,12 @@ impl DriftWm {
         let Some(s) = self.find_suspended(id) else {
             return;
         };
-        if self.window_fully_in_viewport(&StageWindow::Suspended(s.clone())) {
+        let (landing_camera, landing_zoom) = self.landing_view();
+        if self.window_fully_in_view_at(
+            &StageWindow::Suspended(s.clone()),
+            landing_camera,
+            landing_zoom,
+        ) {
             return;
         }
         let Some(output) = self.active_output() else {
