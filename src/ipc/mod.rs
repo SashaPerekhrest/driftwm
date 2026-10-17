@@ -253,16 +253,20 @@ fn cmd_camera(arg: Option<(f64, f64)>, state: &mut DriftWm) -> Reply {
                 return Err("camera coordinates must be finite numbers".to_string());
             }
             // Exit before deriving the target below: a fullscreen output
-            // refuses camera moves, and the target is derived from `state.zoom()`,
+            // refuses camera moves, and the target is derived from the zoom,
             // which the park pins at 1.0 until the exit restores it.
             if state.is_fullscreen() {
                 state.exit_fullscreen();
             }
-            // (x, y) is the viewport center, Y-up; map it to the internal camera
-            // target so the viewport ends up centered there.
-            let target =
-                driftwm::canvas::camera_for_center(x, y, state.zoom(), state.get_viewport_size());
-            state.set_camera_target(Some(target));
+            // (x, y) is the viewport center, Y-up. Through the anchor at the
+            // zoom the view is heading to: a flight still under way steers by
+            // its anchor every tick, which would drop a bare camera target.
+            if let Some(output) = state.active_output() {
+                let size = state.get_viewport_size();
+                let center = Point::from((size.w as f64 / 2.0, size.h as f64 / 2.0));
+                let zoom = state.navigation_target_zoom(&output, false);
+                state.set_camera_anchor(&output, Point::from((x, -y)), center, zoom);
+            }
             Ok(Response::Camera { x, y })
         }
     }

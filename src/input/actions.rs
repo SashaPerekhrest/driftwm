@@ -722,13 +722,17 @@ impl DriftWm {
 
     /// Jump the camera so the viewport centers on canvas point `(x, y)` (Y-up),
     /// panel-aware (`usable_center_screen`). `SetBookmark` captures the exact
-    /// inverse, so set → go-to-bookmark round-trips. Zoom is untouched.
+    /// inverse, so set → go-to-bookmark round-trips. Keeps the zoom the view is
+    /// heading to.
     fn go_to_canvas_point(&mut self, x: f64, y: f64) {
-        let vc = self.usable_center_screen();
-        let zoom = self.zoom();
-        let target_camera = Point::from((x - vc.x / zoom, -y - vc.y / zoom));
-        self.set_overview_return(None);
-        self.set_camera_target(Some(target_camera));
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        // Through the anchor, as in `center_on_anchor`: the anchor of a flight
+        // still under way would steer the camera back every tick.
+        let vc = self.usable_center_screen_on(&output);
+        let zoom = self.navigation_target_zoom(&output, false);
+        self.set_camera_anchor(&output, Point::from((x, -y)), vc, zoom);
     }
 
     /// Toggle screen-pinning of the focused window. Pin/unpin keeps the window
