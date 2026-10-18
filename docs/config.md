@@ -57,7 +57,7 @@ Default: `[]`
 
 Commands to run at startup (after WAYLAND_DISPLAY is set). Each entry is passed to sh -c, so full shell syntax works (pipes, &&, env vars).
 
-Running driftwm as a systemd session (via driftwm-session / a display manager) also launches XDG autostart entries (~/.config/autostart, /etc/xdg/autostart), in addition to the autostart list above. To skip one, copy its .desktop file into ~/.config/autostart and add Hidden=true. To skip them all, mask the generator that turns them into services (as root, for every user):
+Running driftwm as a systemd session (via driftwm-session / a display manager) also launches XDG autostart entries (~/.config/autostart, /etc/xdg/autostart), in addition to the autostart list above. To skip one, copy its .desktop file into ~/.config/autostart and add Hidden=true. To skip them all, mask the generator that turns them into services. That needs root and turns XDG autostart off for every user and every desktop on the machine:
 
 ```text
 sudo mkdir -p /etc/systemd/user-generators
@@ -65,7 +65,7 @@ sudo ln -s /dev/null /etc/systemd/user-generators/systemd-xdg-autostart-generato
 systemctl --user daemon-reload
 ```
 
-xdg-desktop-autostart.target itself keeps working, so services ordered after it still start.
+xdg-desktop-autostart.target itself keeps working, so services ordered after it or wanted by it still start.
 
 **Example:**
 
