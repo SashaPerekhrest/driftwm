@@ -297,13 +297,20 @@ fn cmd_zoom(arg: Option<f64>, state: &mut DriftWm) -> Reply {
 fn cmd_cursor(state: &mut DriftWm) -> Reply {
     let pointer = state.seat.get_pointer().ok_or("no pointer")?;
     let output = state.active_output().ok_or("no output")?;
-    // The pointer is in canvas space on the active output, which follows it.
-    let screen = driftwm::canvas::canvas_to_screen(
-        driftwm::canvas::CanvasPos(pointer.current_location()),
-        state.camera(),
-        state.zoom(),
-    )
-    .0;
+    // The pointer is in canvas space on the active output, which follows it —
+    // except while locked, when the stored location is already screen space
+    // (see `SessionLockHandler::lock`).
+    let location = pointer.current_location();
+    let screen = if state.session_lock.is_locked() {
+        location
+    } else {
+        driftwm::canvas::canvas_to_screen(
+            driftwm::canvas::CanvasPos(location),
+            state.camera(),
+            state.zoom(),
+        )
+        .0
+    };
     let origin = crate::state::output_state(&output).layout_position;
     Ok(Response::Cursor {
         x: origin.x as f64 + screen.x,

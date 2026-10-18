@@ -44,6 +44,7 @@ mod hotplug;
 mod hover_focus;
 mod input_dispatch;
 mod interact_min;
+mod ipc_cursor;
 mod ipc_focus;
 mod layer_bindings;
 mod layer_destroy_focus;
