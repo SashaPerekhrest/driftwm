@@ -303,8 +303,9 @@ pub struct WindowInfo {
     /// The compositor's own fit/fill record — see [`WindowMode`].
     #[serde(default)]
     pub mode: WindowMode,
-    /// The client's process ID, from its Wayland socket credentials. Absent for
-    /// a stand-in, which has no client.
+    /// The PID of the process that opened the window's Wayland connection, from
+    /// the socket's credentials. Absent with no client: a stand-in, or a window
+    /// whose client is already gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
 }

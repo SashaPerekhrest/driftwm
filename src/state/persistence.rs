@@ -6,15 +6,16 @@
 //!
 //! The `windows=` line is a JSON array of objects with fields `id` (stable
 //! per-session window handle), `app_id`, `title`, `position` ([x, y]), `size`
-//! ([w, h]), and booleans `is_focused`/`is_widget`. Position/size match the
-//! window-rules format in config.toml: both describe the **visual frame**
-//! (content plus SSD title bar and border — see [`driftwm::canvas::Chrome`]),
-//! with position its **center** in the **Y-up** convention.
+//! ([w, h]), booleans `is_focused`/`is_widget`, and the client `pid` when there
+//! is one. Position/size match the window-rules format in config.toml: both
+//! describe the **visual frame** (content plus SSD title bar and border — see
+//! [`driftwm::canvas::Chrome`]), with position its **center** in the **Y-up**
+//! convention.
 //!
 //! `windows=` is canvas-space only. Screen-space windows are reported under
 //! their owning output instead: `outputs.{name}.fullscreen` is a JSON
-//! `{id, app_id, title}` object, and `outputs.{name}.pinned` a JSON array of
-//! `{id, app_id, title, position, size}`. Like `windows=`, a pinned entry's
+//! `{id, app_id, title, pid}` object, and `outputs.{name}.pinned` a JSON array of
+//! `{id, app_id, title, position, size, pid}`. Like `windows=`, a pinned entry's
 //! `position` is the frame **center** in the rule convention (Y-up), but
 //! relative to the **output center** rather than the canvas origin, so the
 //! numbers paste straight into a `pinned_to_screen` rule's `position`.
