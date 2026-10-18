@@ -4,12 +4,14 @@
 //! The scenarios at the end cover the hover pull inside `refresh_pointer_focus`:
 //! a viewport move slides a new window under a cursor that never moves, and
 //! sloppy focus owes a move to it even where the client-pointer delivery
-//! dedup puts nothing on the wire. The last three are the gate's other half: a
-//! navigation that focused the window it pans to keeps that focus.
+//! dedup puts nothing on the wire. The ones after them are the gate's other
+//! half: a navigation that focused the window it pans to keeps that focus,
+//! until a camera move the user drives.
 
+use driftwm::config::{Action, Direction};
 use driftwm::stage::PinnedSite;
 use smithay::desktop::Window;
-use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
+use smithay::utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size};
 use smithay::wayland::compositor::get_parent;
 
 use crate::decorations::DecorationHit;
@@ -1142,4 +1144,93 @@ fn a_centering_navigation_to_a_stand_in_keeps_the_focus_intent() {
     assert!(!is_activated(&decoy));
 
     f.state().dismiss_suspended(sid);
+}
+
+/// A focus-nearest step whose target is clipped: `a` (300×200, focused) sits at
+/// the left edge, `b` hangs past the right one, and the cursor rests on bare
+/// canvas at screen (100, 20). The step pans right just far enough to show `b`
+/// (~492 px), which carries the cursor's canvas point onto `decoy`. The decoy
+/// sits above the search cone from `a`, so the step can't pick it itself.
+fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
+    map_window(f, id, "a", (300, 200));
+    let a = window_by_app_id(f, "a").unwrap();
+    place(f, &a, Point::from((0, 800)));
+    map_window(f, id, "b", (400, 200));
+    let b = window_by_app_id(f, "b").unwrap();
+    place(f, &b, Point::from((2000, 800)));
+    map_window(f, id, "decoy", (300, 240));
+    let decoy = window_by_app_id(f, "decoy").unwrap();
+    place(f, &decoy, Point::from((500, -200)));
+    origin_view(f);
+    // The search runs from `landing_view()`, which an anchor left armed by the
+    // last map would move off the origin view.
+    f.state()
+        .with_output_state(|os| os.zoom_animation_anchor = None);
+
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    f.double_roundtrip(id);
+    pointer_to(f, &FakeDevice::mouse(), Point::from((100.0, 20.0)));
+    f.double_roundtrip(id);
+    // Each map navigated to its window and parked the hover pull; a pan of the
+    // user's own re-arms it, so the step below is what has to park it again.
+    pan_viewport(f, Point::from((0.0, -40.0)));
+    f.double_roundtrip(id);
+    assert_eq!(keyboard_focus(f), Some(server_surface(&a)));
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    assert_eq!(
+        f.state().focused_window(),
+        Some(b.clone()),
+        "test setup bug: the step must pick b, not the decoy"
+    );
+    settle(f);
+    f.double_roundtrip(id);
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    assert!(
+        Rectangle::new(Point::from((500.0, -200.0)), Size::from((300.0, 240.0))).contains(cursor),
+        "test setup bug: the step's pan must leave the cursor on the decoy, got {cursor:?}"
+    );
+    (b, decoy)
+}
+
+/// focus-nearest's walking step pans through its own minimal reveal, not
+/// through `navigate_to_window_on`, so it has to park the hover pull itself:
+/// the step focused `b`, and the decoy it slid under the resting cursor must
+/// not take the keyboard back.
+#[test]
+fn a_focus_nearest_step_that_panned_keeps_the_keyboard_under_a_resting_cursor() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = step_onto_a_clipped_window_past_a_decoy(&mut f, id);
+
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(server_surface(&b)),
+        "a focus-nearest step's own pan must not hand its keyboard to the window \
+         it slid under the resting cursor"
+    );
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}
+
+#[test]
+fn a_pan_after_a_focus_nearest_step_hands_the_keyboard_to_the_cursor() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = step_onto_a_clipped_window_past_a_decoy(&mut f, id);
+
+    pan_viewport(&mut f, Point::from((50.0, 0.0)));
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&decoy)));
+    assert!(is_activated(&decoy) && !is_activated(&b));
 }

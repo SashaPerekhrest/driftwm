@@ -174,6 +174,8 @@ impl DriftWm {
         let center_screen =
             Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
         self.set_camera_anchor(&output, center, center_screen, zoom);
+        // As in `navigate_to_window_on`: this pan serves the focus just set.
+        self.hover_follows_camera = false;
     }
 
     /// The frame a minimal reveal brings into view: sized as configured, not
