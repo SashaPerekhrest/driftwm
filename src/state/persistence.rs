@@ -65,6 +65,8 @@ struct FullscreenInfo {
     id: u64,
     app_id: String,
     title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
 }
 
 /// A screen-pinned window in the state file's per-output section. `position` is
@@ -78,6 +80,8 @@ struct PinnedInfo {
     title: String,
     position: [i32; 2],
     size: [i32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
 }
 
 /// `(app_id, title)` for a toplevel surface; empty strings when unavailable.
@@ -306,6 +310,7 @@ impl DriftWm {
                         output: output.clone(),
                         app_id,
                         title,
+                        pid: self.client_pid(&surface),
                     });
                 }
             }
@@ -340,6 +345,7 @@ impl DriftWm {
                 title,
                 position: [rx, ry],
                 size: [size.w, size.h],
+                pid: self.client_pid(&surface),
             });
         }
         pinned.sort_by(|a, b| (&a.output, a.position).cmp(&(&b.output, b.position)));
@@ -429,6 +435,7 @@ impl DriftWm {
                     title,
                     position: [rx, ry],
                     size: [size.w, size.h],
+                    pid: self.client_pid(&surface),
                 });
         }
 
@@ -448,6 +455,7 @@ impl DriftWm {
                             id: id.0,
                             app_id,
                             title,
+                            pid: self.client_pid(&surface),
                         },
                     );
                 }

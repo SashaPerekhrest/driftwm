@@ -81,6 +81,7 @@ mod virtual_keyboard;
 mod window_animation;
 mod window_mode;
 mod window_opening;
+mod window_pid;
 mod window_rules;
 mod zoom_to_fit;
 
