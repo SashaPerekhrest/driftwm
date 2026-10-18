@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn list_changed_detects_pid_only_diff() {
         // A live client's pid never changes, but a dead client's unreaped
-        // window loses it, and every field but the title dirties the file.
+        // window loses it.
         let mut a = vec![win(1, "one")];
         a[0].pid = Some(4242);
         let mut b = a.clone();

@@ -23,8 +23,6 @@ fn approx(got: (f64, f64), want: (f64, f64), tol: f64) -> bool {
     (got.0 - want.0).abs() < tol && (got.1 - want.1).abs() < tol
 }
 
-/// One output that the config lays out at (2560, 0), viewing the canvas at
-/// zoom 0.5 from a camera off the origin.
 fn output_laid_out_off_the_origin() -> (Fixture, Output) {
     let mut f = Fixture::with_config(config(
         "[[outputs]]\nname = \"HEADLESS-1\"\nposition = [2560, 0]\n",
@@ -42,8 +40,6 @@ fn output_laid_out_off_the_origin() -> (Fixture, Output) {
     (f, output)
 }
 
-/// `cursor` reports the pointer in the global output layout, not canvas space:
-/// the camera and zoom must not leak into it, the output's layout offset must.
 #[test]
 fn cursor_reports_screen_space_in_the_output_layout() {
     let (mut f, output) = output_laid_out_off_the_origin();
@@ -54,9 +50,6 @@ fn cursor_reports_screen_space_in_the_output_layout() {
     assert_eq!(name, output.name());
 }
 
-/// Crossing onto a second output reports that output, offset by the position
-/// it advertises to clients: past the first output's *logical* width at scale
-/// 2, with the second output's own camera and zoom kept out of the number.
 #[test]
 fn cursor_follows_the_pointer_onto_a_second_output() {
     let mut f = Fixture::new();
