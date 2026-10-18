@@ -301,17 +301,15 @@ fn cmd_cursor(state: &mut DriftWm) -> Reply {
     // except while locked, when the stored location is already screen space
     // (see `SessionLockHandler::lock`).
     let location = pointer.current_location();
+    let (camera, zoom, origin) = {
+        let os = crate::state::output_state(&output);
+        (os.camera, os.zoom, os.layout_position)
+    };
     let screen = if state.session_lock.is_locked() {
         location
     } else {
-        driftwm::canvas::canvas_to_screen(
-            driftwm::canvas::CanvasPos(location),
-            state.camera(),
-            state.zoom(),
-        )
-        .0
+        driftwm::canvas::canvas_to_screen(driftwm::canvas::CanvasPos(location), camera, zoom).0
     };
-    let origin = crate::state::output_state(&output).layout_position;
     Ok(Response::Cursor {
         x: origin.x as f64 + screen.x,
         y: origin.y as f64 + screen.y,
