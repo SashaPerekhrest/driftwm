@@ -117,6 +117,7 @@ fn window_list_changed(a: &[WindowInfo], b: &[WindowInfo]) -> bool {
                 || x.is_widget != y.is_widget
                 || x.suspended != y.suspended
                 || x.mode != y.mode
+                || x.pid != y.pid
         })
 }
 
@@ -790,6 +791,17 @@ mod tests {
         let a = vec![win(1, "one")];
         let mut b = a.clone();
         b[0].mode = WindowMode::Fill;
+        assert!(window_list_changed(&a, &b));
+    }
+
+    #[test]
+    fn list_changed_detects_pid_only_diff() {
+        // A live client's pid never changes, but a dead client's unreaped
+        // window loses it, and every field but the title dirties the file.
+        let mut a = vec![win(1, "one")];
+        a[0].pid = Some(4242);
+        let mut b = a.clone();
+        b[0].pid = None;
         assert!(window_list_changed(&a, &b));
     }
 }
