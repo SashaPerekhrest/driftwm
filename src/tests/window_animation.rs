@@ -2314,11 +2314,13 @@ fn an_expired_endpoint_hold_does_not_bring_the_chrome_back() {
 /// a bar, border and shadow onto a motionless fullscreen frame.
 #[test]
 fn a_fit_during_a_fullscreen_exit_freeze_keeps_the_frozen_chrome() {
-    // The fit has to be a real request: at the default zero outer gap it would
-    // land on the very rect the fullscreen already configured and change nothing.
-    let mut f = Fixture::with_config(Config::from_toml("[snap]\nouter_gap = 12.0\n").unwrap());
+    let mut f = Fixture::new();
     let output = f.add_output(1, (1920, 1080));
     let id = f.add_client();
+    // The fit has to be a real request: with the usable area the whole output
+    // it would land on the very rect the fullscreen already configured and
+    // change nothing.
+    super::map_top_panel(&mut f, id, 100);
     let surface = map_window(&mut f, id, "fs", (800, 600));
     let window = window_by_app_id(&mut f, "fs").unwrap();
     reset_view(&mut f);

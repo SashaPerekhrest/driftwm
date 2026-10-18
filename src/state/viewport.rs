@@ -221,8 +221,7 @@ impl DriftWm {
         // this zoom, so a placed window and a filled one share an edge at every
         // zoom. `frame` carries both borders and the inset subtracts one, so the
         // frame's outer edge lands at `outer_gap - border` from the usable edge
-        // and the bar/content edge at `outer_gap` — the edge fit and fill
-        // produce.
+        // and the bar/content edge at `outer_gap` — the edge fill produces.
         let inset = self.config.outer_frame_inset(chrome.border) * zoom;
         let placed = [
             (pull_x, usable.loc.x, usable.size.w, frame.w, center.x),

@@ -2,10 +2,10 @@
 //! `Normal` for a plain window, `Fit` for `fit-window`/`fit-window-snapped`,
 //! `Fill` for `fill-window`, and back to `Normal` once unfit or unfilled.
 //! A fill whose resulting rect equals the window's current one is a silent
-//! no-op (`compute_fill_geometry`'s early return), and on an empty canvas a
-//! fit window's rect already *is* that fill rect, since fit and fill both
-//! inset the usable area by `snap.outer_gap`. So a fit-to-fill transition needs
-//! a neighbour to give the fill a different rect to land on.
+//! no-op (`compute_fill_geometry`'s early return), and on an empty canvas at
+//! `snap.outer_gap = 0` a fit window's rect already *is* that fill rect, since
+//! both cover the usable area. So a fit-to-fill transition takes a neighbour,
+//! to give the fill a different rect to land on whatever the gap.
 
 use smithay::utils::Point;
 

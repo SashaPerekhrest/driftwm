@@ -41,8 +41,7 @@ pub(super) fn snap_rect_at(
 /// right now. Shared between `fit_window` (which applies it) and
 /// `fit_window_snapped` (which feeds the post-fit rect into the cluster-shift
 /// helper — the camera term lands on a whole pixel, so that rect is the one the
-/// window settles on, up to the truncation a fractional inset still leaves in
-/// `new_loc`).
+/// window settles on).
 struct FitGeometry {
     new_loc: Point<i32, Logical>,
     target_size: Size<i32, Logical>,
@@ -57,14 +56,14 @@ impl DriftWm {
     fn compute_fit_geometry(&self, window: &Window) -> FitGeometry {
         let usable = self.get_usable_area();
         let chrome = self.element_chrome(window);
-        // The inset measures to the bar/content edge, not to the frame, so the
-        // frame sits one border further out than the inset — past the usable
-        // area once `outer_gap` is under the border width, flush with it at 0
-        // with no border — and the content inside gives up the whole chrome.
-        let inset = self.config.outer_frame_inset(chrome.border);
+        // Edge to edge whatever `outer_gap` says — fill is the maximize with a
+        // margin. The bar/content edge lands on the usable area's, so the frame
+        // hangs one border past it and the content inside gives up the whole
+        // chrome.
+        let border = chrome.border;
         let target_size = chrome.content_size(Size::from((
-            usable.size.w - (2.0 * inset) as i32,
-            usable.size.h - (2.0 * inset) as i32,
+            usable.size.w + 2 * border,
+            usable.size.h + 2 * border,
         )));
         let usable_center_x = usable.loc.x as f64 + usable.size.w as f64 / 2.0;
         let usable_center_y = usable.loc.y as f64 + usable.size.h as f64 / 2.0;
@@ -74,15 +73,15 @@ impl DriftWm {
         let visual_center = self.window_visual_center(window).unwrap_or_default();
         // Both centers are half-integers, so an unrounded camera can leave the
         // fitted frame half a pixel inside the usable edge, which the render
-        // pass then rounds to a full one — a wallpaper line along two edges at
-        // `outer_gap = 0`. The window's own center moves by at most half a pixel.
+        // pass then rounds to a full one — a wallpaper line along two edges.
+        // The window's own center moves by at most half a pixel.
         let target_camera = Point::from((
             (visual_center.x - usable_center_x).round(),
             (visual_center.y - usable_center_y).round(),
         ));
         let new_loc = chrome.content_loc(Point::from((
-            target_camera.x as i32 + usable.loc.x + inset as i32,
-            target_camera.y as i32 + usable.loc.y + inset as i32,
+            target_camera.x as i32 + usable.loc.x - border,
+            target_camera.y as i32 + usable.loc.y - border,
         )));
         FitGeometry {
             new_loc,

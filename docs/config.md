@@ -39,7 +39,7 @@ Default: `"center"`
 
 Where a centering navigation parks the focused window in the viewport. One of "center" (default), "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left", "bottom-right". Handy on a widescreen, where centering wastes both flanks, or a vertical panel, where it wastes both ends.
 
-An edge or corner puts the window's title bar / content edge snap.outer_gap in from the usable area (border outside) — the same edge fit-window and fill-window produce, so a placed window and a filled one line up. The inset is canvas px, so it shrinks as you zoom out: 12.0 renders as 4.8 screen px at zoom 0.4.
+An edge or corner puts the window's title bar / content edge snap.outer_gap in from the usable area (border outside) — the same edge fill-window produces, so a placed window and a filled one line up. The inset is canvas px, so it shrinks as you zoom out: 12.0 renders as 4.8 screen px at zoom 0.4.
 
 A window too big to fit on an axis with its two gutters centers on that axis rather than hanging off screen; the other axis still places, so a tall window under "top-left" still goes left.
 
@@ -497,7 +497,7 @@ spacing kept between windows, in canvas px — snapping, auto placement, cluster
 
 Default: `0.0`
 
-inset from the usable area's edge to a window's title bar or content edge (border outside), in canvas px — fit-window, fill-window, focus_placement and focus-nearest measure it; 0 is edge to edge
+inset from the usable area's edge to a window's title bar or content edge (border outside), in canvas px — fill-window, focus_placement and focus-nearest measure it, so fill-window on a lone window is a maximize with this margin; 0 is edge to edge
 
 ### `distance`
 

@@ -1,6 +1,8 @@
-//! `[snap] outer_gap`: fit and fill measure the inset from the usable area to a
+//! `[snap] outer_gap`: fill measures the inset from the usable area to a
 //! window's title bar / content edge, not to its visual frame — the border
-//! lies outside that inset, off screen at `outer_gap = 0`.
+//! lies outside that inset, off screen at `outer_gap = 0`. Fit ignores it: a
+//! fitted window's content covers the usable area edge to edge, its border
+//! hanging off screen.
 
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -9,7 +11,7 @@ use crate::state::StageWindow;
 
 use super::{
     Fixture, TICK, adopt_last_configure, config, map_top_panel, map_window, settle,
-    window_by_app_id,
+    tick_until_settled, window_by_app_id,
 };
 
 /// Fit `window`, deliver the configure, ack it at the size the compositor
@@ -77,14 +79,14 @@ fn assert_rect_eq(actual: Rectangle<f64, Logical>, expected: Rectangle<i32, Logi
     );
 }
 
-/// At `outer_gap = 0` a fit lands the content edge exactly on the usable area
-/// and hangs the border off the far side of it, rather than inside.
+/// A fit lands the content edge exactly on the usable area and hangs the
+/// border off the far side of it, rather than inside, whatever `outer_gap`.
 #[test]
-fn fit_with_zero_outer_gap_and_a_border_lands_content_on_the_usable_area() {
+fn fit_with_a_border_lands_content_on_the_usable_area_whatever_the_outer_gap() {
     let mut f = Fixture::with_config(config(
         r#"
         [snap]
-        outer_gap = 0.0
+        outer_gap = 20.0
 
         [decorations]
         border_width = 4
@@ -115,11 +117,11 @@ fn fit_with_zero_outer_gap_and_a_border_lands_content_on_the_usable_area() {
     );
 }
 
-/// With no border, `outer_gap = 0` collapses frame and content onto the
-/// usable area alike.
+/// With no border, a fit collapses frame and content onto the usable area
+/// alike, whatever `outer_gap`.
 #[test]
-fn fit_with_zero_outer_gap_and_no_border_lands_frame_and_content_flush() {
-    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 0.0\n"));
+fn fit_with_no_border_lands_frame_and_content_flush_whatever_the_outer_gap() {
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 20.0\n"));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -141,57 +143,46 @@ fn fit_with_zero_outer_gap_and_no_border_lands_frame_and_content_flush() {
     );
 }
 
-/// An explicit `outer_gap` insets the content edge by exactly that much, on
-/// every side.
+/// A cluster fit grows the window to the same edge-to-edge rect, pushing its
+/// neighbour along, whatever `outer_gap`.
 #[test]
-fn fit_with_an_explicit_outer_gap_insets_content_by_it() {
-    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 12.0\n"));
+fn a_cluster_fit_covers_the_usable_area_whatever_the_outer_gap() {
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 20.0\n"));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
 
-    let surface = map_window(&mut f, id, "a", (800, 600));
+    let surface = map_window(&mut f, id, "a", (400, 300));
     let window = window_by_app_id(&mut f, "a").unwrap();
+    map_window(&mut f, id, "b", (300, 300));
+    let neighbour = window_by_app_id(&mut f, "b").unwrap();
+    let gap = f.state().config.snap_gap as i32;
+    f.state()
+        .map_window(window.clone(), Point::from((900, 300)), false);
+    f.state().map_window(
+        neighbour.clone(),
+        Point::from((900 + 400 + gap, 300)),
+        false,
+    );
+    settle(&mut f);
+    tick_until_settled(&mut f);
+    let docked = f.state().stage.position_of(&neighbour).unwrap();
 
-    fit_and_adopt(&mut f, &window, id, &surface);
+    f.state().fit_window_snapped(&window);
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &surface);
+    f.double_roundtrip(id);
+    f.state().tick_window_animations(TICK);
+    settle(&mut f);
 
+    assert_ne!(
+        f.state().stage.position_of(&neighbour).unwrap(),
+        docked,
+        "precondition: the fit pushed the neighbour along"
+    );
     let usable = f.state().get_usable_area();
-    let gap = f.state().config.snap_outer_gap as i32;
     let content = content_screen_rect(&mut f, &window);
-    let expected = Rectangle::new(
-        Point::from((usable.loc.x + gap, usable.loc.y + gap)),
-        Size::from((usable.size.w - 2 * gap, usable.size.h - 2 * gap)),
-    );
-    assert_rect_eq(
-        content,
-        expected,
-        "an explicit outer_gap insets the content edge by it",
-    );
-}
-
-/// With no `[snap]` table at all, fit still insets by whatever `outer_gap`
-/// defaults to — read from `config`, not hardcoded, so this holds regardless
-/// of what that default is.
-#[test]
-fn fit_with_an_empty_config_insets_content_by_the_configured_default() {
-    let mut f = Fixture::new();
-    f.add_output(1, (1920, 1080));
-    f.skip_baseline_check();
-    let id = f.add_client();
-
-    let surface = map_window(&mut f, id, "a", (800, 600));
-    let window = window_by_app_id(&mut f, "a").unwrap();
-
-    fit_and_adopt(&mut f, &window, id, &surface);
-
-    let usable = f.state().get_usable_area();
-    let gap = f.state().config.snap_outer_gap;
-    let content = content_screen_rect(&mut f, &window);
-    assert!(
-        (content.loc.x - (usable.loc.x as f64 + gap)).abs() < 1e-6
-            && (content.loc.y - (usable.loc.y as f64 + gap)).abs() < 1e-6,
-        "content edge must sit at usable.loc + the configured default outer_gap, got {content:?}"
-    );
+    assert_rect_eq(content, usable, "content must span the usable area exactly");
 }
 
 /// A panel's exclusive zone shrinks the usable area fit reads from, not the
@@ -225,8 +216,8 @@ fn fit_respects_a_panels_exclusive_zone_not_the_bare_output_rect() {
     );
 }
 
-/// A lone window's fill lands its content on the `outer_gap`-inset usable area
-/// — the same rect a fit grows to.
+/// At `outer_gap = 0` a lone window's fill lands its content on the usable
+/// area — the same rect a fit grows to.
 #[test]
 fn fill_on_a_lone_window_lands_content_on_the_usable_area() {
     let mut f = Fixture::with_config(config(
@@ -262,10 +253,10 @@ fn fill_on_a_lone_window_lands_content_on_the_usable_area() {
 
 /// An odd content height (no SSD bar to balance it) can leave the pre-round
 /// camera on a half-pixel value; it must still land on a whole pixel, with
-/// the content edge exactly on `usable.loc + outer_gap`.
+/// the content edge exactly on `usable.loc`.
 #[test]
 fn fit_rounds_the_camera_to_a_whole_pixel_even_with_an_odd_height_window() {
-    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 12.0\n"));
+    let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -281,12 +272,10 @@ fn fit_rounds_the_camera_to_a_whole_pixel_even_with_an_odd_height_window() {
         "the fit camera must land on a whole pixel, got {camera:?}"
     );
 
-    let gap = f.state().config.snap_outer_gap;
-    let usable = f.state().get_usable_area();
+    let usable = f.state().get_usable_area().to_f64();
     let content = content_screen_rect(&mut f, &window);
     assert!(
-        (content.loc.x - (usable.loc.x as f64 + gap)).abs() < 1e-6
-            && (content.loc.y - (usable.loc.y as f64 + gap)).abs() < 1e-6,
-        "content edge must land exactly on usable.loc + outer_gap, got {content:?}"
+        (content.loc.x - usable.loc.x).abs() < 1e-6 && (content.loc.y - usable.loc.y).abs() < 1e-6,
+        "content edge must land exactly on usable.loc, got {content:?}"
     );
 }
