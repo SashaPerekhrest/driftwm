@@ -139,11 +139,8 @@ impl DriftWm {
         }
     }
 
-    /// The canvas window inventory in the shared [`WindowInfo`] shape (the
-    /// visual frame: position = its center, Y-up), focused window first. Single
-    /// source of truth for both the state file and the IPC `state` response, so
-    /// the two can't drift.
-    /// An XWayland window reports Xwayland's PID, its client.
+    /// The PID of the process that opened `surface`'s Wayland connection. Every
+    /// X11 window reports xwayland-satellite's, its client.
     fn client_pid(
         &self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -156,6 +153,10 @@ impl DriftWm {
         u32::try_from(credentials.pid).ok()
     }
 
+    /// The canvas window inventory in the shared [`WindowInfo`] shape (the
+    /// visual frame: position = its center, Y-up), focused window first. Single
+    /// source of truth for both the state file and the IPC `state` response, so
+    /// the two can't drift.
     pub fn window_inventory(&self) -> Vec<WindowInfo> {
         let focused = self.focused_window();
         let focused_suspended = self.gated_suspended_focus();
