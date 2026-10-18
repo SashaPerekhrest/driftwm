@@ -602,7 +602,7 @@ impl DriftWm {
             // would end up with no settled footprint at all. Pay it here against
             // the slot the adopt put it in, which is exactly the pre-fit rect a
             // plain fit means to keep as the window's cluster identity (a
-            // snapped fit then caches its fitted rect over it, by its own rule).
+            // snapped fit then caches its fitted rect over it).
             // A fullscreen needs no such payment — its exit configures the
             // adopted size back and the debt settles then, at a rect that exists
             // again.

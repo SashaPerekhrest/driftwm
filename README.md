@@ -241,9 +241,9 @@ Close a window and leave a placeholder behind instead of losing it:
 `suspend-window` (`Mod+Shift+Q`) swaps the window for a compositor-drawn
 stand-in at the same canvas spot — press `Enter` or click its name to bring the
 app right back, in the same place. `suspend_on_close` does this automatically
-for every client-initiated close. `[session].restore_windows` keeps your whole canvas saved
-as you work and restores it (dormant, nothing auto-launches) on the next start,
-with `restore_camera` bringing each output's view back too.
+for every client-initiated close. `[session].restore_windows` keeps your whole
+canvas saved as you work and restores it (dormant, nothing auto-launches) on the
+next start, with `restore_camera` bringing each output's view back too.
 
 See [docs/session.md](docs/session.md).
 

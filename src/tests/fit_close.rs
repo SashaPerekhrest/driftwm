@@ -107,9 +107,9 @@ fn closing_a_snapped_fit_window_pulls_its_neighbour_back() {
     );
 }
 
-/// The default setup that makes this matter: an app that reopens maximized is
-/// placed beside the focused window and its queued maximize fits the cluster,
-/// pushing that window aside. Closing the app puts it back.
+/// Under the defaults, an app that opens maximized is placed beside the
+/// focused window and its queued maximize fits the cluster, pushing that window
+/// aside. Closing the app puts it back.
 #[test]
 fn closing_an_app_that_opened_maximized_puts_its_neighbour_back() {
     let mut f = Fixture::new();

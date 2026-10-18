@@ -307,10 +307,9 @@ impl XdgShellHandler for DriftWm {
                     self.first_spatially_related_in_history(&StageWindow::Client(window.clone()))
                 });
 
-            // A snapped fit's cluster goes home here, since the unfit that would
-            // take it never runs for a window that goes away. After the pick
-            // above, which reads the cluster around the fit, and before the
-            // visibility check below, which has to see where the members land.
+            // After the pick above, which reads the cluster around the fit, and
+            // before the visibility check below, which has to see where the
+            // members land.
             self.release_fit_push(window);
 
             // When auto-navigation is off, dropping an off-screen follow target

@@ -62,11 +62,10 @@ pub struct PinnedSite {
     pub screen_pos: Point<i32, Logical>,
 }
 
-/// The two frame rects a snapped fit pushed its cluster between: the fit
-/// (`fitted`) and the window's pre-fit rect (`home`). Kept with fit membership
-/// so a close can put the cluster back after the window's own geometry has
-/// stopped describing the fit — a disconnect drops its title bar first, a
-/// fullscreen parks it elsewhere.
+/// The frame rects a snapped fit pushed its cluster between, `home` being the
+/// pre-fit one. Kept so a close can put the cluster back after the window's own
+/// geometry has stopped describing the fit — a disconnect drops its title bar
+/// first, a fullscreen parks it elsewhere.
 #[derive(Clone, Copy, Debug)]
 pub struct FitPush {
     pub fitted: SnapRect,

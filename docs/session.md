@@ -128,10 +128,10 @@ saved too.
 
 The window you had focused comes back focused, as focus on its stand-in — so it
 wears a focus ring, `Enter` relaunches it, and `window_placement = "auto"` (the
-default) puts your first new window beside it. The restored focus is applied only when the stand-in
-is visible at launch; otherwise the canvas starts unfocused. A focused
-_suspended_ window carries its focus across a restart whether or not this flag
-is on.
+default) puts your first new window beside it. The restored focus is applied
+only when the stand-in is visible at launch; otherwise the canvas starts
+unfocused. A focused _suspended_ window carries its focus across a restart
+whether or not this flag is on.
 
 A window rule can override the flag per app, in either direction: `false` keeps
 one app off the canvas after a restart while the rest of your session comes back,
