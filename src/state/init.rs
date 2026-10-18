@@ -411,6 +411,8 @@ impl DriftWm {
             last_animation_tick: Instant::now(),
             last_pointer_delivery: None,
             last_pointer_under: None,
+            hover_viewport: None,
+            hover_follows_camera: true,
             commits_since_render: 0,
             focused_output: None,
             gesture_output: None,

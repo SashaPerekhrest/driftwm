@@ -265,6 +265,7 @@ fn cmd_camera(arg: Option<(f64, f64)>, state: &mut DriftWm) -> Reply {
                 let size = state.get_viewport_size();
                 let center = Point::from((size.w as f64 / 2.0, size.h as f64 / 2.0));
                 let zoom = state.navigation_target_zoom(&output, false);
+                state.user_moved_camera();
                 state.set_camera_anchor(&output, Point::from((x, -y)), center, zoom);
             }
             Ok(Response::Camera { x, y })

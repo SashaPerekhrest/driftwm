@@ -306,6 +306,7 @@ impl DriftWm {
     /// camera from its anchor every tick and would pull the step straight back,
     /// so the anchor's canvas point travels with the camera.
     fn edge_pan_camera_on(&mut self, output: &Output, canvas_delta: Point<f64, Logical>) {
+        self.user_moved_camera();
         let camera = {
             let mut os = output_state(output);
             if let Some(anchor) = &mut os.zoom_animation_anchor {
@@ -350,6 +351,7 @@ impl DriftWm {
         if self.is_output_fullscreen(output) {
             return Point::from((0.0, 0.0));
         }
+        self.user_moved_camera();
         {
             let mut os = super::output_state(output);
             os.camera_target = None;
@@ -416,6 +418,9 @@ impl DriftWm {
 
     /// Launch momentum on a specific output.
     pub fn launch_momentum_on(&mut self, output: &smithay::output::Output) {
+        // A fling is a pan the user started; if a navigation parked the hover
+        // pull in the meantime, this coasting move is still theirs to follow.
+        self.user_moved_camera();
         self.disarm_momentum_launch_on(&output.name());
         super::output_state(output).momentum.launch();
     }
