@@ -114,6 +114,46 @@ impl DriftWm {
         self.set_camera_anchor(&output, p, vc, zoom);
     }
 
+    fn center_window(&mut self) {
+        match self.focused_element() {
+            Some(StageWindow::Client(w)) if self.is_canvas_window(&w) => {
+                self.navigate_to_element(&StageWindow::Client(w), NavZoom::RestoreFillElseReset);
+            }
+            // A focused stand-in holds no seat focus, so `focused_window`
+            // never sees it — center it like any other focused element.
+            Some(StageWindow::Suspended(s)) => {
+                self.navigate_to_element(&StageWindow::Suspended(s), NavZoom::RestoreFillElseReset);
+            }
+            // Nothing focused, or a focused non-canvas (pinned/fullscreen)
+            // client: center the nearest canvas element to the viewport
+            // center — stand-ins included, so the user can land on one and
+            // press Enter to relaunch.
+            _ => {
+                let center = self.viewport_center_canvas();
+                let closest = self
+                    .stage
+                    .windows()
+                    .filter(|w| self.is_canvas_window(*w))
+                    .min_by(|a, b| {
+                        let dist = |w: &StageWindow| {
+                            let c = self.nav_center(w);
+                            let dx = c.x - center.x;
+                            let dy = c.y - center.y;
+                            dx * dx + dy * dy
+                        };
+                        dist(a).total_cmp(&dist(b))
+                    })
+                    .cloned();
+                if let Some(elem) = closest {
+                    // Restores here too: the camera is traveling to this
+                    // window regardless, and centering a filled one is
+                    // wrong for the same reason it's wrong when focused.
+                    self.navigate_to_element(&elem, NavZoom::RestoreFillElseReset);
+                }
+            }
+        }
+    }
+
     /// Spawn a command and reveal the cursor briefly so the launched app is
     /// easy to find.
     fn exec_command(&mut self, cmd: &str) {
@@ -216,58 +256,24 @@ impl DriftWm {
                 let target = self.camera_target().unwrap_or_else(|| self.camera()) + delta;
                 self.set_camera_target(Some(target));
             }
-            Action::CenterWindow => match self.focused_element() {
-                Some(StageWindow::Client(w)) if self.is_canvas_window(&w) => {
-                    self.navigate_to_element(
-                        &StageWindow::Client(w),
-                        NavZoom::RestoreFillElseReset,
-                    );
-                }
-                // A focused stand-in holds no seat focus, so `focused_window`
-                // never sees it — center it like any other focused element.
-                Some(StageWindow::Suspended(s)) => {
-                    self.navigate_to_element(
-                        &StageWindow::Suspended(s),
-                        NavZoom::RestoreFillElseReset,
-                    );
-                }
-                // Nothing focused, or a focused non-canvas (pinned/fullscreen)
-                // client: center the nearest canvas element to the viewport
-                // center — stand-ins included, so the user can land on one and
-                // press Enter to relaunch.
-                _ => {
-                    let center = self.viewport_center_canvas();
-                    let closest = self
-                        .stage
-                        .windows()
-                        .filter(|w| self.is_canvas_window(*w))
-                        .min_by(|a, b| {
-                            let dist = |w: &StageWindow| {
-                                let c = self.nav_center(w);
-                                let dx = c.x - center.x;
-                                let dy = c.y - center.y;
-                                dx * dx + dy * dy
-                            };
-                            dist(a).total_cmp(&dist(b))
-                        })
-                        .cloned();
-                    if let Some(elem) = closest {
-                        // Restores here too: the camera is traveling to this
-                        // window regardless, and centering a filled one is
-                        // wrong for the same reason it's wrong when focused.
-                        self.navigate_to_element(&elem, NavZoom::RestoreFillElseReset);
-                    }
-                }
-            },
+            Action::CenterWindow => self.center_window(),
             Action::FocusCenter => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let pos = pointer.current_location();
-                // Chrome counts as part of its window, and a stand-in is
-                // centered by its own visual frame rather than the client hidden
-                // beneath it. Pinned windows live in screen space (no canvas
-                // position to center the camera on) — the walk skips them.
-                if let Some((element, _)) = self.topmost_under(pos, |_, _| true) {
+                let pos = self.seat.get_pointer().unwrap().current_location();
+                let screen_pos =
+                    canvas::canvas_to_screen(canvas::CanvasPos(pos), self.camera(), self.zoom()).0;
+                // A pin lives in screen space, with no canvas position to center
+                // the camera on, and the canvas walk below passes through it to
+                // the window it covers.
+                if let Some(pin) = self.pinned_owner_under(screen_pos) {
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    self.raise_and_focus(&pin, serial);
+                } else if let Some((element, _)) = self.topmost_under(pos, |_, _| true) {
+                    // Chrome counts as part of its window, and a stand-in is
+                    // centered by its own visual frame rather than the client
+                    // hidden beneath it.
                     self.navigate_to_element(&element, NavZoom::RestoreFillElseReset);
+                } else {
+                    self.center_window();
                 }
             }
             Action::CenterNearest(dir) => {

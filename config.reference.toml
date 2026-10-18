@@ -425,7 +425,7 @@
 # #   resize-to-snap <dir>    — right/down grow the focused window's right/bottom edge to the next snap stop (a neighbour's edge, or the usable area's snap.outer_gap in), never over another window; left/up pull that edge back to the previous one
 # #   pan-viewport <dir>      — pan camera by pan_step px
 # #   center-window           — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
-# #   focus-center            — focus the window under the pointer and bring it there too + reset zoom; same fill exception
+# #   focus-center            — focus the window under the pointer and bring it there too + reset zoom; same fill exception. Over empty canvas it acts as center-window; a pinned window under the pointer is focused where it is
 # #   center-nearest <dir>    — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
 # #   focus-nearest <dir>     — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, a navigation.anchors target still centers
 # #   cycle-windows forward   — Alt-Tab style window cycling
