@@ -3736,13 +3736,22 @@ fn the_focus_and_camera_primitives_refuse_a_hidden_adopt() {
 /// off. It has to measure the slot the window actually lands in.
 #[test]
 fn a_queued_fit_frames_the_slot_the_adopt_lands_in() {
+    queued_fit_frames_the_adopted_slot(false);
+}
+
+/// The same under the default snapped fit, which keeps its fitted rect as the
+/// window's footprint instead of the adopted slot.
+#[test]
+fn a_queued_snapped_fit_frames_the_slot_the_adopt_lands_in() {
+    queued_fit_frames_the_adopted_slot(true);
+}
+
+fn queued_fit_frames_the_adopted_slot(snapped: bool) {
     use smithay::reexports::wayland_server::Resource;
 
     let tmp = TempDir::new();
-    // The single-window fit: a snapped fit caches its fit rect as the stable
-    // rect on purpose, which the footprint assertion below would read.
     let mut f = Fixture::with_config(
-        Config::from_toml("[mouse]\ndecoration_fit_snapped = false\n").unwrap(),
+        Config::from_toml(&format!("[mouse]\ndecoration_fit_snapped = {snapped}\n")).unwrap(),
     );
     f.add_output(1, (1920, 1080));
     inject_cache(&mut f, &tmp, &["myapp"]);
@@ -3804,13 +3813,17 @@ fn a_queued_fit_frames_the_slot_the_adopt_lands_in() {
     // protection stays off until some later grab writes one.
     let root_id = server_surface(&hidden).id();
     let stable = f.state().stable_snap_rects.get(&root_id).copied();
-    assert!(
-        stable.is_some_and(
-            |r| (r.x_low, r.x_high, r.y_low, r.y_high) == (5000.0, 5400.0, 5000.0, 5300.0)
-        ),
-        "the settled footprint is the adopted slot, not the fit rect and not \
-         nothing: {stable:?}"
-    );
+    if snapped {
+        assert!(stable.is_some(), "a settled footprint, not nothing");
+    } else {
+        assert!(
+            stable.is_some_and(
+                |r| (r.x_low, r.x_high, r.y_low, r.y_high) == (5000.0, 5400.0, 5000.0, 5300.0)
+            ),
+            "the settled footprint is the adopted slot, not the fit rect and not \
+             nothing: {stable:?}"
+        );
+    }
     assert!(
         !f.state().pending_adopt_settle.contains_key(&root_id),
         "and the debt is paid rather than left owing for the window's lifetime"

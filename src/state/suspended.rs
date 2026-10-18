@@ -598,12 +598,14 @@ impl DriftWm {
         } else if fit {
             // The fit configures its own size, so a stable rect the adopt is
             // still owed — payable only on a commit at the adopted size — would
-            // never come due, and `decoration_fit` writes none of its own: the
-            // window would end up with no settled footprint at all. Pay it here
-            // against the slot the adopt put it in, which is exactly the pre-fit
-            // rect a fit means to keep as the window's cluster identity. A
-            // fullscreen needs no such payment — its exit configures the adopted
-            // size back and the debt settles then, at a rect that exists again.
+            // never come due, and a plain fit writes none of its own: the window
+            // would end up with no settled footprint at all. Pay it here against
+            // the slot the adopt put it in, which is exactly the pre-fit rect a
+            // plain fit means to keep as the window's cluster identity (a
+            // snapped fit then caches its fitted rect over it, by its own rule).
+            // A fullscreen needs no such payment — its exit configures the
+            // adopted size back and the debt settles then, at a rect that exists
+            // again.
             self.settle_owed_adopt_rect(&window, root);
             self.decoration_fit(&window);
         }
