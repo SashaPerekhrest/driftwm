@@ -13,7 +13,7 @@ Traditional window managers arrange windows to fit your screen. Stacking composi
 
 `driftwm` is an infinite-canvas compositor: windows live at their native size on an infinite 2D canvas, and your display is a camera viewing it. When two windows come close, they snap together, forming implicit groups that can be moved, resized, and viewed together. No tiling, no workspaces, window overlaps happen only on purpose.
 
-Designed with laptops in mind: navigation and window management are trackpad-first; the infinite canvas makes the most of a small screen.
+Navigation is built around trackpad gestures, but every gesture has a mouse or keyboard equivalent and touchscreens have their own bindings, so it works the same on a laptop and at a desk.
 
 Built on [smithay](https://github.com/Smithay/smithay). Inspired by [vxwm](https://codeberg.org/wh1tepearl/vxwm); borrows implementation details from [niri](https://github.com/YaLTeR/niri).
 
