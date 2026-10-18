@@ -2646,7 +2646,7 @@ mod tests {
 
     #[test]
     fn direction_binding_over_non_continuous_base_does_not_warn() {
-        // Base 4-finger swipe is the default center-nearest (threshold); an
+        // Base 4-finger swipe is the default focus-nearest (threshold); an
         // unbound base (5-finger, unbound here) never shadows — neither warns.
         let toml_str = r#"
             [gestures.anywhere]

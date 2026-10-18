@@ -516,7 +516,7 @@
 # # "mod+alt+shift+up" = "center-nearest up"
 # # Example: tap binding — bare modifier chord, fires on release with no key on top
 # # "alt+shift" = "switch-layout next"
-# # Example: fill-window (unbound by default)
+# # Example: fill-window on a key (alt+middle runs it by default)
 # # "mod+g" = "fill-window"
 # # Example: set-trackpad (unbound by default)
 # # "mod+f10" = "set-trackpad toggle"   # flip the trackpad between on and off

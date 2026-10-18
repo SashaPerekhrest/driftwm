@@ -127,8 +127,8 @@ this flag; `restore_windows` only decides whether still-_open_ windows are
 saved too.
 
 The window you had focused comes back focused, as focus on its stand-in — so it
-wears a focus ring, `Enter` relaunches it, and `placement = "auto"` puts your
-first new window beside it. The restored focus is applied only when the stand-in
+wears a focus ring, `Enter` relaunches it, and `window_placement = "auto"` (the
+default) puts your first new window beside it. The restored focus is applied only when the stand-in
 is visible at launch; otherwise the canvas starts unfocused. A focused
 _suspended_ window carries its focus across a restart whether or not this flag
 is on.

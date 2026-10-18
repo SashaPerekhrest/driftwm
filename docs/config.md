@@ -877,7 +877,7 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 "alt+shift" = "switch-layout next"
 ```
 
-**Example: fill-window (unbound by default)**
+**Example: fill-window on a key (alt+middle runs it by default)**
 
 ```toml
 "mod+g" = "fill-window"
