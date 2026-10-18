@@ -169,7 +169,7 @@ fn mod_drag_over_a_layer_pans_the_canvas_and_the_layer_never_hears_it() {
 }
 
 /// A mod+drag over a layer catches a flight in progress, as a press on the
-/// canvas does, even though the pan grab ignores the warps the flight sends it.
+/// canvas does.
 #[test]
 fn mod_drag_over_a_layer_catches_a_camera_flight() {
     for layer in LAYERS {
