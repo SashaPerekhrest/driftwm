@@ -1,0 +1,310 @@
+#!/usr/bin/env python3
+"""Drive a virtual pen through /dev/uinput to smoke-test the tablet path.
+
+The pen is a real evdev device, so it goes through udev, libinput and smithay
+exactly like hardware. That takes the udev backend: run the build under test as
+a session from a TTY (the nested winit backend gets no tablet input) and run
+this from a terminal inside it. Standard library only. On a seat that grants
+`uaccess` on /dev/uinput (Fedora does) no root is needed; elsewhere use sudo.
+
+Positions are fractions of the output the tablet maps to: 0,0 is its top-left
+corner, 1,1 its bottom-right. With several outputs, set `[tablet]
+map_to_output` so you know which one that is.
+
+    dev/scripts/fake-pen hover 0.5,0.5 3            # hover 3 s, then leave
+    dev/scripts/fake-pen tap 0.4,0.3
+    dev/scripts/fake-pen stroke 0.3,0.5 0.5,0.4 0.7,0.5
+    dev/scripts/fake-pen drag 0.45,0.03 0.6,0.3     # a header bar, a tab
+    dev/scripts/fake-pen button 0.5,0.5             # stylus button, tip up
+    dev/scripts/fake-pen repl                       # one device, many commands
+    dev/scripts/fake-pen --dry-run stroke 0.2,0.2 0.8,0.8
+
+To see which stream a client gets, run it with WAYLAND_DEBUG=1 and compare
+`wl_pointer` with `zwp_tablet_tool_v2` while the pen is over it:
+
+    WAYLAND_DEBUG=1 gtk4-demo 2>&1 | grep -E --line-buffered \\
+        'wl_pointer#[0-9]+\\.(enter|leave|motion|button)|zwp_tablet_tool_v2#[0-9]+\\.(proximity_in|proximity_out|down|up)'
+"""
+
+import argparse
+import fcntl
+import os
+import random
+import shlex
+import struct
+import sys
+import time
+
+EV_SYN, EV_KEY, EV_ABS = 0x00, 0x01, 0x03
+SYN_REPORT = 0x00
+BTN_TOOL_PEN, BTN_TOUCH, BTN_STYLUS = 0x140, 0x14A, 0x14B
+ABS_X, ABS_Y, ABS_PRESSURE = 0x00, 0x01, 0x18
+INPUT_PROP_DIRECT = 0x01
+BUS_USB = 0x03
+
+UI_DEV_CREATE = 0x5501
+UI_DEV_DESTROY = 0x5502
+UI_DEV_SETUP = 0x405C5503
+UI_ABS_SETUP = 0x401C5504
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_SET_ABSBIT = 0x40045567
+UI_SET_PROPBIT = 0x4004556E
+
+# libinput rejects a tablet without a resolution: it can't size the digitizer.
+# This one is 320 x 200 mm at 100 units/mm.
+X_MAX, Y_MAX, RESOLUTION = 32000, 20000, 100
+PRESSURE_MAX = 4095
+# libinput decides the tip from pressure thresholds when the pen reports
+# pressure, so a press has to clear them, not just set BTN_TOUCH.
+PRESS = PRESSURE_MAX // 2
+
+NAMES = {
+    (EV_KEY, BTN_TOOL_PEN): "BTN_TOOL_PEN",
+    (EV_KEY, BTN_TOUCH): "BTN_TOUCH",
+    (EV_KEY, BTN_STYLUS): "BTN_STYLUS",
+    (EV_ABS, ABS_X): "ABS_X",
+    (EV_ABS, ABS_Y): "ABS_Y",
+    (EV_ABS, ABS_PRESSURE): "ABS_PRESSURE",
+}
+
+
+class Pen:
+    def __init__(self, rate, jitter, dry_run):
+        self.period = 1.0 / rate
+        self.jitter = jitter
+        self.dry_run = dry_run
+        self.in_proximity = False
+        self.tip_down = False
+        self.x = self.y = 0
+        self.fd = None if dry_run else self._create()
+
+    @staticmethod
+    def _create():
+        fd = os.open("/dev/uinput", os.O_WRONLY)
+        fcntl.ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT)
+        fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
+        for key in (BTN_TOOL_PEN, BTN_TOUCH, BTN_STYLUS):
+            fcntl.ioctl(fd, UI_SET_KEYBIT, key)
+        fcntl.ioctl(fd, UI_SET_EVBIT, EV_ABS)
+        for code, maximum, resolution in (
+            (ABS_X, X_MAX, RESOLUTION),
+            (ABS_Y, Y_MAX, RESOLUTION),
+            (ABS_PRESSURE, PRESSURE_MAX, 0),
+        ):
+            fcntl.ioctl(fd, UI_SET_ABSBIT, code)
+            # struct uinput_abs_setup: code, then input_absinfo (value, min,
+            # max, fuzz, flat, resolution).
+            fcntl.ioctl(fd, UI_ABS_SETUP, struct.pack("H2x6i", code, 0, 0, maximum, 0, 0, resolution))
+        # struct uinput_setup: input_id (bus, vendor, product, version), name,
+        # ff_effects_max. 0x1209 is pid.codes' test vendor, so no libwacom match.
+        fcntl.ioctl(fd, UI_DEV_SETUP, struct.pack("4H80sI", BUS_USB, 0x1209, 0x0001, 1, b"driftwm fake pen", 0))
+        fcntl.ioctl(fd, UI_DEV_CREATE)
+        return fd
+
+    def emit(self, events):
+        if self.dry_run:
+            print(" ".join(f"{NAMES[(kind, code)]}={value}" for kind, code, value in events))
+            return
+        frame = events + [(EV_SYN, SYN_REPORT, 0)]
+        os.write(self.fd, b"".join(struct.pack("llHHi", 0, 0, kind, code, value) for kind, code, value in frame))
+
+    def _wobble(self, value, maximum):
+        return min(max(value + random.randint(-self.jitter, self.jitter), 0), maximum)
+
+    def _report(self, x, y):
+        """One motion frame with the hand's tremor added, paced at the rate."""
+        events = [(EV_ABS, ABS_X, self._wobble(x, X_MAX)), (EV_ABS, ABS_Y, self._wobble(y, Y_MAX))]
+        if self.tip_down:
+            events.append((EV_ABS, ABS_PRESSURE, self._wobble(PRESS, PRESSURE_MAX)))
+        self.emit(events)
+        self.x, self.y = x, y
+        if not self.dry_run:
+            time.sleep(self.period)
+
+    def enter(self, point):
+        self.x, self.y = to_units(point)
+        self.emit([(EV_KEY, BTN_TOOL_PEN, 1), (EV_ABS, ABS_X, self.x), (EV_ABS, ABS_Y, self.y), (EV_ABS, ABS_PRESSURE, 0)])
+        self.in_proximity = True
+
+    def leave(self):
+        if self.tip_down:
+            self.lift()
+        self.emit([(EV_KEY, BTN_TOOL_PEN, 0)])
+        self.in_proximity = False
+
+    def press(self):
+        self.emit([(EV_KEY, BTN_TOUCH, 1), (EV_ABS, ABS_PRESSURE, PRESS)])
+        self.tip_down = True
+
+    def lift(self):
+        self.emit([(EV_ABS, ABS_PRESSURE, 0), (EV_KEY, BTN_TOUCH, 0)])
+        self.tip_down = False
+
+    def stylus_button(self, pressed):
+        self.emit([(EV_KEY, BTN_STYLUS, int(pressed))])
+
+    def hold(self, seconds):
+        # A real pen keeps reporting while it hovers or rests; a perfectly
+        # silent one hits edge cases hardware almost never does.
+        for _ in range(max(1, round(seconds / self.period))):
+            self._report(self.x, self.y)
+
+    def glide(self, point, seconds):
+        start_x, start_y = self.x, self.y
+        end_x, end_y = to_units(point)
+        steps = max(1, round(seconds / self.period))
+        for step in range(1, steps + 1):
+            t = step / steps
+            self._report(round(start_x + (end_x - start_x) * t), round(start_y + (end_y - start_y) * t))
+
+    def close(self):
+        if self.in_proximity:
+            self.leave()
+        if self.fd is not None:
+            time.sleep(0.2)
+            fcntl.ioctl(self.fd, UI_DEV_DESTROY)
+            os.close(self.fd)
+
+
+def to_units(point):
+    fx, fy = point
+    return round(fx * X_MAX), round(fy * Y_MAX)
+
+
+def parse_point(text):
+    try:
+        fx, fy = (float(part) for part in text.split(","))
+    except ValueError:
+        raise ValueError(f"expected a point like 0.5,0.5, got {text!r}") from None
+    if not (0 <= fx <= 1 and 0 <= fy <= 1):
+        raise ValueError(f"{text!r} is outside the output: both fractions must be in 0..1")
+    return fx, fy
+
+
+def hover(pen, point, seconds=2.0):
+    pen.enter(point)
+    pen.hold(seconds)
+    pen.leave()
+
+
+def tap(pen, point):
+    pen.enter(point)
+    pen.hold(0.2)
+    pen.press()
+    pen.hold(0.08)
+    pen.lift()
+    pen.hold(0.2)
+    pen.leave()
+
+
+def stroke(pen, points, segment):
+    pen.enter(points[0])
+    pen.hold(0.15)
+    pen.press()
+    for point in points[1:]:
+        pen.glide(point, segment)
+    pen.lift()
+    pen.hold(0.15)
+    pen.leave()
+
+
+def drag(pen, start, end, segment):
+    # Rest on the target before moving, the way a hand does, so a client sees
+    # a press and then a drag rather than one fast flick.
+    pen.enter(start)
+    pen.hold(0.2)
+    pen.press()
+    pen.hold(0.3)
+    pen.glide(end, segment * 2)
+    pen.hold(0.2)
+    pen.lift()
+    pen.hold(0.2)
+    pen.leave()
+
+
+def button(pen, point):
+    pen.enter(point)
+    pen.hold(0.2)
+    pen.stylus_button(True)
+    pen.hold(0.1)
+    pen.stylus_button(False)
+    pen.hold(0.2)
+    pen.leave()
+
+
+def run(pen, words, segment):
+    name, args = words[0], words[1:]
+    if name == "hover":
+        if not 1 <= len(args) <= 2:
+            raise ValueError("hover X,Y [SECONDS]")
+        hover(pen, parse_point(args[0]), float(args[1]) if len(args) == 2 else 2.0)
+    elif name == "tap":
+        if len(args) != 1:
+            raise ValueError("tap X,Y")
+        tap(pen, parse_point(args[0]))
+    elif name == "stroke":
+        if len(args) < 2:
+            raise ValueError("stroke X,Y X,Y [X,Y ...]")
+        stroke(pen, [parse_point(arg) for arg in args], segment)
+    elif name == "drag":
+        if len(args) != 2:
+            raise ValueError("drag X,Y X,Y")
+        drag(pen, parse_point(args[0]), parse_point(args[1]), segment)
+    elif name == "button":
+        if len(args) != 1:
+            raise ValueError("button X,Y")
+        button(pen, parse_point(args[0]))
+    else:
+        raise ValueError(f"unknown command {name!r}: hover, tap, stroke, drag, button")
+
+
+def repl(pen, segment):
+    print("commands: hover X,Y [S] | tap X,Y | stroke X,Y X,Y ... | drag X,Y X,Y | button X,Y | quit")
+    for line in sys.stdin:
+        words = shlex.split(line)
+        if not words:
+            continue
+        if words[0] in ("quit", "exit"):
+            break
+        try:
+            run(pen, words, segment)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Drive a virtual pen through /dev/uinput.",
+        epilog="commands: hover X,Y [SECONDS] | tap X,Y | stroke X,Y X,Y [...] | drag X,Y X,Y | button X,Y | repl",
+    )
+    parser.add_argument("--rate", type=float, default=200, help="reports per second (default 200)")
+    parser.add_argument("--jitter", type=int, default=6, help="tremor in digitizer units, about 0.5 px (default 6)")
+    parser.add_argument("--segment", type=float, default=0.4, help="seconds per stroke segment (default 0.4)")
+    parser.add_argument("--settle", type=float, default=1.0, help="seconds to wait for the device to appear (default 1)")
+    parser.add_argument("--dry-run", action="store_true", help="print the evdev frames instead of creating a device")
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    options = parser.parse_args()
+    if not options.command:
+        parser.error("give a command, or repl")
+
+    pen = Pen(options.rate, options.jitter, options.dry_run)
+    try:
+        if not options.dry_run:
+            # udev, libinput, the compositor and its clients all have to see
+            # the tablet before the first proximity event means anything.
+            time.sleep(options.settle)
+        if options.command == ["repl"]:
+            repl(pen, options.segment)
+        else:
+            run(pen, options.command, options.segment)
+    except ValueError as error:
+        parser.error(str(error))
+    except KeyboardInterrupt:
+        pass
+    finally:
+        pen.close()
+
+
+if __name__ == "__main__":
+    main()
