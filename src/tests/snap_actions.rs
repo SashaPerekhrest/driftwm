@@ -1,7 +1,8 @@
 //! Keyboard snapping: `move-to-snap` walks the focused element to the stops
 //! drag snapping offers, `resize-to-snap` walks its right or bottom edge
 //! between them and the usable area's edge — clients and stand-ins alike —
-//! and neither ever lands the element on another window.
+//! and neither ever lands the element on another window. A move also steps
+//! out a gap off an adjacent window's side.
 
 use smithay::desktop::Window;
 use smithay::reexports::wayland_server::Resource;
@@ -109,8 +110,8 @@ fn move_to_snap_aligns_with_an_adjacent_neighbour_whatever_the_magnetism_knobs()
     act(&mut f, Action::MoveToSnap(Direction::Right));
     assert_eq!(
         window_position(&mut f, &a),
-        Point::from((500, 100)),
-        "right edges aligned: nothing further"
+        Point::from((912, 100)),
+        "past the right-edge alignment, on to snap.gap off b's right edge"
     );
 }
 
@@ -161,6 +162,88 @@ fn move_to_snap_skips_an_alignment_that_lands_on_a_window() {
         window_position(&mut f, &a),
         Point::from((88, 100)),
         "past w's left edge, which is x's slot, to the dock before x"
+    );
+}
+
+/// A window directly below another, already aligned with it every way, steps
+/// out sideways to a gap off its side.
+#[test]
+fn move_to_snap_steps_out_beside_a_window_above() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    window_at(&mut f, id, "a", (600, 100), (400, 300));
+    let (b, _) = window_at(&mut f, id, "b", (600, 412), (400, 300));
+    focus(&mut f, &b);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &b),
+        Point::from((188, 412)),
+        "right edge snap.gap off a's left edge, y untouched"
+    );
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(
+        window_position(&mut f, &b),
+        Point::from((600, 412)),
+        "back under a"
+    );
+
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+    assert_eq!(
+        window_position(&mut f, &b),
+        Point::from((1012, 412)),
+        "left edge snap.gap off a's right edge, y untouched"
+    );
+}
+
+/// Stepped out beside the window above, `up` walks through its alignments
+/// rather than jumping over it.
+#[test]
+fn move_to_snap_up_from_beside_a_window_above_walks_up_beside_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, _) = window_at(&mut f, id, "a", (600, 100), (400, 300));
+    let (b, _) = window_at(&mut f, id, "b", (600, 412), (400, 200));
+    focus(&mut f, &b);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+
+    for (y, aligned) in [(200, "bottom edges"), (150, "centres"), (100, "top edges")] {
+        act(&mut f, Action::MoveToSnap(Direction::Up));
+        assert_eq!(
+            window_position(&mut f, &b),
+            Point::from((188, y)),
+            "{aligned} aligned with a's"
+        );
+        let a_frame = f.state().visual_frame_rect(&StageWindow::Client(a.clone()));
+        let b_frame = f.state().visual_frame_rect(&StageWindow::Client(b.clone()));
+        assert!(!b_frame.unwrap().overlaps(&a_frame.unwrap()), "beside a");
+    }
+}
+
+/// A side dock is passed over like any stop that would land the window on a
+/// third one.
+#[test]
+fn move_to_snap_skips_a_side_dock_that_lands_on_a_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    window_at(&mut f, id, "a", (1000, 100), (400, 300));
+    let (b, _) = window_at(&mut f, id, "b", (1000, 412), (400, 300));
+    // Docked left of `b`, in the slot a's side dock offers.
+    window_at(&mut f, id, "c", (588, 412), (400, 300));
+    focus(&mut f, &b);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &b),
+        Point::from((176, 412)),
+        "past c's slot to the dock before c"
     );
 }
 

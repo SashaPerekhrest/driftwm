@@ -78,7 +78,8 @@ pub enum Line {
 /// How a stop relates the primary to the neighbour offering it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Family {
-    /// Facing edges a gap apart: the windows sit side by side.
+    /// Facing edges a gap apart: the windows sit side by side, or corner to
+    /// corner off a side dock.
     Dock,
     /// Same-side edges exactly aligned.
     SameEdge,
@@ -111,14 +112,19 @@ pub struct StopQuery {
     pub align_band: f64,
     pub same_edge: bool,
     pub edge_center: bool,
+    /// Whether a neighbour offering alignments offers the docks too, which
+    /// put the primary a gap off its side: a keyboard move's only way out of
+    /// a column, which a drag leaves freely.
+    pub side_docks: bool,
 }
 
 /// Every stop `others` offer along the query's axis, neighbour by neighbour.
 ///
 /// A neighbour overlapping the primary's perpendicular span offers the docks;
-/// one clear of it but within `align_band` offers the alignments instead.
-/// Never both: aligning to a window the primary already overlaps
-/// perpendicularly would only z-stack the two.
+/// one clear of it but within `align_band` offers the alignments instead, and
+/// the docks too with `side_docks`. Never alignments to an overlapping one:
+/// aligning to a window the primary already overlaps perpendicularly would
+/// only z-stack the two.
 pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item = Stop> + 'a {
     others.iter().flat_map(move |other| {
         let (other_low, other_high, other_perp_low, other_perp_high) = if q.horizontal {
@@ -132,7 +138,7 @@ pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item
             && perp_distance(q.perp_low, q.perp_high, other_perp_low, other_perp_high)
                 < q.align_band;
 
-        let docks = perp_overlap.then_some([
+        let docks = (perp_overlap || (aligns && q.side_docks)).then_some([
             Stop {
                 line: Line::High,
                 family: Family::Dock,
@@ -197,6 +203,7 @@ impl SnapParams<'_> {
             align_band: self.gap + self.threshold,
             same_edge: self.same_edge,
             edge_center: self.edge_center,
+            side_docks: false,
         }
     }
 }
@@ -377,6 +384,7 @@ pub fn find_edge_snap(natural_edge: f64, p: &EdgeSnapParams<'_>) -> Option<(f64,
         align_band: p.gap + p.threshold,
         same_edge: p.same_edge,
         edge_center: false,
+        side_docks: false,
     };
     let line = if p.high_edge { Line::High } else { Line::Low };
     let mut best: Option<(f64, f64)> = None;
@@ -654,6 +662,7 @@ mod tests {
             align_band: 36.0,
             same_edge: true,
             edge_center: true,
+            side_docks: false,
         }
     }
 
@@ -702,6 +711,32 @@ mod tests {
             ..query(true)
         };
         assert_eq!(stops(&others, &edges_only).count(), 2);
+    }
+
+    #[test]
+    fn side_docks_give_an_adjacent_neighbour_the_docks_as_well() {
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        let q = StopQuery {
+            side_docks: true,
+            ..query(true)
+        };
+        assert_eq!(
+            lines(stops(&others, &q)),
+            vec![
+                (Line::High, Family::Dock, 88.0),
+                (Line::Low, Family::Dock, 412.0),
+                (Line::Low, Family::SameEdge, 100.0),
+                (Line::High, Family::SameEdge, 400.0),
+                (Line::Center, Family::Center, 250.0)
+            ]
+        );
+        let contacts: Vec<f64> = stops(&others, &q).take(2).map(|s| s.contact).collect();
+        assert_eq!(contacts, vec![100.0, 400.0], "measured from its edges");
+        assert_eq!(
+            stops(&[rect(100.0, 136.0, 300.0, 100.0)], &q).count(),
+            0,
+            "past the band, nothing"
+        );
     }
 
     #[test]
@@ -758,6 +793,53 @@ mod tests {
         assert_eq!(next_origin(100.0, true, 200.0, &others, &q), Some(150.0));
         assert_eq!(next_origin(150.0, true, 200.0, &others, &q), Some(200.0));
         assert_eq!(next_origin(200.0, true, 200.0, &others, &q), None);
+    }
+
+    #[test]
+    fn a_move_with_side_docks_steps_out_a_gap_past_an_adjacent_neighbour() {
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        let q = StopQuery {
+            side_docks: true,
+            ..query(true)
+        };
+        assert_eq!(next_origin(100.0, false, 200.0, &others, &q), Some(-112.0));
+        assert_eq!(next_origin(-112.0, true, 200.0, &others, &q), Some(100.0));
+        assert_eq!(next_origin(200.0, true, 200.0, &others, &q), Some(412.0));
+        assert_eq!(next_origin(412.0, true, 200.0, &others, &q), None);
+    }
+
+    #[test]
+    fn a_move_passes_over_a_side_dock_that_lands_on_a_window() {
+        let others = [
+            rect(100.0, 112.0, 300.0, 100.0),
+            // Docked left of the primary, in the slot the side dock offers.
+            rect(-112.0, 0.0, 200.0, 100.0),
+        ];
+        let q = StopQuery {
+            side_docks: true,
+            ..query(true)
+        };
+        assert_eq!(next_origin(100.0, false, 200.0, &others, &q), Some(-324.0));
+    }
+
+    #[test]
+    fn a_drag_offers_no_side_dock() {
+        let others = [rect(100.0, 112.0, 300.0, 100.0)];
+        let p = SnapParams {
+            extent: 200.0,
+            perp_low: 0.0,
+            perp_high: 100.0,
+            horizontal: true,
+            others: &others,
+            gap: 12.0,
+            threshold: 24.0,
+            break_force: 32.0,
+            same_edge: true,
+            edge_center: true,
+        };
+        // Right on the spots a move's side docks put the primary.
+        assert_eq!(find_snap_candidate(-112.0, &p), None);
+        assert_eq!(find_snap_candidate(412.0, &p), None);
     }
 
     #[test]
@@ -958,8 +1040,9 @@ mod tests {
             forward in any::<bool>(),
             extent in 20.0..600.0f64,
             others in prop::collection::vec(any_rect(), 0..6),
+            side_docks in any::<bool>(),
         ) {
-            let q = query(true);
+            let q = StopQuery { side_docks, ..query(true) };
             let origins: Vec<f64> = stops(&others, &q)
                 .map(|s| (s.at - origin_shift(s.line, extent)).round())
                 .collect();

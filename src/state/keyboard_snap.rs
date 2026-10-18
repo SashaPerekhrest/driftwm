@@ -1,5 +1,6 @@
 //! `move-to-snap` / `resize-to-snap`: the keyboard walks between the stops
-//! drag snapping offers, every family at any distance.
+//! drag snapping offers, every family at any distance, and a move also to the
+//! side docks a gap off an adjacent neighbour's sides.
 
 use std::collections::HashSet;
 
@@ -32,7 +33,10 @@ impl DriftWm {
         // reporting the output's size until it acks the restore.
         let size = self.placed_element_size(&element);
         let frame = super::fit::snap_rect_at(loc, size, bar, bw);
-        let q = self.stop_query(&frame, horizontal);
+        let q = StopQuery {
+            side_docks: true,
+            ..self.stop_query(&frame, horizontal)
+        };
         let (from, extent) = if horizontal {
             (frame.x_low, frame.x_high - frame.x_low)
         } else {
@@ -147,6 +151,7 @@ impl DriftWm {
             // The magnetism knobs tune a drag, not what the keyboard can reach.
             same_edge: true,
             edge_center: true,
+            side_docks: false,
         }
     }
 }
