@@ -3806,15 +3806,22 @@ fn queued_fit_frames_the_adopted_slot(snapped: bool) {
     );
 
     // The adopt owes a stable snap rect, payable on a commit at the size it
-    // configured — a size this fit means the client never to be asked for. A fit
-    // writes no stable rect of its own either, so the debt has to be settled
-    // against the adopted slot on the way in or the window carries no settled
-    // footprint at all: its close degrades to a cluster of one, and shrink
-    // protection stays off until some later grab writes one.
+    // configured — a size this fit means the client never to be asked for. A
+    // plain fit writes no stable rect of its own either, so the debt has to be
+    // settled against the adopted slot on the way in or the window carries no
+    // settled footprint at all: its close degrades to a cluster of one, and
+    // shrink protection stays off until some later grab writes one. A snapped
+    // fit writes its fitted rect over it.
     let root_id = server_surface(&hidden).id();
     let stable = f.state().stable_snap_rects.get(&root_id).copied();
     if snapped {
-        assert!(stable.is_some(), "a settled footprint, not nothing");
+        assert!(
+            stable.is_some_and(
+                |r| (r.x_low, r.x_high, r.y_low, r.y_high) == (4240.0, 6160.0, 4610.0, 5690.0)
+            ),
+            "the settled footprint is the output-sized fit around the slot's \
+             centre: {stable:?}"
+        );
     } else {
         assert!(
             stable.is_some_and(
