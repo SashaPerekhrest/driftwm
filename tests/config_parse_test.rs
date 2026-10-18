@@ -697,6 +697,63 @@ fn gesture_zoom_on_swipe_is_error() {
     );
 }
 
+/// Bare `focus-nearest` takes its direction from the input exactly as bare
+/// `center-nearest` does, so both parsers accept it on the same triggers.
+#[test]
+fn bare_focus_nearest_parses_wherever_bare_center_nearest_does() {
+    use driftwm::config::{GestureTrigger, parse_touch_config_entry};
+    type Parse = fn(&GestureTrigger, &str) -> Result<GestureConfigEntry, String>;
+    let fingers = 4;
+    let triggers = [
+        GestureTrigger::Swipe { fingers },
+        GestureTrigger::SwipeUp { fingers },
+        GestureTrigger::SwipeDown { fingers },
+        GestureTrigger::SwipeLeft { fingers },
+        GestureTrigger::SwipeRight { fingers },
+        GestureTrigger::DoubletapSwipe { fingers },
+        GestureTrigger::Pinch { fingers },
+        GestureTrigger::PinchIn { fingers },
+        GestureTrigger::PinchOut { fingers },
+        GestureTrigger::Hold { fingers },
+        GestureTrigger::Tap { fingers },
+        GestureTrigger::Doubletap { fingers },
+        GestureTrigger::HoldSwipe { fingers },
+        GestureTrigger::DoubletapHoldSwipe { fingers },
+    ];
+    let parsers: [(&str, Parse); 2] = [
+        ("gestures", parse_gesture_config_entry),
+        ("touch", parse_touch_config_entry),
+    ];
+    for (section, parse) in parsers {
+        for trigger in &triggers {
+            match (
+                parse(trigger, "center-nearest"),
+                parse(trigger, "focus-nearest"),
+            ) {
+                (Ok(_), Ok(entry)) => assert_eq!(
+                    entry,
+                    GestureConfigEntry::Threshold(ThresholdAction::FocusNearest),
+                    "[{section}] {trigger:?}"
+                ),
+                (Err(center), Err(focus)) => assert_eq!(
+                    focus,
+                    center.replace("center-nearest", "focus-nearest"),
+                    "[{section}] {trigger:?}"
+                ),
+                (center, focus) => {
+                    panic!(
+                        "[{section}] {trigger:?}: center-nearest {center:?}, focus-nearest {focus:?}"
+                    )
+                }
+            }
+        }
+    }
+    assert_eq!(
+        parse_mouse_action("focus-nearest"),
+        Ok(MouseAction::FocusNearest)
+    );
+}
+
 #[test]
 fn gesture_center_nearest_on_hold_is_error() {
     use driftwm::config::GestureTrigger;

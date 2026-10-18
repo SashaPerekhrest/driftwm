@@ -25,7 +25,7 @@ use crate::state::{
     PendingMiddleClick, PickTarget, StageWindow, SuspendedWindow, ZoomAnimationAnchor,
 };
 use driftwm::canvas::{self, CanvasPos, canvas_to_screen};
-use driftwm::config::{self, BindingContext, MouseAction};
+use driftwm::config::{self, Action, BindingContext, Direction, MouseAction};
 use driftwm::window_ext::WindowExt;
 use smithay::reexports::wayland_server::Resource;
 
@@ -646,7 +646,23 @@ impl DriftWm {
                         return;
                     }
                     MouseAction::CenterNearest => {
-                        self.start_navigate_grab(&pointer, pos, button, serial);
+                        self.start_navigate_grab(
+                            &pointer,
+                            pos,
+                            button,
+                            serial,
+                            Action::CenterNearest,
+                        );
+                        return;
+                    }
+                    MouseAction::FocusNearest => {
+                        self.start_navigate_grab(
+                            &pointer,
+                            pos,
+                            button,
+                            serial,
+                            Action::FocusNearest,
+                        );
                         return;
                     }
                     MouseAction::Action(ref action) => {
@@ -805,7 +821,10 @@ impl DriftWm {
             .filter(|b| {
                 matches!(
                     b,
-                    MouseAction::PanViewport | MouseAction::CenterNearest | MouseAction::Action(_)
+                    MouseAction::PanViewport
+                        | MouseAction::CenterNearest
+                        | MouseAction::FocusNearest
+                        | MouseAction::Action(_)
                 )
             })
             .cloned()
@@ -827,7 +846,10 @@ impl DriftWm {
                 self.start_pan_grab(pointer, pos, button, serial, false);
             }
             Some(MouseAction::CenterNearest) => {
-                self.start_navigate_grab(pointer, pos, button, serial);
+                self.start_navigate_grab(pointer, pos, button, serial, Action::CenterNearest);
+            }
+            Some(MouseAction::FocusNearest) => {
+                self.start_navigate_grab(pointer, pos, button, serial, Action::FocusNearest);
             }
             Some(MouseAction::Action(action)) => {
                 // No grab is left to take the release.
@@ -1288,7 +1310,9 @@ impl DriftWm {
                     return true;
                 }
                 // Viewport actions aren't pinned-specific — defer to normal dispatch.
-                MouseAction::PanViewport | MouseAction::CenterNearest => return false,
+                MouseAction::PanViewport
+                | MouseAction::CenterNearest
+                | MouseAction::FocusNearest => return false,
                 _ => {}
             }
         }
@@ -1790,6 +1814,7 @@ impl DriftWm {
         canvas_pos: Point<f64, smithay::utils::Logical>,
         button: u32,
         serial: Serial,
+        action: fn(Direction) -> Action,
     ) {
         let Some(output) = self.active_output() else {
             return;
@@ -1800,7 +1825,7 @@ impl DriftWm {
             button,
             location: canvas_pos,
         };
-        let grab = NavigateGrab::new(start_data, screen_pos, output);
+        let grab = NavigateGrab::new(start_data, screen_pos, output, action);
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 }

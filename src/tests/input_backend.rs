@@ -17,12 +17,13 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use driftwm::canvas::{CanvasPos, canvas_to_screen};
 use smithay::backend::input::{
     AbsolutePositionEvent, Axis, AxisRelativeDirection, AxisSource, ButtonState, Device,
-    DeviceCapability, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, Keycode,
-    PointerAxisEvent, PointerButtonEvent, PointerMotionAbsoluteEvent, PointerMotionEvent,
-    ProximityState, TabletToolAxisEvent, TabletToolButtonEvent, TabletToolCapabilities,
-    TabletToolDescriptor, TabletToolEvent, TabletToolProximityEvent, TabletToolTipEvent,
-    TabletToolTipState, TabletToolType, TouchCancelEvent, TouchDownEvent, TouchEvent,
-    TouchMotionEvent, TouchSlot, TouchUpEvent, UnusedEvent,
+    DeviceCapability, Event, GestureBeginEvent, GestureEndEvent, GestureSwipeBeginEvent,
+    GestureSwipeEndEvent, GestureSwipeUpdateEvent, InputBackend, InputEvent, KeyState,
+    KeyboardKeyEvent, Keycode, PointerAxisEvent, PointerButtonEvent, PointerMotionAbsoluteEvent,
+    PointerMotionEvent, ProximityState, TabletToolAxisEvent, TabletToolButtonEvent,
+    TabletToolCapabilities, TabletToolDescriptor, TabletToolEvent, TabletToolProximityEvent,
+    TabletToolTipEvent, TabletToolTipState, TabletToolType, TouchCancelEvent, TouchDownEvent,
+    TouchEvent, TouchMotionEvent, TouchSlot, TouchUpEvent, UnusedEvent,
 };
 use smithay::utils::{Logical, Point};
 
@@ -342,6 +343,51 @@ impl TouchEvent<FakeInput> for FakeTouchCancelEvent {
 
 impl TouchCancelEvent<FakeInput> for FakeTouchCancelEvent {}
 
+pub struct FakeSwipeBeginEvent {
+    device: FakeDevice,
+    fingers: u32,
+    time: u32,
+}
+
+impl GestureBeginEvent<FakeInput> for FakeSwipeBeginEvent {
+    fn fingers(&self) -> u32 {
+        self.fingers
+    }
+}
+
+impl GestureSwipeBeginEvent<FakeInput> for FakeSwipeBeginEvent {}
+
+/// The fingers' travel since the last update, in the physical direction they
+/// moved — libinput applies no natural-scroll inversion to gestures.
+pub struct FakeSwipeUpdateEvent {
+    device: FakeDevice,
+    delta: Point<f64, Logical>,
+    time: u32,
+}
+
+impl GestureSwipeUpdateEvent<FakeInput> for FakeSwipeUpdateEvent {
+    fn delta_x(&self) -> f64 {
+        self.delta.x
+    }
+
+    fn delta_y(&self) -> f64 {
+        self.delta.y
+    }
+}
+
+pub struct FakeSwipeEndEvent {
+    device: FakeDevice,
+    time: u32,
+}
+
+impl GestureEndEvent<FakeInput> for FakeSwipeEndEvent {
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+impl GestureSwipeEndEvent<FakeInput> for FakeSwipeEndEvent {}
+
 /// The tablet-tool axes a scenario chose to report. `None` means "unchanged"
 /// and drives the `*_has_changed` half of [`TabletToolEvent`], so an unset axis
 /// stays silent instead of reaching the client as a zero.
@@ -539,6 +585,9 @@ impl_event!(
     FakeTouchMotionEvent,
     FakeTouchUpEvent,
     FakeTouchCancelEvent,
+    FakeSwipeBeginEvent,
+    FakeSwipeUpdateEvent,
+    FakeSwipeEndEvent,
     FakeTabletAxisEvent,
     FakeTabletProximityEvent,
     FakeTabletTipEvent,
@@ -566,9 +615,9 @@ impl InputBackend for FakeInput {
     type TouchMotionEvent = FakeTouchMotionEvent;
     type PointerAxisEvent = FakeAxisEvent;
 
-    type GestureSwipeBeginEvent = UnusedEvent;
-    type GestureSwipeUpdateEvent = UnusedEvent;
-    type GestureSwipeEndEvent = UnusedEvent;
+    type GestureSwipeBeginEvent = FakeSwipeBeginEvent;
+    type GestureSwipeUpdateEvent = FakeSwipeUpdateEvent;
+    type GestureSwipeEndEvent = FakeSwipeEndEvent;
     type GesturePinchBeginEvent = UnusedEvent;
     type GesturePinchUpdateEvent = UnusedEvent;
     type GesturePinchEndEvent = UnusedEvent;
@@ -905,6 +954,37 @@ fn tip(f: &mut Fixture, device: &FakeDevice, tip_state: TabletToolTipState) {
                 tool: fake_tool(),
                 axes: FakeTabletAxes::default(),
                 tip_state,
+                time: next_time(),
+            },
+        });
+}
+
+/// A whole trackpad swipe: `fingers` land, travel `delta` in `steps` equal
+/// updates, and lift.
+pub fn trackpad_swipe(f: &mut Fixture, fingers: u32, delta: Point<f64, Logical>, steps: u32) {
+    let device = FakeDevice::touchpad();
+    f.state()
+        .process_input_event::<FakeInput>(InputEvent::GestureSwipeBegin {
+            event: FakeSwipeBeginEvent {
+                device: device.clone(),
+                fingers,
+                time: next_time(),
+            },
+        });
+    for _ in 0..steps {
+        f.state()
+            .process_input_event::<FakeInput>(InputEvent::GestureSwipeUpdate {
+                event: FakeSwipeUpdateEvent {
+                    device: device.clone(),
+                    delta: delta.downscale(f64::from(steps)),
+                    time: next_time(),
+                },
+            });
+    }
+    f.state()
+        .process_input_event::<FakeInput>(InputEvent::GestureSwipeEnd {
+            event: FakeSwipeEndEvent {
+                device,
                 time: next_time(),
             },
         });

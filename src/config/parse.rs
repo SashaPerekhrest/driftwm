@@ -298,6 +298,7 @@ pub fn parse_mouse_action(s: &str) -> Result<MouseAction, String> {
         "pan-viewport" => Ok(MouseAction::PanViewport),
         "zoom" => Ok(MouseAction::Zoom),
         "center-nearest" => Ok(MouseAction::CenterNearest),
+        "focus-nearest" => Ok(MouseAction::FocusNearest),
         other => {
             let action = parse_action(other)?;
             Ok(MouseAction::Action(action))
@@ -409,13 +410,15 @@ fn parse_continuous_action(s: &str) -> Option<ContinuousAction> {
 }
 
 /// Classify `s` as a threshold action. Every keyboard action qualifies, plus
-/// bare `center-nearest` (its direction comes from the swipe); continuous-only
-/// actions don't. A known action name with a bad argument keeps its specific
-/// parse error; an unknown name yields `None` so the caller's generic "unknown
-/// action" message applies.
+/// bare `center-nearest` and `focus-nearest` (their direction comes from the
+/// swipe); continuous-only actions don't. A known action name with a bad
+/// argument keeps its specific parse error; an unknown name yields `None` so
+/// the caller's generic "unknown action" message applies.
 fn parse_threshold_action(s: &str) -> Result<Option<ThresholdAction>, String> {
-    if s == "center-nearest" {
-        return Ok(Some(ThresholdAction::CenterNearest));
+    match s {
+        "center-nearest" => return Ok(Some(ThresholdAction::CenterNearest)),
+        "focus-nearest" => return Ok(Some(ThresholdAction::FocusNearest)),
+        _ => {}
     }
     if parse_continuous_action(s).is_some() {
         return Ok(None);
@@ -433,6 +436,19 @@ fn parse_threshold_action(s: &str) -> Result<Option<ThresholdAction>, String> {
             }
         }
     }
+}
+
+/// The bare directional actions take their direction from a swipe, so a
+/// trigger that carries none rejects them.
+fn reject_bare_directional(action: Option<&ThresholdAction>) -> Result<(), String> {
+    let name = match action {
+        Some(ThresholdAction::CenterNearest) => "center-nearest",
+        Some(ThresholdAction::FocusNearest) => "focus-nearest",
+        _ => return Ok(()),
+    };
+    Err(format!(
+        "{name} requires a swipe trigger (needs direction from input)"
+    ))
 }
 
 /// Validate trigger + action combination per the validation table.
@@ -513,12 +529,7 @@ pub fn parse_gesture_config_entry(
                      not '{action_str}'"
                 ));
             }
-            if matches!(is_threshold, Some(ThresholdAction::CenterNearest)) {
-                return Err(
-                    "center-nearest requires a swipe trigger (needs direction from input)"
-                        .to_string(),
-                );
-            }
+            reject_bare_directional(is_threshold.as_ref())?;
             if let Some(ta) = is_threshold {
                 Ok(GestureConfigEntry::Threshold(ta))
             } else {
@@ -531,12 +542,7 @@ pub fn parse_gesture_config_entry(
                     "hold trigger only accepts threshold actions, not '{action_str}'"
                 ));
             }
-            if matches!(is_threshold, Some(ThresholdAction::CenterNearest)) {
-                return Err(
-                    "center-nearest requires a swipe trigger (needs direction from input)"
-                        .to_string(),
-                );
-            }
+            reject_bare_directional(is_threshold.as_ref())?;
             if let Some(ta) = is_threshold {
                 Ok(GestureConfigEntry::Threshold(ta))
             } else {
@@ -603,11 +609,10 @@ pub fn parse_touch_config_entry(
                 ));
             }
             match parse_threshold_action(action_str)? {
-                Some(ThresholdAction::CenterNearest) => Err(
-                    "center-nearest requires a swipe trigger (needs direction from input)"
-                        .to_string(),
-                ),
-                Some(ta) => Ok(GestureConfigEntry::Threshold(ta)),
+                Some(ta) => {
+                    reject_bare_directional(Some(&ta))?;
+                    Ok(GestureConfigEntry::Threshold(ta))
+                }
                 None => Err(format!("unknown touch action: '{action_str}'")),
             }
         }

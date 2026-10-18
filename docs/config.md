@@ -950,6 +950,7 @@ Mouse actions:
 - `pan-viewport` — drag or scroll to pan the camera
 - `zoom` — drag or scroll to zoom
 - `center-nearest` — navigate toward the drag direction
+- `focus-nearest` — the same direction, with focus-nearest's reveal instead of parking
 
 Any action from the [keybindings] Actions list also works on button and wheel-up/wheel-down triggers: `exec <cmd>`, close-window, toggle-fullscreen, etc.
 
@@ -1024,7 +1025,7 @@ Continuous actions, locked to their triggers:
 - `resize-window` — swipe or doubletap-swipe
 - `resize-window-snapped` — swipe or doubletap-swipe
 
-Threshold actions: any action from the [keybindings] Actions list. center-nearest may also be bound bare — its direction is the pan direction of the swipe (fingers left looks right), unlike the named per-direction triggers above which are physical (swipe triggers only).
+Threshold actions: any action from the [keybindings] Actions list. center-nearest and focus-nearest may also be bound bare — their direction is the pan direction of the swipe (fingers left looks right), unlike the named per-direction triggers above which are physical (swipe triggers only).
 
 ## `[gestures.on-window]`
 

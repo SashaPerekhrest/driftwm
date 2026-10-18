@@ -5,12 +5,16 @@
 //! point still centers. `center-nearest` itself keeps parking unconditionally
 //! — it is the walk-through for a non-center `focus_placement`.
 
-use driftwm::config::{Action, Direction};
+use driftwm::config::{Action, BTN_LEFT, Direction};
 use smithay::desktop::Window;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 
 use crate::state::{FocusIntent, StageWindow};
 
+use super::input_backend::{
+    FakeDevice, key_press, key_release, pointer_relative_motion, pointer_to, press, release,
+    trackpad_swipe,
+};
 use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_by_app_id};
 
 const GAP_CONFIG: &str = "[snap]\nouter_gap = 20.0\n";
@@ -780,4 +784,75 @@ fn a_step_during_a_zoom_in_pans_from_where_the_zoom_lands() {
     settle(&mut f);
     assert_eq!(f.state().zoom(), 2.0, "the zoom landed");
     assert!(f.state().window_fully_in_viewport(&c));
+}
+
+/// evdev codes, the space `key_press` reports in. Super is the default
+/// `mod_key`.
+const KEY_LEFTMETA: u32 = 125;
+const KEY_LEFTCTRL: u32 = 29;
+
+/// `row_of_three` with focus on the middle window, so a step either way has a
+/// target.
+fn focused_middle_of_three(f: &mut Fixture) -> (Window, Window, Window) {
+    let (a, b, c) = row_of_three(f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&b, serial);
+    (a, b, c)
+}
+
+/// A swipe bound to bare `focus-nearest` takes its direction from the swipe in
+/// the bare `center-nearest`'s pan sense: fingers left look right. The target
+/// is on screen, so the view holds — what tells it from `center-nearest`.
+#[test]
+fn a_swipe_bound_to_bare_focus_nearest_steps_against_the_fingers() {
+    let mut f = Fixture::with_config(config(
+        "[gestures.anywhere]\n\"4-finger-swipe\" = \"focus-nearest\"\n",
+    ));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, _b, c) = focused_middle_of_three(&mut f);
+    let camera = f.state().camera();
+
+    trackpad_swipe(&mut f, 4, Point::from((-300.0, 0.0)), 10);
+
+    assert_eq!(
+        f.state().focused_window(),
+        Some(c),
+        "fingers left look right"
+    );
+    assert_eq!(f.state().camera_target(), None, "no pan was armed");
+    assert_eq!(f.state().camera(), camera);
+}
+
+/// A mod+ctrl drag bound to bare `focus-nearest` steps in the drag's pan sense,
+/// as the bare `center-nearest` drag does.
+#[test]
+fn a_drag_bound_to_bare_focus_nearest_steps_in_the_pan_sense() {
+    let mut f = Fixture::with_config(config(
+        "[mouse.anywhere]\n\"mod+ctrl+left\" = \"focus-nearest\"\n",
+    ));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (a, _b, _c) = focused_middle_of_three(&mut f);
+    let camera = f.state().camera();
+    let mouse = FakeDevice::mouse();
+    pointer_to(&mut f, &mouse, Point::from((960.0, 900.0)));
+
+    key_press(&mut f, KEY_LEFTMETA);
+    key_press(&mut f, KEY_LEFTCTRL);
+    press(&mut f, &mouse, BTN_LEFT);
+    pointer_relative_motion(&mut f, &mouse, Point::from((40.0, 0.0)));
+    // The grab fires its action from an idle callback.
+    f.pump(1);
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTCTRL);
+    key_release(&mut f, KEY_LEFTMETA);
+
+    assert_eq!(
+        f.state().focused_window(),
+        Some(a),
+        "a drag right looks left"
+    );
+    assert_eq!(f.state().camera_target(), None, "no pan was armed");
+    assert_eq!(f.state().camera(), camera);
 }

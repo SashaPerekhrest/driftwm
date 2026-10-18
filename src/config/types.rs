@@ -329,6 +329,7 @@ pub enum MouseAction {
     PanViewport,
     Zoom,
     CenterNearest,
+    FocusNearest,
     Action(Action),
 }
 
@@ -378,6 +379,7 @@ pub enum ContinuousAction {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ThresholdAction {
     CenterNearest,
+    FocusNearest,
     Fixed(Action),
 }
 
@@ -385,6 +387,7 @@ impl ThresholdAction {
     pub fn ends_fullscreen(&self) -> bool {
         match self {
             ThresholdAction::CenterNearest => true, // fires Action::CenterNearest
+            ThresholdAction::FocusNearest => true,  // fires Action::FocusNearest
             ThresholdAction::Fixed(a) => a.ends_fullscreen(),
         }
     }
@@ -1437,6 +1440,7 @@ mod tests {
     #[test]
     fn threshold_action_ends_fullscreen() {
         assert!(ThresholdAction::CenterNearest.ends_fullscreen());
+        assert!(ThresholdAction::FocusNearest.ends_fullscreen());
         assert!(!ThresholdAction::Fixed(Action::Spawn("foo".into())).ends_fullscreen());
         assert!(ThresholdAction::Fixed(Action::CloseWindow).ends_fullscreen());
     }

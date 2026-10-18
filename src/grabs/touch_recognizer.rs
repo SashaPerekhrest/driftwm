@@ -455,15 +455,21 @@ impl TouchRecognizer {
         }
     }
 
-    /// `CenterNearest` derives its direction from the accumulated swipe vector; a
-    /// `Fixed` action ignores it. Resolving here keeps the direction — and thus the
-    /// whole navigate decision — in the core. The vector is physical; CenterNearest
-    /// keeps content/pan orientation (fingers left looks right), so it negates.
+    /// `CenterNearest` / `FocusNearest` derive their direction from the
+    /// accumulated swipe vector; a `Fixed` action ignores it. Resolving here keeps
+    /// the direction — and thus the whole navigate decision — in the core. The
+    /// vector is physical; those keep content/pan orientation (fingers left looks
+    /// right), so it negates.
     fn resolve_threshold(&self, action: ThresholdAction) -> Action {
+        let pan_dir = || {
+            direction_from_vector(Point::from((
+                -self.nav_cumulative.x,
+                -self.nav_cumulative.y,
+            )))
+        };
         match action {
-            ThresholdAction::CenterNearest => Action::CenterNearest(direction_from_vector(
-                Point::from((-self.nav_cumulative.x, -self.nav_cumulative.y)),
-            )),
+            ThresholdAction::CenterNearest => Action::CenterNearest(pan_dir()),
+            ThresholdAction::FocusNearest => Action::FocusNearest(pan_dir()),
             ThresholdAction::Fixed(a) => a,
         }
     }
@@ -855,8 +861,8 @@ impl TouchRecognizer {
         out: &mut Vec<Decision>,
     ) {
         // Accumulate the physical finger vector: named per-direction triggers
-        // fire in physical direction; CenterNearest negates back to content/pan
-        // orientation in resolve_threshold.
+        // fire in physical direction; the bare CenterNearest / FocusNearest negate
+        // back to content/pan orientation in resolve_threshold.
         let centroid_delta = centroid - self.last_centroid;
         self.nav_cumulative += centroid_delta;
         self.last_centroid = centroid;
