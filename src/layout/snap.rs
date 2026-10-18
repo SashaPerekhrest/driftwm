@@ -112,9 +112,9 @@ pub struct StopQuery {
     pub align_band: f64,
     pub same_edge: bool,
     pub edge_center: bool,
-    /// Whether a neighbour offering alignments offers the docks too, which
-    /// put the primary a gap off its side: a keyboard move's only way out of
-    /// a column, which a drag leaves freely.
+    /// Whether a neighbour within `align_band` but clear of the perpendicular
+    /// span offers the docks too, corner to corner: a keyboard move's way out
+    /// of a column, which a drag leaves freely.
     pub side_docks: bool,
 }
 
