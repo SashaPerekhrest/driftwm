@@ -10,8 +10,8 @@ JSON, so any language can speak it directly.
 Run `driftwm msg <command>` from inside a driftwm session. The commands —
 `camera`, `zoom`, `focus`, `move`, `resize`, `opacity`, `pin`, `close`,
 `suspend`, `relaunch`, `layout`, `cursor`, `action`, `bookmark`, `screenshot`,
-`state`, `subscribe`, and `debug-counters` — with their arguments, flags, and JSON reply
-shapes are documented in the generated [CLI reference](cli.md);
+`state`, `subscribe`, and `debug-counters` — with their arguments, flags, and
+JSON reply shapes are documented in the generated [CLI reference](cli.md);
 `driftwm msg <command> --help` prints the same for one command. The conventions
 they share follow below.
 
@@ -37,11 +37,6 @@ Pinned and fullscreen windows live in screen space, not on the canvas, so `move`
 refuses to reposition them and `resize` refuses to resize them. Reading either
 still works.
 
-`cursor` is the exception: it reports the pointer in the global output layout,
-the space outputs advertise their positions in and slurp prints — logical pixels
-from the layout's origin, Y pointing down — along with the output it is on. That
-holds on the lock screen too.
-
 `pin` moves a window between the two spaces without moving it visually. Like
 `move`, it refuses a fullscreen window, whose pin reads `false` until fullscreen
 ends; the `toggle-pin-to-screen` action leaves fullscreen first instead.
@@ -57,6 +52,11 @@ rather than refusing. The practical consequence: a script that polls `camera` an
 writes the value back — a follow-the-focus panner, say — will drop a user out of
 a fullscreen video the first time it writes. Reading is always safe; `camera` and
 `zoom` with no argument never disturb fullscreen.
+
+`cursor` and `screenshot region --from-screen` use a third space, the global
+output layout: the one outputs advertise their positions in and slurp prints, in
+logical pixels from the layout's origin with Y pointing down. `cursor` also
+names the output the pointer is on, and reads the same on the lock screen.
 
 ### Sizes and the visual frame
 
@@ -250,16 +250,17 @@ a single-process app (a terminal server, say) shares one, every X11 window
 reports xwayland-satellite's, and a client reached through a proxy such as
 waypipe reports the proxy's. A sandboxed app connecting through a security
 context (Flatpak) reports its own process, numbered as seen from outside the
-sandbox. A stand-in, which has no client, has no `pid`; a compositor older than
-this field omits it too.
+sandbox. A stand-in, which has no client, has no `pid`, and neither has a window
+whose client has just exited; a compositor older than this field omits it too.
 The reply also carries `layout` (full XKB name) and `layout_short` (the
 configured code for the active group); `fullscreen` and `pinned` (screen-space
 windows, each carrying an `id` and `pid` too — a `pinned` entry's
 `position`/`size` are in rule coordinates, output-relative, so they paste
-straight into a `pinned_to_screen` rule); `layers` (namespaces of screen-space layer-shell
-surfaces); `canvas_layers` (canvas-positioned layers with rule-coordinate
-position and size); and `outputs` (per-output `name`, viewport `camera` (center,
-Y-up), `zoom`, logical `size`, `active` flag, and `active_bookmark`).
+straight into a `pinned_to_screen` rule); `layers` (namespaces of screen-space
+layer-shell surfaces); `canvas_layers` (canvas-positioned layers with
+rule-coordinate position and size); and `outputs` (per-output `name`, viewport
+`camera` (center, Y-up), `zoom`, logical `size`, `active` flag, and
+`active_bookmark`).
 
 `active_bookmark` (top-level) is the focused output's active bookmark — the
 bookmark nearest the viewport's usable center among those currently visible, or
