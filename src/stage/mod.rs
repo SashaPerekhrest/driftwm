@@ -62,6 +62,17 @@ pub struct PinnedSite {
     pub screen_pos: Point<i32, Logical>,
 }
 
+/// The two frame rects a snapped fit pushed its cluster between: the fit
+/// (`fitted`) and the window's pre-fit rect (`home`). Kept with fit membership
+/// so a close can put the cluster back after the window's own geometry has
+/// stopped describing the fit — a disconnect drops its title bar first, a
+/// fullscreen parks it elsewhere.
+#[derive(Clone, Copy, Debug)]
+pub struct FitPush {
+    pub fitted: SnapRect,
+    pub home: SnapRect,
+}
+
 /// What a filled window has to be handed back: the pre-fill rect an unfill
 /// restores, plus the viewport the fill grew inside so `center-window` can
 /// return to it.
@@ -94,6 +105,8 @@ struct Entry<W> {
     position: Point<i32, Logical>,
     /// `Some(pre-fit size)` while the window is fit to the viewport.
     fit_saved_size: Option<Size<i32, Logical>>,
+    /// Set while fit by a snapped fit, which pushed its cluster.
+    fit_push: Option<FitPush>,
     /// The size fit/fullscreen restore to. Tracked separately from live
     /// geometry because some clients (Chromium) shrink their reported
     /// geometry after each sized configure.
@@ -173,6 +186,7 @@ impl<W: StageElement> Stage<W> {
                 id,
                 position,
                 fit_saved_size: None,
+                fit_push: None,
                 restore_size: None,
                 fill_saved: None,
                 pinned: None,
@@ -509,7 +523,29 @@ impl<W: StageElement> Stage<W> {
     {
         if let Some(e) = self.entry_mut(window) {
             e.fit_saved_size = Some(saved_size);
+            e.fit_push = None;
         }
+    }
+
+    /// Record the cluster push of the snapped fit that made `window` fit.
+    /// Cleared with fit membership.
+    pub fn set_fit_push<Q>(&mut self, window: &Q, push: FitPush)
+    where
+        W: PartialEq<Q>,
+    {
+        if let Some(e) = self
+            .entry_mut(window)
+            .filter(|e| e.fit_saved_size.is_some())
+        {
+            e.fit_push = Some(push);
+        }
+    }
+
+    pub fn fit_push<Q>(&self, window: &Q) -> Option<FitPush>
+    where
+        W: PartialEq<Q>,
+    {
+        self.entry(window).and_then(|e| e.fit_push)
     }
 
     pub fn is_fit<Q>(&self, window: &Q) -> bool
@@ -532,7 +568,9 @@ impl<W: StageElement> Stage<W> {
     where
         W: PartialEq<Q>,
     {
-        self.entry_mut(window).and_then(|e| e.fit_saved_size.take())
+        let e = self.entry_mut(window)?;
+        e.fit_push = None;
+        e.fit_saved_size.take()
     }
 
     pub fn clear_fit<Q>(&mut self, window: &Q)
@@ -541,6 +579,7 @@ impl<W: StageElement> Stage<W> {
     {
         if let Some(e) = self.entry_mut(window) {
             e.fit_saved_size = None;
+            e.fit_push = None;
         }
     }
 

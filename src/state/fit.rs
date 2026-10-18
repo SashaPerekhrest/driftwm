@@ -7,7 +7,7 @@ use smithay::{
 
 use super::{DriftWm, PendingView, StageWindow, ZoomAnimationAnchor, output_state};
 use driftwm::config;
-use driftwm::stage::ElementId;
+use driftwm::stage::{ElementId, FitPush};
 use driftwm::window_ext::WindowExt;
 
 /// Build a `SnapRect` from a hypothetical canvas position, size, SSD
@@ -349,26 +349,16 @@ impl DriftWm {
         let fit = self.compute_fit_geometry(window);
         let old_rect = snap_rect_at(old_loc, old_size, bar, bw);
         let new_rect = snap_rect_at(fit.new_loc, fit.target_size, bar, bw);
-        let primary = StageWindow::Client(window.clone());
-        // Capture the cluster before shifting — members' caches must follow
-        // their new live positions, or close-time `cluster_of` sees stale
-        // cache vs shifted live and can't reconstruct the cluster.
-        #[allow(clippy::mutable_key_type)]
-        let cluster_members: Vec<StageWindow> = {
-            let rects = self.snap_rects_with_primary(&primary, old_rect);
-            driftwm::layout::cluster::cluster_of(&primary, &rects, self.config.snap_gap)
-                .into_iter()
-                .filter(|w| w != window)
-                .collect()
-        };
         let primary_id = self.stage.id_of(window);
-        let old_member_locs = self.cluster_member_positions(&cluster_members);
-        self.shift_cluster_around_primary(window, old_rect, new_rect);
-        self.animate_cluster_shift(old_member_locs, primary_id);
+        self.shift_fit_cluster(window, old_rect, new_rect, primary_id);
         self.fit_window(window);
-        for member in &cluster_members {
-            self.refresh_stable_snap_rect(member);
-        }
+        self.stage.set_fit_push(
+            window,
+            FitPush {
+                fitted: new_rect,
+                home: old_rect,
+            },
+        );
         // Insert the primary's post-fit rect explicitly: `geometry().size`
         // is still pre-fit until the client acks the configure, so
         // `refresh_stable_snap_rect` would cache wrong dimensions.
@@ -376,33 +366,14 @@ impl DriftWm {
     }
 
     pub fn unfit_window_snapped(&mut self, window: &Window) {
-        let primary_id = self.stage.id_of(window);
-        if !self.pull_fit_cluster_back(window, primary_id) {
-            return;
-        }
-        self.unfit_window(window);
-        // Primary's cache is refreshed by `establish_exit_placement` when the
-        // exit size is unchanged, otherwise by the pending_recenter completion
-        // in `handlers/compositor.rs` once the client acks the exit configure.
-    }
-
-    /// The cluster half of `unfit_window_snapped`: move `window`'s snap cluster
-    /// from its fitted rect to the one its saved size takes at the same visual
-    /// center, the members' slide waiting on `waits_for`'s resize. False, with
-    /// nothing moved, when `window` isn't fit.
-    pub(crate) fn pull_fit_cluster_back(
-        &mut self,
-        window: &Window,
-        waits_for: Option<ElementId>,
-    ) -> bool {
         let Some(wl_surface) = window.wl_surface() else {
-            return false;
+            return;
         };
         let Some(saved_size) = self.stage.fit_saved_size(window) else {
-            return false;
+            return;
         };
         let Some(old_loc) = self.stage.position_of(window) else {
-            return false;
+            return;
         };
         // Last configured, not last committed — the cluster deltas below must be
         // measured against the rect the window is actually becoming.
@@ -414,23 +385,49 @@ impl DriftWm {
         let new_loc = super::frame_loc_for_center(center, saved_size, bar);
         let old_rect = snap_rect_at(old_loc, old_size, bar, bw);
         let new_rect = snap_rect_at(new_loc, saved_size, bar, bw);
+        let primary_id = self.stage.id_of(window);
+        self.shift_fit_cluster(window, old_rect, new_rect, primary_id);
+        self.unfit_window(window);
+        // Primary's cache is refreshed by `establish_exit_placement` when the
+        // exit size is unchanged, otherwise by the pending_recenter completion
+        // in `handlers/compositor.rs` once the client acks the exit configure.
+    }
+
+    /// Put back the cluster a snapped fit pushed aside, for a fit window that is
+    /// closing — the unfit that would have done it never runs.
+    pub(crate) fn release_fit_push(&mut self, window: &Window) {
+        if let Some(push) = self.stage.fit_push(window) {
+            self.shift_fit_cluster(window, push.fitted, push.home, None);
+        }
+    }
+
+    /// Move `window`'s snap cluster, found around `from`, so it sits around `to`
+    /// instead, the members' slide waiting on `waits_for`'s resize.
+    fn shift_fit_cluster(
+        &mut self,
+        window: &Window,
+        from: driftwm::layout::snap::SnapRect,
+        to: driftwm::layout::snap::SnapRect,
+        waits_for: Option<ElementId>,
+    ) {
         let primary = StageWindow::Client(window.clone());
-        // See `fit_window_snapped` for why we refresh member caches here.
+        // Capture the cluster before shifting — members' caches must follow
+        // their new live positions, or close-time `cluster_of` sees stale
+        // cache vs shifted live and can't reconstruct the cluster.
         #[allow(clippy::mutable_key_type)]
         let cluster_members: Vec<StageWindow> = {
-            let rects = self.snap_rects_with_primary(&primary, old_rect);
+            let rects = self.snap_rects_with_primary(&primary, from);
             driftwm::layout::cluster::cluster_of(&primary, &rects, self.config.snap_gap)
                 .into_iter()
                 .filter(|w| w != window)
                 .collect()
         };
         let old_member_locs = self.cluster_member_positions(&cluster_members);
-        self.shift_cluster_around_primary(window, old_rect, new_rect);
+        self.shift_cluster_around_primary(window, from, to);
         self.animate_cluster_shift(old_member_locs, waits_for);
         for member in &cluster_members {
             self.refresh_stable_snap_rect(member);
         }
-        true
     }
 
     /// Snapshot each cluster member's pre-shift canvas position, so the shift

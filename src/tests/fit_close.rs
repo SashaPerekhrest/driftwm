@@ -190,23 +190,91 @@ fn closing_an_unfit_window_leaves_the_gap() {
     assert_eq!(position(&mut f, &neighbour), docked);
 }
 
-/// A plain fit grows over its neighbours instead of pushing them, so there is
-/// nothing for its close to pull back.
+/// A plain fit pushes nothing, so its close pulls nothing — not even a window
+/// docked against the fitted window afterwards.
 #[test]
-fn closing_a_plain_fit_window_leaves_its_neighbour() {
+fn closing_a_plain_fit_window_leaves_a_window_docked_to_it() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
+    let gap = f.state().config.snap_gap as i32;
+    let id = f.add_client();
+    let (surface, primary) = map_at(&mut f, id, "primary", (400, 300), (900, 300));
+    fit_and_settle(&mut f, id, &surface, false, &primary);
+    let fit_loc = position(&mut f, &primary);
+    let fit_size = crate::state::configured_window_size(&primary);
+    let (_, neighbour) = map_at(
+        &mut f,
+        id,
+        "neighbour",
+        (300, 300),
+        (fit_loc.x + fit_size.w + gap, fit_loc.y),
+    );
+    tick_until_settled(&mut f);
+    let docked = position(&mut f, &neighbour);
+
+    client_close(&mut f, id, &surface);
+
+    assert_eq!(position(&mut f, &neighbour), docked);
+}
+
+/// A fit window that went fullscreen is still fit underneath, and its close
+/// still owes the cluster the fit pushed.
+#[test]
+fn closing_a_fit_window_from_fullscreen_pulls_its_neighbour_back() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
     let id = f.add_client();
     let (surface, primary, neighbour, docked) = docked_pair(&mut f, id);
-    fit_and_settle(&mut f, id, &surface, false, &primary);
-    assert_eq!(
+    fit_and_settle(&mut f, id, &surface, true, &primary);
+    f.state().enter_fullscreen(&primary, Some(output));
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &surface);
+    assert_ne!(
         position(&mut f, &neighbour),
         docked,
-        "precondition: a plain fit leaves the neighbour alone"
+        "precondition: the fit pushed the neighbour aside"
     );
 
     client_close(&mut f, id, &surface);
+
+    assert_eq!(position(&mut f, &neighbour), docked);
+}
+
+/// A client that disconnects instead of closing has its title bar torn down
+/// before the close runs; the neighbour docked against that bar comes back
+/// with the rest.
+#[test]
+fn a_disconnect_pulls_back_the_neighbour_docked_above_the_title_bar() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let gap = f.state().config.snap_gap as i32;
+    let bar = f.state().config.decorations.title_bar_height;
+    let app = f.add_client();
+    let (surface, primary) = map_at(&mut f, app, "primary", (400, 300), (900, 300));
+    super::give_ssd(&mut f, &primary);
+    let other = f.add_client();
+    let (_, neighbour) = map_at(
+        &mut f,
+        other,
+        "neighbour",
+        (300, 300),
+        (900, 300 - bar - gap - 300),
+    );
+    settle(&mut f);
+    tick_until_settled(&mut f);
+    let docked = position(&mut f, &neighbour);
+    fit_and_settle(&mut f, app, &surface, true, &primary);
+    assert_ne!(
+        position(&mut f, &neighbour),
+        docked,
+        "precondition: the fit pushed the neighbour aside"
+    );
+
+    f.kill_client(app);
+    f.pump(3);
 
     assert_eq!(position(&mut f, &neighbour), docked);
 }
