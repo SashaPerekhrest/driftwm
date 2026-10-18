@@ -512,9 +512,9 @@ pub(super) fn parse_effects_config(raw: EffectsFileConfig, errors: &mut Warnings
         );
     }
     EffectsConfig {
-        blur_radius: raw.blur_radius.unwrap_or(2),
+        blur_radius: raw.blur_radius.unwrap_or(5),
         blur_strength: non_negative(
-            raw.blur_strength.unwrap_or(1.1),
+            raw.blur_strength.unwrap_or(1.5),
             "effects.blur_strength",
             errors,
         ),

@@ -400,19 +400,19 @@ fn default_mouse_bindings_move_snapped_windows_on_alt_shift_left() {
 }
 
 #[test]
-fn default_mouse_bindings_resize_window_on_alt_right() {
+fn default_mouse_bindings_resize_snapped_on_alt_right() {
     let config = Config::default();
     let alt = mods(true, false, false, false);
     let result = config.mouse_button_lookup_ctx(&alt, BTN_RIGHT, BindingContext::OnWindow);
     assert!(result.is_some(), "Alt+Right on window should be bound");
     assert!(
-        matches!(result.unwrap(), MouseAction::ResizeWindow),
-        "Alt+Right on window should resolve to ResizeWindow by default (flag false)"
+        matches!(result.unwrap(), MouseAction::ResizeWindowSnapped),
+        "Alt+Right on window should resolve to ResizeWindowSnapped"
     );
 }
 
 #[test]
-fn default_mouse_bindings_resize_snapped_on_alt_shift_right() {
+fn default_mouse_bindings_resize_window_on_alt_shift_right() {
     let config = Config::default();
     let alt_shift = mods(true, false, true, false);
     let result = config.mouse_button_lookup_ctx(&alt_shift, BTN_RIGHT, BindingContext::OnWindow);
@@ -421,27 +421,27 @@ fn default_mouse_bindings_resize_snapped_on_alt_shift_right() {
         "Alt+Shift+Right on window should be bound"
     );
     assert!(
-        matches!(result.unwrap(), MouseAction::ResizeWindowSnapped),
-        "Alt+Shift+Right on window should resolve to ResizeWindowSnapped"
+        matches!(result.unwrap(), MouseAction::ResizeWindow),
+        "Alt+Shift+Right on window should resolve to ResizeWindow"
     );
 }
 
 #[test]
 fn decoration_resize_snapped_exposed_on_config() {
     let default_config = Config::default();
-    assert!(!default_config.decoration_resize_snapped);
+    assert!(default_config.decoration_resize_snapped);
 
-    let flipped = Config::from_toml("[mouse]\ndecoration_resize_snapped = true").unwrap();
-    assert!(flipped.decoration_resize_snapped);
+    let flipped = Config::from_toml("[mouse]\ndecoration_resize_snapped = false").unwrap();
+    assert!(!flipped.decoration_resize_snapped);
 }
 
 #[test]
 fn decoration_fit_snapped_exposed_on_config() {
     let default_config = Config::default();
-    assert!(!default_config.decoration_fit_snapped);
+    assert!(default_config.decoration_fit_snapped);
 
-    let flipped = Config::from_toml("[mouse]\ndecoration_fit_snapped = true").unwrap();
-    assert!(flipped.decoration_fit_snapped);
+    let flipped = Config::from_toml("[mouse]\ndecoration_fit_snapped = false").unwrap();
+    assert!(!flipped.decoration_fit_snapped);
 }
 
 #[test]
@@ -814,7 +814,7 @@ fn gesture_doubletap_swipe_resize_snapped_is_valid() {
 }
 
 #[test]
-fn gesture_alt_shift_3_finger_swipe_defaults_to_resize_snapped() {
+fn gesture_alt_shift_3_finger_swipe_defaults_to_resize_window() {
     use driftwm::config::GestureTrigger;
     let config = Config::default();
     let alt_shift = mods(true, false, true, false);
@@ -827,10 +827,10 @@ fn gesture_alt_shift_3_finger_swipe_defaults_to_resize_snapped() {
         matches!(
             result,
             Some(GestureConfigEntry::Continuous(
-                ContinuousAction::ResizeWindowSnapped
+                ContinuousAction::ResizeWindow
             ))
         ),
-        "default Alt+Shift+3-finger-swipe on window should resolve to resize-snapped, got: {result:?}"
+        "default Alt+Shift+3-finger-swipe on window should resolve to resize-window, got: {result:?}"
     );
 }
 

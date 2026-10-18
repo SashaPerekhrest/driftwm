@@ -3739,7 +3739,11 @@ fn a_queued_fit_frames_the_slot_the_adopt_lands_in() {
     use smithay::reexports::wayland_server::Resource;
 
     let tmp = TempDir::new();
-    let mut f = Fixture::with_config(Config::default());
+    // The single-window fit: a snapped fit caches its fit rect as the stable
+    // rect on purpose, which the footprint assertion below would read.
+    let mut f = Fixture::with_config(
+        Config::from_toml("[mouse]\ndecoration_fit_snapped = false\n").unwrap(),
+    );
     f.add_output(1, (1920, 1080));
     inject_cache(&mut f, &tmp, &["myapp"]);
     origin_view(&mut f);

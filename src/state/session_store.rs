@@ -44,9 +44,8 @@ pub(crate) const WRITE_DEBOUNCE: Duration = Duration::from_secs(1);
 
 /// The same for viewport motion, which is far cheaper to lose: a camera is
 /// continuous and self-correcting — wherever a pan ends is what the next flush
-/// records — and `restore_camera` is off by default, so most sessions never read
-/// the saved one back. A window mutation is a discrete event the user expects to
-/// survive, so it keeps the short interval. Panning being the primary
+/// records. A window mutation is a discrete event the user expects to survive,
+/// so it keeps the short interval. Panning being the primary
 /// interaction on this canvas, sharing that interval would rewrite the file once
 /// a second for the length of every gesture.
 const CAMERA_WRITE_DEBOUNCE: Duration = Duration::from_secs(5);

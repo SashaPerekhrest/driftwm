@@ -25,7 +25,7 @@ Sloppy focus: keyboard focus follows the pointer to windows. Moving to empty can
 
 ### `window_placement`
 
-Default: `"center"`
+Default: `"auto"`
 
 Where new windows spawn when no window rule positions them:
 
@@ -45,7 +45,7 @@ A window too big to fit on an axis with its two gutters centers on that axis rat
 
 It applies to the centering actions and wherever the camera jumps to a window — center-window, focus-center, center-nearest, Alt-Tab, click-to-navigate, activation, a newly mapped window, the window focus follows when one closes (see auto_navigate_on_close) and `driftwm msg focus`. The centering actions (center-window, focus-center, center-nearest) always park the window there, even one already fully on screen — center-nearest is how you walk a placement through your windows one step at a time. Alt-Tab, click-to-navigate, activation, focus following a close and `msg focus` don't pan at all for a window that is already fully on screen, so they place a window only when the camera has to move rather than holding one against the edge continuously. Fullscreen, pinned and fit windows lock or fill the viewport and ignore it, as does a filled window returning to the view it was filled in.
 
-focus-nearest (Mod+Arrow by default) walks rather than jumps, so it doesn't land here: it scrolls a clipped window just far enough to show it whole, snap.outer_gap in from the edge it hung past, and centers only on an axis where the window doesn't fit.
+focus-nearest (Mod+Arrow, the 4-finger swipe and Mod+Ctrl+drag by default) walks rather than jumps, so it doesn't land here: it scrolls a clipped window just far enough to show it whole, snap.outer_gap in from the edge it hung past, and centers only on an axis where the window doesn't fit.
 
 Because the spawn point follows it too (see window_placement above), this also shifts where a new window lands on the *canvas* — the position `msg move` reports and the session file stores. Under window_placement = "auto" that only applies to the fallback: a spawn that finds a slot next to the anchor still goes there.
 
@@ -85,19 +85,19 @@ Suspend instead of close when a window is closed by the client (titlebar X, in-a
 
 ### `restore_windows`
 
-Default: `false`
+Default: `true`
 
 Restore still-open windows after a restart: windows that resolve to a .desktop entry are saved as you go and come back as suspended windows on the next launch (nothing auto-launches). Per-window overridable via a `restore_windows` window rule. See docs/session.md.
 
 ### `restore_camera`
 
-Default: `false`
+Default: `true`
 
 Restore each output's camera position and zoom from the saved session on the next launch; without it a fresh start centers every output. Read at launch: a mid-session change applies on the next launch.
 
 ### `restore_bookmarks`
 
-Default: `false`
+Default: `true`
 
 Restore the bookmark registry from the saved session on the next launch, overlaying saved bookmarks on the [navigation.bookmarks] config seeds; without it runtime set-bookmark / `msg bookmark` edits don't survive a restart. Read at launch: a mid-session change applies on the next launch.
 
@@ -372,7 +372,7 @@ px per pan-viewport action (mod-ctrl-arrow by default)
 
 Default: `[]`
 
-Anchors: canvas points discoverable by focus-nearest / center-nearest (Mod+Arrow / 4-finger swipe) even when no window is there. Uses Y-up coordinate system. Empty by default.
+Anchors: canvas points discoverable by focus-nearest (Mod+Arrow / 4-finger swipe) and center-nearest even when no window is there. Uses Y-up coordinate system. Empty by default.
 
 **Example: origin + 4 corners**
 
@@ -463,9 +463,9 @@ viewport px padding for zoom-to-fit (screen space)
 
 ### `reset_on_new_window`
 
-Default: `true`
+Default: `false`
 
-animate zoom to 1.0 when a new window is mapped (false = keep current zoom, pan only)
+keep the current zoom when a new window is mapped, pan only (true = animate zoom to 1.0)
 
 ### `reset_on_activation`
 
@@ -475,7 +475,7 @@ animate zoom to 1.0 when an off-screen window requests focus (false = keep curre
 
 ### `interact_min`
 
-Default: `0.0`
+Default: `0.5`
 
 zoom (1.0 = 100%) below which a window is too small to touch: left click navigates to it per focus_placement (a filled window returns to its fill view instead, if that view is itself above the threshold), drag anywhere moves it, pointer input is suppressed. 0 disables. Note the reachable minimum zoom is dynamic (fit * 0.5), so with few windows a low threshold can be unreachable and thus inert.
 
@@ -513,7 +513,7 @@ screen px past snap to break free
 
 ### `corners`
 
-Default: `false`
+Default: `true`
 
 also align corners (parallel edges line up: top-to-top, left-to-left)
 
@@ -527,13 +527,13 @@ also align centers (midpoints line up along the moved axis)
 
 ### `bg_color`
 
-Default: `"#303030"`
+Default: `"#ffffff"`
 
 title bar background
 
 ### `fg_color`
 
-Default: `"#FFFFFF"`
+Default: `"#333333"`
 
 title text + close button × color
 
@@ -644,13 +644,13 @@ blur = true
 
 ### `blur_radius`
 
-Default: `2`
+Default: `5`
 
 number of Kawase down+up passes
 
 ### `blur_strength`
 
-Default: `1.1`
+Default: `1.5`
 
 per-pass texel spread
 
@@ -805,10 +805,10 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+return"` | `exec-terminal` | $TERMINAL, else first of: foot, alacritty, ptyxis, kitty, wezterm, gnome-terminal, konsole |
 | `"mod+d"` | `exec-launcher` | $LAUNCHER, else first of: fuzzel, wofi, rofi, bemenu-run, wmenu-run, tofi-drun, mew-run |
 | `"mod+q"` | `close-window` |  |
-| `"mod+e"` | `toggle-cursor-pan` | toggle cursor edge-pan (see [navigation.edge_pan]) |
+| `"mod+shift+q"` | `suspend-window` |  |
 | `"mod+f"` | `toggle-fullscreen` |  |
-| `"mod+m"` | `fit-window` |  |
-| `"mod+shift+m"` | `fit-window-snapped` |  |
+| `"mod+m"` | `fit-window-snapped` |  |
+| `"mod+shift+m"` | `fit-window` |  |
 | `"mod+t"` | `toggle-pin-to-screen` |  |
 | `"mod+c"` | `center-window` |  |
 | `"mod+x"` | `focus-center` |  |
@@ -830,17 +830,16 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+equal"` | `zoom-in` |  |
 | `"mod+minus"` | `zoom-out` |  |
 | `"mod+0"` | `zoom-reset` |  |
-| `"mod+z"` | `zoom-reset` |  |
 | `"mod+w"` | `zoom-to-fit` |  |
 | `"mod+shift+w"` | `zoom-to-fit-snapped` |  |
 | `"mod+1"` | `go-to-bookmark 1` | jump to bookmark 1 (top-left corner by default) |
 | `"mod+2"` | `go-to-bookmark 2` | jump to bookmark 2 (top-right corner) |
 | `"mod+3"` | `go-to-bookmark 3` | jump to bookmark 3 (bottom-right corner) |
 | `"mod+4"` | `go-to-bookmark 4` | jump to bookmark 4 (bottom-left corner) |
-| `"mod+shift+1"` | `set-bookmark 1` | overwrite bookmark 1 at the current view |
-| `"mod+shift+2"` | `set-bookmark 2` |  |
-| `"mod+shift+3"` | `set-bookmark 3` |  |
-| `"mod+shift+4"` | `set-bookmark 4` |  |
+| `"mod+ctrl+1"` | `set-bookmark 1` | overwrite bookmark 1 at the current view |
+| `"mod+ctrl+2"` | `set-bookmark 2` |  |
+| `"mod+ctrl+3"` | `set-bookmark 3` |  |
+| `"mod+ctrl+4"` | `set-bookmark 4` |  |
 | `"mod+alt+up"` | `send-to-output up` | move window to output above |
 | `"mod+alt+down"` | `send-to-output down` |  |
 | `"mod+alt+left"` | `send-to-output left` |  |
@@ -884,12 +883,6 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 "mod+g" = "fill-window"
 ```
 
-**Example: suspend-window (unbound by default)**
-
-```toml
-"mod+s" = "suspend-window"
-```
-
 **Example: set-trackpad (unbound by default)**
 
 ```toml
@@ -929,15 +922,15 @@ When true (default), dragging a window's edge or corner resizes it via the invis
 
 ### `decoration_resize_snapped`
 
-Default: `false`
+Default: `true`
 
-When true, resizing a window by dragging its edge (SSD or CSD border) propagates to every window connected to it via snap adjacency. Only that drag: the grow-window/shrink-window/resize-to-snap keybindings and the resize gesture always size the one window. Bind `resize-window-snapped` to a mouse button, gesture, or touch trigger for a cluster-aware drag of your own.
+When true, resizing a window by dragging its edge (SSD or CSD border) propagates to every window connected to it via snap adjacency. Only that drag: the grow-window/shrink-window/resize-to-snap keybindings always size the one window, and a mouse, gesture or touch binding sizes what its own action says (resize-window or resize-window-snapped).
 
 ### `decoration_fit_snapped`
 
-Default: `false`
+Default: `true`
 
-When true, maximize/unmaximize initiated via window decoration (CSD maximize button, SSD title-bar double-click, or xdg/foreign-toplevel set_maximized) propagates to every window connected via snap adjacency. Keybinding/gesture fit is unaffected — bind `fit-window-snapped` explicitly if you want cluster-aware fit there too.
+When true, maximize/unmaximize initiated via window decoration (CSD maximize button, SSD title-bar double-click, or xdg/foreign-toplevel set_maximized) propagates to every window connected via snap adjacency. Keybinding and gesture fit follow their own action (fit-window or fit-window-snapped).
 
 Mouse bindings: "Modifier+...+Trigger" = "action" Context-aware: on-window, on-canvas, anywhere. Specific context checked first, then "anywhere" as fallback. Click-to-focus and SSD decoration clicks are always hardcoded. Triggers: left, right, middle (buttons), trackpad-scroll, wheel-scroll, wheel-up, wheel-down. The wheel-up/wheel-down triggers fire once per discrete wheel notch and can run any action, e.g. volume on mod+shift+scroll. Merges with defaults. Use "none" to unbind.
 
@@ -960,9 +953,9 @@ Any action from the [keybindings] Actions list also works on button and wheel-up
 | --- | --- | --- |
 | `"alt+left"` | `move-window` |  |
 | `"alt+shift+left"` | `move-snapped-windows` |  |
-| `"alt+right"` | `resize-window` |  |
-| `"alt+shift+right"` | `resize-window-snapped` |  |
-| `"alt+middle"` | `fit-window` |  |
+| `"alt+right"` | `resize-window-snapped` |  |
+| `"alt+shift+right"` | `resize-window` |  |
+| `"alt+middle"` | `fill-window` |  |
 | `"alt+shift+middle"` | `fit-window-snapped` |  |
 | `"mod+middle"` | `toggle-fullscreen` |  |
 
@@ -979,7 +972,7 @@ Any action from the [keybindings] Actions list also works on button and wheel-up
 | Binding | Action | Notes |
 | --- | --- | --- |
 | `"mod+left"` | `pan-viewport` |  |
-| `"mod+ctrl+left"` | `center-nearest` | direction from drag delta |
+| `"mod+ctrl+left"` | `focus-nearest` | direction from drag delta; center-nearest parks each target instead |
 | `"mod+trackpad-scroll"` | `pan-viewport` |  |
 | `"mod+wheel-scroll"` | `zoom` |  |
 
@@ -1031,13 +1024,13 @@ Threshold actions: any action from the [keybindings] Actions list. center-neares
 
 | Binding | Action | Notes |
 | --- | --- | --- |
-| `"alt+3-finger-swipe"` | `resize-window` |  |
-| `"alt+shift+3-finger-swipe"` | `resize-window-snapped` |  |
+| `"alt+3-finger-swipe"` | `resize-window-snapped` |  |
+| `"alt+shift+3-finger-swipe"` | `resize-window` |  |
 | `"3-finger-doubletap-swipe"` | `move-window` |  |
-| `"alt+2-finger-pinch-in"` | `fit-window` |  |
-| `"alt+2-finger-pinch-out"` | `fit-window` |  |
-| `"alt+shift+2-finger-pinch-in"` | `fit-window-snapped` |  |
-| `"alt+shift+2-finger-pinch-out"` | `fit-window-snapped` |  |
+| `"alt+2-finger-pinch-in"` | `fit-window-snapped` |  |
+| `"alt+2-finger-pinch-out"` | `fit-window-snapped` |  |
+| `"alt+shift+2-finger-pinch-in"` | `fit-window` |  |
+| `"alt+shift+2-finger-pinch-out"` | `fit-window` |  |
 | `"alt+3-finger-pinch-in"` | `toggle-fullscreen` |  |
 | `"alt+3-finger-pinch-out"` | `toggle-fullscreen` |  |
 
@@ -1049,11 +1042,13 @@ Threshold actions: any action from the [keybindings] Actions list. center-neares
 
 ## `[gestures.anywhere]`
 
+The mod+3-finger lines repeat the 4-finger swipe, pinches and hold, for small trackpads where four fingers are cramped.
+
 | Binding | Action | Notes |
 | --- | --- | --- |
 | `"3-finger-swipe"` | `pan-viewport` | continuous (per-frame dx/dy) |
-| `"4-finger-swipe"` | `center-nearest` | threshold (accumulate, detect direction, fire once) |
-| `"mod+3-finger-swipe"` | `center-nearest` | mod makes 3-finger swipe navigate too |
+| `"4-finger-swipe"` | `focus-nearest` | threshold (accumulate, detect direction, fire once); center-nearest parks each target instead |
+| `"mod+3-finger-swipe"` | `focus-nearest` |  |
 
 **Example: per-direction overrides (threshold only)**
 
@@ -1073,8 +1068,8 @@ Threshold actions: any action from the [keybindings] Actions list. center-neares
 | `"4-finger-pinch-out"` | `home-toggle` | threshold |
 | `"mod+3-finger-pinch-in"` | `zoom-to-fit` |  |
 | `"mod+3-finger-pinch-out"` | `home-toggle` |  |
-| `"4-finger-hold"` | `center-window` | fires on release |
-| `"mod+3-finger-hold"` | `center-window` |  |
+| `"4-finger-hold"` | `focus-center` | fires on release |
+| `"mod+3-finger-hold"` | `focus-center` |  |
 
 ## `[touch]`
 
@@ -1169,10 +1164,10 @@ Continuous and threshold actions: the same sets and rules as under [gestures].
 | --- | --- | --- |
 | `"3-finger-swipe"` | `pan-viewport` | continuous |
 | `"3-finger-pinch"` | `zoom` | continuous |
-| `"4-finger-swipe"` | `center-nearest` | threshold (direction from drag) |
+| `"4-finger-swipe"` | `focus-nearest` | threshold (direction from drag); center-nearest parks each target instead |
 | `"4-finger-pinch-in"` | `zoom-to-fit` | threshold |
 | `"4-finger-pinch-out"` | `home-toggle` | threshold |
-| `"5-finger-swipe"` | `center-nearest` | threshold (direction from drag) |
+| `"5-finger-swipe"` | `focus-nearest` | threshold (direction from drag) |
 | `"5-finger-pinch-in"` | `zoom-to-fit` | threshold |
 | `"5-finger-pinch-out"` | `home-toggle` | threshold |
 | `"3-finger-tap"` | `center-window` |  |

@@ -35,12 +35,7 @@ the app; while the relaunch is pending the name reads `<app> launching…`. The
 new window takes over the stand-in's exact geometry and z-order slot.
 
 It's a regular action — bind it in `[keybindings]`, `[mouse]`, `[gestures]`,
-or `[touch]` like any other. There's no default binding:
-
-```toml
-[keybindings]
-"mod+shift+s" = "suspend-window"
-```
+or `[touch]` like any other. The default binding is `mod+shift+q`.
 
 A suspended window differs from a live window in two ways:
 
@@ -97,7 +92,7 @@ Escape hatches, for closes you want to stay real closes:
 
 A logout is the exception, and `restore_windows` — not this flag — is what
 decides it. Windows that were still open come back only if that flag covers
-them; if you want them back, turn it on. Stand-ins are unaffected either way:
+them, as it does by default. Stand-ins are unaffected either way:
 one that already existed is always saved and always comes back, whether an
 explicit `suspend-window` or a `suspend_on_close` conversion left it there.
 
@@ -167,7 +162,7 @@ restore_camera = true
 
 With this on, each output's camera position and zoom are restored across
 restarts too, so your canvas comes back framed exactly where you left it. It's
-off by default — the default config starts every output at its centered camera.
+on by default; with it off, every output starts at its centered camera.
 The flag is read at launch, so flipping it mid-session takes effect on the next
 launch, not immediately. (Cameras are always saved regardless, so turning it on
 later restores what your session had.)
@@ -181,11 +176,12 @@ restore_bookmarks = true
 
 Bookmarks (named canvas points — see `[navigation.bookmarks]` and the
 `go-to-bookmark` / `set-bookmark` / `move-to-bookmark` actions) are a runtime
-registry seeded from config. With this off (the default), the registry resets to
-the config seeds on every launch, so a `set-bookmark` or `driftwm msg bookmark`
-edit lasts only for the session. Turn it on to overlay the saved registry on top
-of the config seeds at launch, so a restored bookmark wins per name and config
-seeds fill the names the save lacks. Like the camera flag, it's read at launch.
+registry seeded from config. With this on (the default), the saved registry is
+overlaid on top of the config seeds at launch, so a restored bookmark wins per
+name and config seeds fill the names the save lacks. With it off, the registry
+resets to the config seeds on every launch, so a `set-bookmark` or `driftwm msg
+bookmark` edit lasts only for the session. Like the camera flag, it's read at
+launch.
 
 ## The session file
 

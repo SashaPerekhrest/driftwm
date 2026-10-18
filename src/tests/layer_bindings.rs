@@ -419,10 +419,10 @@ fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
     );
 }
 
-/// The default `mod+ctrl+left` center-nearest starts its grab over a layer
+/// The default `mod+ctrl+left` focus-nearest starts its grab over a layer
 /// too, and the grab owns the release.
 #[test]
-fn mod_ctrl_drag_over_a_layer_starts_center_nearest() {
+fn mod_ctrl_drag_over_a_layer_starts_focus_nearest() {
     for layer in LAYERS {
         let mut f = Fixture::new();
         let id = pointer_on_layer(&mut f, layer);
@@ -441,7 +441,7 @@ fn mod_ctrl_drag_over_a_layer_starts_center_nearest() {
 
         assert!(
             navigating,
-            "{layer:?}: mod+ctrl+left must start center-nearest over a layer"
+            "{layer:?}: mod+ctrl+left must start focus-nearest over a layer"
         );
         assert_eq!(
             layer_buttons(&mut f, id),

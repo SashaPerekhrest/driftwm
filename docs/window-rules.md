@@ -257,7 +257,7 @@ the result is `true`.
 `pass_mouse` is the same idea for the `[mouse.*]` bindings: a claimed press or
 scroll reaches the app instead of running its compositor action. Apps that want
 `alt`-drag for themselves — Blender, Krita, GIMP, CAD three-button emulation —
-need it, since `alt+left`/`alt+middle`/`alt+right` are the on-window move / fit /
+need it, since `alt+left`/`alt+middle`/`alt+right` are the on-window move / fill /
 resize defaults.
 
 Combo syntax is the `[mouse.*]` binding syntax: modifiers plus one of `left`,

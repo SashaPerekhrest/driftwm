@@ -207,7 +207,6 @@ pub enum ModKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum WindowPlacement {
     /// Center on the active output's viewport (and trigger navigate-to).
-    #[default]
     Center,
     /// Center on the cursor, clamped to the active output's usable canvas rect.
     /// Skips the auto-navigate so the camera stays where the user pointed.
@@ -215,6 +214,7 @@ pub enum WindowPlacement {
     /// Snap-place adjacent to the focused window's cluster: try focused's
     /// edges (CW from viewport-nearest), then BFS to neighbors. Falls back
     /// to `Center` when no focused window or no valid placement was found.
+    #[default]
     Auto,
 }
 
@@ -1064,8 +1064,8 @@ pub struct EffectsConfig {
 impl Default for EffectsConfig {
     fn default() -> Self {
         Self {
-            blur_radius: 2,
-            blur_strength: 1.1,
+            blur_radius: 5,
+            blur_strength: 1.5,
             animate_blur_fps: 20,
             animation_speed: 0.5,
             animation_scale: 0.95,
@@ -1120,8 +1120,8 @@ pub struct DecorationConfig {
 impl Default for DecorationConfig {
     fn default() -> Self {
         Self {
-            bg_color: [0x30, 0x30, 0x30, 0xFF],
-            fg_color: [0xFF, 0xFF, 0xFF, 0xFF],
+            bg_color: [0xFF, 0xFF, 0xFF, 0xFF],
+            fg_color: [0x33, 0x33, 0x33, 0xFF],
             corner_radius: 10,
             default_mode: DecorationMode::Client,
             border_width: 0,
