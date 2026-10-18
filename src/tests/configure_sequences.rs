@@ -1641,7 +1641,8 @@ fn unfill_after_fill_on_fit_restores_the_pre_fit_rect() {
     let fit_loc = f.state().stage.position_of(&a).unwrap();
     f.client(id).window(&a_surface).format_recent_configures();
 
-    // A neighbor inside the fit rect forces a real (non-no-op) fill.
+    // A neighbor inside the fit rect forces a real (non-no-op) fill, whatever
+    // the outer gap.
     let _b_surface = map_settled(&mut f, id, "b", (300, 800));
     let b = window_by_app_id(&mut f, "b").unwrap();
     f.state().map_window(

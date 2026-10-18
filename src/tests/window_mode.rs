@@ -137,7 +137,7 @@ fn fitting_then_filling_reports_fill_not_fit() {
 
     // A neighbour straddling the fit rect's right edge, so the fill that
     // follows has somewhere to shrink from (see the module doc comment on why
-    // an empty canvas can't exercise this transition).
+    // an empty canvas can't always exercise this transition).
     map_window(&mut f, id, "blocker", (300, 300));
     let blocker = window_by_app_id(&mut f, "blocker").unwrap();
     f.state().map_window(blocker, Point::from((900, 0)), false);

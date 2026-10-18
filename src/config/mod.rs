@@ -229,8 +229,8 @@ pub struct Config {
     pub zoom_interact_min: f64,
     pub snap_enabled: bool,
     pub snap_gap: f64,
-    /// Inset from the usable area's edge to a filled or parked window's title
-    /// bar / content edge.
+    /// Inset from the usable area's edge to a window's title bar / content edge
+    /// under fill, parking, focus-nearest's reveal and resize-to-snap's stop.
     pub snap_outer_gap: f64,
     pub snap_distance: f64,
     pub snap_break_force: f64,

@@ -143,11 +143,20 @@ fn fit_with_no_border_lands_frame_and_content_flush_whatever_the_outer_gap() {
     );
 }
 
-/// A cluster fit grows the window to the same edge-to-edge rect, pushing its
-/// neighbour along, whatever `outer_gap`.
+/// A cluster fit grows the window to the same edge-to-edge rect, its border
+/// hanging past the usable area, and pushes its neighbour along to stay docked
+/// to that frame, whatever `outer_gap`.
 #[test]
 fn a_cluster_fit_covers_the_usable_area_whatever_the_outer_gap() {
-    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 20.0\n"));
+    let mut f = Fixture::with_config(config(
+        r#"
+        [snap]
+        outer_gap = 20.0
+
+        [decorations]
+        border_width = 4
+        "#,
+    ));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -157,16 +166,16 @@ fn a_cluster_fit_covers_the_usable_area_whatever_the_outer_gap() {
     map_window(&mut f, id, "b", (300, 300));
     let neighbour = window_by_app_id(&mut f, "b").unwrap();
     let gap = f.state().config.snap_gap as i32;
+    let bw = 4;
     f.state()
         .map_window(window.clone(), Point::from((900, 300)), false);
     f.state().map_window(
         neighbour.clone(),
-        Point::from((900 + 400 + gap, 300)),
+        Point::from((900 + 400 + 2 * bw + gap, 300)),
         false,
     );
     settle(&mut f);
     tick_until_settled(&mut f);
-    let docked = f.state().stage.position_of(&neighbour).unwrap();
 
     f.state().fit_window_snapped(&window);
     f.double_roundtrip(id);
@@ -175,22 +184,24 @@ fn a_cluster_fit_covers_the_usable_area_whatever_the_outer_gap() {
     f.state().tick_window_animations(TICK);
     settle(&mut f);
 
-    assert_ne!(
-        f.state().stage.position_of(&neighbour).unwrap(),
-        docked,
-        "precondition: the fit pushed the neighbour along"
-    );
     let usable = f.state().get_usable_area();
     let content = content_screen_rect(&mut f, &window);
     assert_rect_eq(content, usable, "content must span the usable area exactly");
+    let fitted = f.state().stage.position_of(&window).unwrap();
+    let fitted_w = window.geometry().size.w;
+    assert_eq!(
+        f.state().stage.position_of(&neighbour).unwrap().x,
+        fitted.x + fitted_w + 2 * bw + gap,
+        "the neighbour stays docked a gap off the fitted frame"
+    );
 }
 
 /// A panel's exclusive zone shrinks the usable area fit reads from, not the
-/// bare output rect: at `outer_gap = 0` the content edge tracks that shrunk
-/// area, landing at the panel's own bottom edge.
+/// bare output rect: the content edge tracks that shrunk area, landing at the
+/// panel's own bottom edge, whatever `outer_gap`.
 #[test]
 fn fit_respects_a_panels_exclusive_zone_not_the_bare_output_rect() {
-    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 0.0\n"));
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 20.0\n"));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -256,6 +267,11 @@ fn fill_on_a_lone_window_lands_content_on_the_usable_area() {
 #[test]
 fn fill_on_a_lone_window_stops_the_default_12_px_in() {
     let mut f = Fixture::new();
+    assert_eq!(
+        f.state().config.snap_outer_gap,
+        12.0,
+        "precondition: the default outer_gap"
+    );
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
 
@@ -279,7 +295,6 @@ fn fill_on_a_lone_window_stops_the_default_12_px_in() {
         expected,
         "a lone window's fill must stop 12px in from the usable area",
     );
-    assert_eq!(f.state().config.snap_outer_gap, 12.0);
 }
 
 /// An odd content height (no SSD bar to balance it) can leave the pre-round
