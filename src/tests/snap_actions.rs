@@ -234,11 +234,20 @@ fn move_to_snap_skips_a_side_dock_that_lands_on_a_window() {
     let id = f.add_client();
     window_at(&mut f, id, "a", (1000, 100), (400, 300));
     let (b, _) = window_at(&mut f, id, "b", (1000, 412), (400, 300));
-    // Docked left of `b`, in the slot a's side dock offers.
+    focus(&mut f, &b);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+    act(&mut f, Action::MoveToSnap(Direction::Left));
+    assert_eq!(
+        window_position(&mut f, &b),
+        Point::from((588, 412)),
+        "precondition: a's side dock"
+    );
+    act(&mut f, Action::MoveToSnap(Direction::Right));
+
+    // Docked left of `b`, in that slot.
     window_at(&mut f, id, "c", (588, 412), (400, 300));
     focus(&mut f, &b);
     park_view(&mut f, Point::from((0.0, 0.0)));
-
     act(&mut f, Action::MoveToSnap(Direction::Left));
     assert_eq!(
         window_position(&mut f, &b),
@@ -481,6 +490,23 @@ fn resize_to_snap_grows_over_a_window_it_already_overlaps() {
 
     act(&mut f, Action::ResizeToSnap(Direction::Right));
     assert_eq!(last_configured(&mut f, id, &surface), (1808, 300));
+}
+
+/// A window diagonally ahead isn't in the way: the edge walks on to its far
+/// edge rather than docking short of it.
+#[test]
+fn resize_to_snap_grows_past_a_window_diagonally_ahead() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
+    // Below and right of `a`, offering its right edge at 1100 as an alignment.
+    window_at(&mut f, id, "c", (700, 412), (400, 300));
+    focus(&mut f, &a);
+    park_view(&mut f, Point::from((0.0, 0.0)));
+
+    act(&mut f, Action::ResizeToSnap(Direction::Right));
+    assert_eq!(last_configured(&mut f, id, &surface), (1000, 300));
 }
 
 /// A cell-rounding client answers short of the stop or past it; the walk goes
