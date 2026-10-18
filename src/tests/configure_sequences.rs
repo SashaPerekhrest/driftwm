@@ -17,12 +17,19 @@ use super::{
     window_by_app_id,
 };
 
-/// The inset fit and fill keep from the usable area is zero by default, which
-/// collapses these tests' arithmetic into the output rect. They set it
-/// explicitly so the inset stays visible in what the client is configured with.
+/// The inset fill keeps from the usable area, set explicitly so these tests'
+/// arithmetic in what the client is configured with doesn't follow the default.
 fn config_outer_gap() -> Config {
     let mut config = Config::default();
     config.snap_outer_gap = 12.0;
+    config
+}
+
+/// No inset at all, so a lone window's fill rect is the fit rect: the
+/// usable area edge to edge.
+fn config_no_outer_gap() -> Config {
+    let mut config = Config::default();
+    config.snap_outer_gap = 0.0;
     config
 }
 
@@ -1478,7 +1485,7 @@ fn fit_and_settle(
 /// overlap instead of refusing to touch a fit (maximized) window.
 #[test]
 fn fill_on_fit_window_with_a_neighbor_fires() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1536,16 +1543,16 @@ fn fill_on_fit_window_with_a_neighbor_fires() {
     );
 }
 
-/// With nothing else in view, and the camera genuinely settled on the fit's
-/// own target (not merely animating toward it), a fit window already fills
-/// its usable space — fill must leave it untouched.
+/// With nothing else in view, no outer gap, and the camera genuinely settled
+/// on the fit's own target (not merely animating toward it), a fit window
+/// already fills its usable space — fill must leave it untouched.
 ///
 /// The exact no-op needs the fit's canvas rect and its camera to land on the
 /// same integers, which `compute_fit_geometry` gets by rounding the camera.
 /// The sibling below repeats the check with an odd pre-fit size.
 #[test]
 fn fill_on_lone_fit_window_with_settled_camera_is_inert() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1584,7 +1591,7 @@ fn fill_on_lone_fit_window_with_settled_camera_is_inert() {
 /// on whole pixels too, so fill has nothing to close there either.
 #[test]
 fn fill_on_lone_odd_fit_window_with_settled_camera_is_inert() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1764,7 +1771,7 @@ fn config_ssd() -> Config {
     config.decorations.default_mode = DecorationMode::Server;
     config.decorations.border_width = 5;
     // A non-zero outer gap is what makes the border's own contribution to the
-    // inset legible below; at the default 0 the two are indistinguishable.
+    // inset legible below; at 0 the two are indistinguishable.
     config.snap_outer_gap = 12.0;
     config
 }

@@ -251,6 +251,37 @@ fn fill_on_a_lone_window_lands_content_on_the_usable_area() {
     );
 }
 
+/// The default `outer_gap` is 12, and a lone window's fill stops that far in
+/// from the usable area on every side — the maximize with a margin.
+#[test]
+fn fill_on_a_lone_window_stops_the_default_12_px_in() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    // As above: fill before anything moves the camera off the window.
+    let surface = map_window(&mut f, id, "a", (800, 600));
+    let window = window_by_app_id(&mut f, "a").unwrap();
+
+    f.state().fill_window(&window);
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &surface);
+    f.double_roundtrip(id);
+
+    let usable = f.state().get_usable_area();
+    let content = content_screen_rect(&mut f, &window);
+    let expected = Rectangle::new(
+        Point::from((usable.loc.x + 12, usable.loc.y + 12)),
+        Size::from((usable.size.w - 24, usable.size.h - 24)),
+    );
+    assert_rect_eq(
+        content,
+        expected,
+        "a lone window's fill must stop 12px in from the usable area",
+    );
+    assert_eq!(f.state().config.snap_outer_gap, 12.0);
+}
+
 /// An odd content height (no SSD bar to balance it) can leave the pre-round
 /// camera on a half-pixel value; it must still land on a whole pixel, with
 /// the content edge exactly on `usable.loc`.

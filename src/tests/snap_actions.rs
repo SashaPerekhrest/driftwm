@@ -363,7 +363,9 @@ fn move_to_snap_during_a_zoom_out_leaves_a_stop_the_view_lands_on_alone() {
 /// `focus_placement` decides where the window lands on screen.
 #[test]
 fn move_to_snap_reveals_a_far_stop_on_the_focus_placement_point() {
-    let mut f = Fixture::with_config(config("focus_placement = \"left\"\n"));
+    let mut f = Fixture::with_config(config(
+        "focus_placement = \"left\"\n[snap]\nouter_gap = 0.0\n",
+    ));
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let (a, _) = window_at(&mut f, id, "a", (100, 100), (400, 300));
@@ -741,7 +743,7 @@ fn move_to_snap_during_fullscreen_measures_the_restored_window() {
 
 #[test]
 fn resize_to_snap_leaves_a_window_outside_the_viewport_alone() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 0.0\n"));
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));
@@ -797,7 +799,9 @@ fn a_stand_in_moves_down_by_its_frame_and_lands_its_body_below_the_bar() {
 
 #[test]
 fn a_border_widens_the_frames_the_stops_measure() {
-    let mut f = Fixture::with_config(config("[decorations]\nborder_width = 2\n"));
+    let mut f = Fixture::with_config(config(
+        "[snap]\nouter_gap = 0.0\n[decorations]\nborder_width = 2\n",
+    ));
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
     let (a, surface) = window_at(&mut f, id, "a", (100, 100), (400, 300));

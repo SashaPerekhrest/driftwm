@@ -538,9 +538,10 @@ fn center_nearest_inherits_focus_placement() {
     );
 }
 
-/// `fit-window` still fills the whole viewport (gap-inset on every side)
-/// under a non-center placement, and its camera lands on the plain viewport
-/// center — fit is excluded from `focus_placement` entirely.
+/// `fit-window` still fills the whole viewport (edge to edge, the default
+/// `outer_gap` notwithstanding) under a non-center placement, and its camera
+/// lands on the plain viewport center — fit is excluded from `focus_placement`
+/// entirely.
 #[test]
 fn fit_window_ignores_focus_placement_and_still_fills_the_viewport() {
     let mut f = Fixture::with_config(config(r#"focus_placement = "left""#));
@@ -558,26 +559,25 @@ fn fit_window_ignores_focus_placement_and_still_fills_the_viewport() {
     adopt_last_configure(&mut f, id, &surface);
     settle(&mut f);
 
-    let gap = f.state().config.snap_outer_gap;
     let usable = f.state().get_usable_area();
     let elem = StageWindow::Client(window.clone());
     let (x_low, y_low, x_high, y_high) = screen_edges(&mut f, &elem);
 
     assert!(
-        (x_low - (usable.loc.x as f64 + gap)).abs() < 1.0,
-        "left edge at the gap, not shifted further left by the placement"
+        (x_low - usable.loc.x as f64).abs() < 1.0,
+        "left edge on the usable edge, not shifted further left by the placement"
     );
     assert!(
-        (x_high - (usable.loc.x as f64 + usable.size.w as f64 - gap)).abs() < 1.0,
-        "right edge also at the gap — a full fill, not a left-pinned frame"
+        (x_high - (usable.loc.x as f64 + usable.size.w as f64)).abs() < 1.0,
+        "right edge also on the usable edge — a full fill, not a left-pinned frame"
     );
     assert!(
-        (y_low - (usable.loc.y as f64 + gap)).abs() < 1.0,
-        "top edge at the gap"
+        (y_low - usable.loc.y as f64).abs() < 1.0,
+        "top edge on the usable edge"
     );
     assert!(
-        (y_high - (usable.loc.y as f64 + usable.size.h as f64 - gap)).abs() < 1.0,
-        "bottom edge at the gap"
+        (y_high - (usable.loc.y as f64 + usable.size.h as f64)).abs() < 1.0,
+        "bottom edge on the usable edge"
     );
 
     let pos = f.state().stage.position_of(&window).unwrap();

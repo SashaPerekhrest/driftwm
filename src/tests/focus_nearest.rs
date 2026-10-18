@@ -593,7 +593,7 @@ fn a_walk_steps_on_past_a_window_too_tall_to_show_whole() {
 /// next step walks on from it.
 #[test]
 fn a_frame_revealed_flush_at_a_fractional_zoom_reads_as_on_screen() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config("[snap]\nouter_gap = 0.0\n"));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();

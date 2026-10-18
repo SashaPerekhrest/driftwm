@@ -612,13 +612,13 @@ fn toml_snap_renamed_keys_are_migration_errors_not_fatal() {
 }
 
 #[test]
-fn toml_outer_gap_omitted_defaults_to_zero_not_gap() {
+fn toml_outer_gap_omitted_defaults_to_12_not_gap() {
     let toml = r#"
         [snap]
         gap = 20.0
     "#;
     let config = Config::from_toml(toml).unwrap();
-    assert_eq!(config.snap_outer_gap, 0.0);
+    assert_eq!(config.snap_outer_gap, 12.0);
 }
 
 #[test]

@@ -495,7 +495,7 @@ spacing kept between windows, in canvas px — snapping, auto placement, cluster
 
 ### `outer_gap`
 
-Default: `0.0`
+Default: `12.0`
 
 inset from the usable area's edge to a window's title bar or content edge (border outside), in canvas px — fill-window, focus_placement and focus-nearest measure it, so fill-window on a lone window is a maximize with this margin; 0 is edge to edge
 

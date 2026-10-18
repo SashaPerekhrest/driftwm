@@ -1185,7 +1185,7 @@ impl Config {
             snap_enabled: raw.snap.enabled.unwrap_or(true),
             snap_gap: non_negative(raw.snap.gap.unwrap_or(12.0), "snap.gap", &mut errors),
             snap_outer_gap: non_negative(
-                raw.snap.outer_gap.unwrap_or(0.0),
+                raw.snap.outer_gap.unwrap_or(12.0),
                 "snap.outer_gap",
                 &mut errors,
             ),
