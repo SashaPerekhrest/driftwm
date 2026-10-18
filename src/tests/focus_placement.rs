@@ -538,10 +538,9 @@ fn center_nearest_inherits_focus_placement() {
     );
 }
 
-/// `fit-window` still fills the whole viewport (edge to edge, the default
-/// `outer_gap` notwithstanding) under a non-center placement, and its camera
-/// lands on the plain viewport center — fit is excluded from `focus_placement`
-/// entirely.
+/// `fit-window` still fills the whole viewport (edge to edge, ignoring
+/// `outer_gap`) under a non-center placement, and its camera lands on the
+/// plain viewport center — fit is excluded from `focus_placement` entirely.
 #[test]
 fn fit_window_ignores_focus_placement_and_still_fills_the_viewport() {
     let mut f = Fixture::with_config(config(r#"focus_placement = "left""#));

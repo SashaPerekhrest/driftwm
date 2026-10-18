@@ -143,9 +143,9 @@ fn fit_with_no_border_lands_frame_and_content_flush_whatever_the_outer_gap() {
     );
 }
 
-/// A cluster fit grows the window to the same edge-to-edge rect, its border
-/// hanging past the usable area, and pushes its neighbour along to stay docked
-/// to that frame, whatever `outer_gap`.
+/// A cluster fit grows the window edge to edge, its border hanging past the
+/// usable area, and pushes its neighbour along to stay docked to that frame,
+/// whatever `outer_gap`.
 #[test]
 fn a_cluster_fit_covers_the_usable_area_whatever_the_outer_gap() {
     let mut f = Fixture::with_config(config(
@@ -262,8 +262,8 @@ fn fill_on_a_lone_window_lands_content_on_the_usable_area() {
     );
 }
 
-/// The default `outer_gap` is 12, and a lone window's fill stops that far in
-/// from the usable area on every side — the maximize with a margin.
+/// A lone window's fill stops the default 12px `outer_gap` in from the usable
+/// area on every side.
 #[test]
 fn fill_on_a_lone_window_stops_the_default_12_px_in() {
     let mut f = Fixture::new();
@@ -275,7 +275,8 @@ fn fill_on_a_lone_window_stops_the_default_12_px_in() {
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
 
-    // As above: fill before anything moves the camera off the window.
+    // Fill no-ops on a window off the active viewport, so fill before any
+    // camera move.
     let surface = map_window(&mut f, id, "a", (800, 600));
     let window = window_by_app_id(&mut f, "a").unwrap();
 

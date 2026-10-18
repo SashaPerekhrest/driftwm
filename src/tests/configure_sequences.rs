@@ -17,8 +17,8 @@ use super::{
     window_by_app_id,
 };
 
-/// The inset fill keeps from the usable area, set explicitly so these tests'
-/// arithmetic in what the client is configured with doesn't follow the default.
+/// Pins fill's inset at 12, so the sizes these tests expect configured don't
+/// track the default.
 fn config_outer_gap() -> Config {
     let mut config = Config::default();
     config.snap_outer_gap = 12.0;

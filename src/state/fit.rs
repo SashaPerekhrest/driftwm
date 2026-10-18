@@ -56,10 +56,9 @@ impl DriftWm {
     fn compute_fit_geometry(&self, window: &Window) -> FitGeometry {
         let usable = self.get_usable_area();
         let chrome = self.element_chrome(window);
-        // Edge to edge whatever `outer_gap` says — fill is the maximize with a
-        // margin. The bar/content edge lands on the usable area's, so the frame
-        // hangs one border past it and the content inside gives up the whole
-        // chrome.
+        // Edge to edge regardless of `outer_gap`, which is fill's margin. The
+        // bar/content edge lands on the usable area's, so the frame hangs one
+        // border past it and the content inside gives up the whole chrome.
         let border = chrome.border;
         let target_size = chrome.content_size(Size::from((
             usable.size.w + 2 * border,
