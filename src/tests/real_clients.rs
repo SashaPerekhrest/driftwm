@@ -97,6 +97,11 @@ fn real_client_over_ipc() {
         .iter()
         .find(|w| !w.app_id.is_empty())
         .expect("a window with an app_id must be listed");
+    assert_eq!(
+        window.pid,
+        Some(child.0.id()),
+        "pid must be the client process's, not the compositor's"
+    );
     let id = window.id;
     eprintln!(
         "real_client_over_ipc: State -> #{id} app_id='{}' at {:?}",
