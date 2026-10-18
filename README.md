@@ -42,7 +42,7 @@ flick carries the viewport smoothly until friction stops it.
 | Mouse wheel        | Zoom              | on-canvas |
 | `Mod` + scroll     | Zoom at cursor    | anywhere  |
 | `Mod+=` / `Mod+-`  | Zoom in / out     | —         |
-| `Mod+0` / `Mod+Z`  | Reset zoom to 1.0 | —         |
+| `Mod+0`            | Reset zoom to 1.0 | —         |
 
 </details>
 
@@ -60,15 +60,16 @@ spots the camera jumps straight to.
 
 | Input                        | Action                                                            |
 | ---------------------------- | ----------------------------------------------------------------- |
-| 4-finger swipe               | Jump to nearest window (natural direction)                        |
-| `Mod+Ctrl` + LMB drag        | Jump to nearest window (natural direction)                        |
 | `Mod` + arrow                | Focus nearest window in direction; scrolls just enough to show it |
+| 4-finger swipe               | Focus nearest window (natural direction)                          |
+| `Mod+Ctrl` + LMB drag        | Focus nearest window (natural direction)                          |
 | `Alt-Tab` / `Alt-Shift-Tab`  | Cycle windows (MRU)                                               |
 | 4-finger pinch in / `Mod+W`  | Zoom-to-fit (overview)                                            |
 | 4-finger pinch out / `Mod+A` | Home toggle (origin and back)                                     |
-| 4-finger hold / `Mod+C`      | Center focused window                                             |
+| 4-finger hold / `Mod+X`      | Center and focus the window under the pointer                     |
+| `Mod+C`                      | Center focused window                                             |
 | `Mod+1-4`                    | Jump to bookmarked canvas position                                |
-| `Mod+Shift+1-4`              | Save the current position as that bookmark                        |
+| `Mod+Ctrl+1-4`               | Save the current position as that bookmark                        |
 
 All 4-finger navigation gestures also work as `Mod` + 3-finger for smaller
 trackpads.
@@ -81,34 +82,38 @@ https://github.com/user-attachments/assets/6bfc3458-664f-4746-a176-18f40337d94d
 
 Move window with 3-finger doubletap-swipe or `Alt` + drag. Resize with `Alt` + 3-finger swipe. Snapping kicks in as edges approach each other. Drag past the viewport edge and the canvas auto-pans.
 
-**Snapped windows form a cluster.** Neighbors stay visible at your view's edge for spatial context, and `Shift` + any move/resize/fit action acts on the whole cluster. Shuffle a layout in one drag, resize a row of panes proportionally, or scope an overview to just the cluster (`Mod+Shift+W`). No explicit grouping to manage.
+**Snapped windows form a cluster.** Neighbors stay visible at your view's edge for spatial context. Resizing and fitting keep the cluster intact, and `Shift` acts on the window alone; moving takes one window, and `Shift` carries the whole cluster. Shuffle a layout in one drag, resize a row of panes proportionally, or scope an overview to just the cluster (`Mod+Shift+W`). No explicit grouping to manage.
 
 > [!TIP]
 > While dragging a window, keyboard shortcuts still work. Use `Mod+1-4`
 > to jump to a bookmark or `Mod+A` to go home — your held window comes with you.
 
 Fit-window (`Mod+M`) is the maximize analogue — centers the viewport, resets
-zoom to 1.0, and resizes the window to fill the screen. Toggle again to
-restore. Fullscreen (`Mod+F`) fills the screen with the focused window until any
-canvas action — launching an app, navigating — exits it.
+zoom to 1.0, and resizes the window to fill the screen, its snapped neighbors
+moving out to stay attached. Toggle again to restore. Fullscreen (`Mod+F`)
+fills the screen with the focused window until any canvas action — launching
+an app, navigating — exits it.
 
 <details><summary><b>Snapping &amp; window bindings</b></summary>
 
-| Input                                     | Action                        |
-| ----------------------------------------- | ----------------------------- |
-| 3-finger doubletap-swipe                  | Move window                   |
-| `Alt` + LMB drag                          | Move window                   |
-| `Alt+Shift` + LMB drag                    | Move snapped windows          |
-| `Alt` + 3-finger swipe                    | Resize window                 |
-| `Alt+Shift` + 3-finger swipe              | Resize snapped window         |
-| `Alt` + RMB drag                          | Resize window                 |
-| `Alt` + MMB click / `Mod+M`               | Fit window (maximize/restore) |
-| `Alt+Shift` + MMB click / `Mod+Shift+M`   | Fit snapped window            |
-| `Mod` + 4-finger pinch in / `Mod+Shift+W` | Zoom-to-fit snapped windows   |
-| `Alt` + 2-finger pinch in/out             | Fit window                    |
-| `Alt` + 3-finger pinch in/out             | Toggle fullscreen             |
-| `Mod` + MMB click / `Mod+F`               | Toggle fullscreen             |
-| `Mod+Shift` + arrow                       | Move to the next snap stop    |
+| Input                                     | Action                                |
+| ----------------------------------------- | ------------------------------------- |
+| 3-finger doubletap-swipe                  | Move window                           |
+| `Alt` + LMB drag                          | Move window                           |
+| `Alt+Shift` + LMB drag                    | Move snapped windows                  |
+| `Alt` + 3-finger swipe                    | Resize snapped window                 |
+| `Alt+Shift` + 3-finger swipe              | Resize window                         |
+| `Alt` + RMB drag                          | Resize snapped window                 |
+| `Alt+Shift` + RMB drag                    | Resize window                         |
+| `Alt+Shift` + MMB click / `Mod+M`         | Fit snapped window (maximize/restore) |
+| `Mod+Shift+M`                             | Fit window                            |
+| `Alt` + MMB click                         | Fill free space (press again to undo) |
+| `Mod` + 4-finger pinch in / `Mod+Shift+W` | Zoom-to-fit snapped windows           |
+| `Alt` + 2-finger pinch in/out             | Fit snapped window                    |
+| `Alt+Shift` + 2-finger pinch in/out       | Fit window                            |
+| `Alt` + 3-finger pinch in/out             | Toggle fullscreen                     |
+| `Mod` + MMB click / `Mod+F`               | Toggle fullscreen                     |
+| `Mod+Shift` + arrow                       | Move to the next snap stop            |
 
 </details>
 
@@ -129,7 +134,7 @@ trackpad.
 | 3-finger swipe           | Pan viewport                | anywhere  |
 | 2-finger pinch           | Zoom                        | on-canvas |
 | 3-finger pinch           | Zoom                        | anywhere  |
-| 4-finger swipe           | Jump to nearest window      | anywhere  |
+| 4-finger swipe           | Focus nearest window        | anywhere  |
 | 4-finger pinch in / out  | Zoom-to-fit / home toggle   | anywhere  |
 | 3-finger tap             | Center window               | anywhere  |
 | 3-finger double-tap      | Fit window                  | on-window |
@@ -233,10 +238,10 @@ workspaces; driftwm is still one canvas.
 https://github.com/user-attachments/assets/a91d92bd-55af-4646-8be8-81f35f8f38ca
 
 Close a window and leave a placeholder behind instead of losing it:
-`suspend-window` swaps the window for a compositor-drawn stand-in at the same
-canvas spot — press `Enter` or click its name to bring the app right back, in
-the same place. `suspend_on_close` does this automatically for every
-client-initiated close. `[session].restore_windows` keeps your whole canvas saved
+`suspend-window` (`Mod+Shift+Q`) swaps the window for a compositor-drawn
+stand-in at the same canvas spot — press `Enter` or click its name to bring the
+app right back, in the same place. `suspend_on_close` does this automatically
+for every client-initiated close. `[session].restore_windows` keeps your whole canvas saved
 as you work and restores it (dormant, nothing auto-launches) on the next start,
 with `restore_camera` bringing each output's view back too.
 
@@ -244,10 +249,10 @@ See [docs/session.md](docs/session.md).
 
 ### Everything else
 
-- New window placement: in viewport center (default), under cursor, or snapped adjacent to whatever is in view
+- New window placement: snapped adjacent to whatever is in view (default), in viewport center, or under cursor
 - Click-to-focus (default) or focus-follows-mouse (sloppy focus)
 - Hot corners: any keybinding action fires when the cursor reaches a screen corner, configured per monitor
-- Cursor edge-pan: push the pointer against a screen edge and the viewport pans, toggled with `Mod+E`
+- Cursor edge-pan: push the pointer against a screen edge and the viewport pans, toggled with the `toggle-cursor-pan` action
 - Session lock and idle notification
 - Screen capture: screencasting (OBS, Firefox, Discord) and screenshots, incl. built-in [canvas/DPI capture](docs/ipc.md#screenshots)
 - 40+ Wayland protocols

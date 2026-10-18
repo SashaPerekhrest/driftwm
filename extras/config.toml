@@ -1,7 +1,7 @@
 # driftwm — example "home dashboard" rice
 #
 # An opinionated starting point: a single Quickshell dashboard pinned at the
-# canvas origin (your "home"), plus power-canvas defaults. Install with
+# canvas origin (your "home"), plus the shell around it. Install with
 # `extras/install.sh`. Everything here is optional — `config.reference.toml`
 # documents every setting, and partial configs merge with built-in defaults, so
 # trim this to taste.
@@ -18,14 +18,6 @@ autostart = [
 # Pairs with hover -> `mod+c` / 4-finger hold to target windows when zoomed out.
 focus_follows_mouse = true
 
-# Place a new window adjacent to the focused window's cluster.
-window_placement = "auto"
-
-[session]
-# Closed-at-logout windows come back suspended; the camera returns where it was.
-restore_windows = true
-restore_camera = true
-
 # The dot grid is the default. For an image that scrolls with the canvas, tile
 # it — `mirror_tile` folds a non-seamless photo so it repeats without seams:
 # [background]
@@ -36,34 +28,13 @@ restore_camera = true
 # type = "shader".
 
 [snap]
-# Extra snap targets (off by default): other windows' corners and centers.
-# corners = true
+# Extra snap target (off by default): other windows' centers.
 # centers = true
-
-[effects]
-# Blur strength under the frosted overlays (swaync, launcher, swayosd) below.
-blur_radius = 5
-blur_strength = 1.5
 
 [navigation]
 # The origin — where the dashboard sits — is a navigation target even with no
 # window there (4-finger swipe / Mod+Arrow toward it).
 anchors = [[0, 0]]
-
-[zoom]
-reset_on_new_window = false
-# Below half zoom a window is too small to use: a click navigates to it instead.
-interact_min = 0.5
-
-[mouse]
-decoration_resize_snapped = true
-decoration_fit_snapped = true
-
-[decorations]
-# Light SSD title bars to match light apps; the shell chrome (dashboard,
-# launcher) is a separate dark layer.
-bg_color = "#ffffff"
-fg_color = "#333333"
 
 # Multiple layouts make the dashboard's layout indicator meaningful (clicking it
 # switches to the next one). Example:
@@ -74,14 +45,9 @@ fg_color = "#333333"
 
 [keybindings]
 "mod+n" = "spawn swaync-client -t"
-"mod+shift+q" = "suspend-window"
 # Spotlight: one search over open windows, suspended windows, and installed
 # apps — it replaces the plain launcher on mod+d.
 "mod+d" = "exec ~/.config/driftwm/scripts/spotlight.sh"
-# Cluster-first: the unshifted key acts on the snapped cluster (the defaults are
-# single-window).
-"mod+m" = "fit-window-snapped"
-"mod+shift+m" = "fit-window"
 # Route media keys through swayosd for on-screen feedback.
 "XF86AudioRaiseVolume" = "spawn swayosd-client --output-volume raise"
 "XF86AudioLowerVolume" = "spawn swayosd-client --output-volume lower"
@@ -91,14 +57,6 @@ fg_color = "#333333"
 # Screenshot the focused window straight to the clipboard.
 "ctrl+print" = "spawn driftwm msg screenshot window -o - | wl-copy"
 "mod+alt+shift+q" = "exec systemctl poweroff"
-
-[mouse.on-window]
-"alt+middle" = "fill-window"
-
-[gestures.on-window]
-# Cluster-first, matching the keybindings above.
-"alt+3-finger-swipe" = "resize-window-snapped"
-"alt+shift+3-finger-swipe" = "resize-window"
 
 # The home dashboard, pinned at the canvas origin. `position` is the window
 # center (Y-up).
