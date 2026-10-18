@@ -197,8 +197,8 @@ pub enum Msg {
         #[arg(long)]
         short: bool,
     },
-    /// Print the pointer position in the global output layout (screen space,
-    /// Y-down, the coordinates layer-shell clients see) and the output it is on.
+    /// Print the pointer position in the global output layout (logical pixels,
+    /// Y-down, the space slurp prints) and the output it is on.
     ///
     /// `--json` reply: `{"Ok":{"Cursor":{"x":2600.5,"y":12.0,"output":"DP-1"}}}`.
     Cursor,

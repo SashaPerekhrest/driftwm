@@ -37,6 +37,11 @@ Pinned and fullscreen windows live in screen space, not on the canvas, so `move`
 refuses to reposition them and `resize` refuses to resize them. Reading either
 still works.
 
+`cursor` is the exception: it reports the pointer in the global output layout,
+the space outputs advertise their positions in and slurp prints — logical pixels
+from the layout's origin, Y pointing down — along with the output it is on. That
+holds on the lock screen too.
+
 `pin` moves a window between the two spaces without moving it visually. Like
 `move`, it refuses a fullscreen window, whose pin reads `false` until fullscreen
 ends; the `toggle-pin-to-screen` action leaves fullscreen first instead.
