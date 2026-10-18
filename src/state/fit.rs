@@ -376,14 +376,33 @@ impl DriftWm {
     }
 
     pub fn unfit_window_snapped(&mut self, window: &Window) {
-        let Some(wl_surface) = window.wl_surface() else {
+        let primary_id = self.stage.id_of(window);
+        if !self.pull_fit_cluster_back(window, primary_id) {
             return;
+        }
+        self.unfit_window(window);
+        // Primary's cache is refreshed by `establish_exit_placement` when the
+        // exit size is unchanged, otherwise by the pending_recenter completion
+        // in `handlers/compositor.rs` once the client acks the exit configure.
+    }
+
+    /// The cluster half of `unfit_window_snapped`: move `window`'s snap cluster
+    /// from its fitted rect to the one its saved size takes at the same visual
+    /// center, the members' slide waiting on `waits_for`'s resize. False, with
+    /// nothing moved, when `window` isn't fit.
+    pub(crate) fn pull_fit_cluster_back(
+        &mut self,
+        window: &Window,
+        waits_for: Option<ElementId>,
+    ) -> bool {
+        let Some(wl_surface) = window.wl_surface() else {
+            return false;
         };
         let Some(saved_size) = self.stage.fit_saved_size(window) else {
-            return;
+            return false;
         };
         let Some(old_loc) = self.stage.position_of(window) else {
-            return;
+            return false;
         };
         // Last configured, not last committed — the cluster deltas below must be
         // measured against the rect the window is actually becoming.
@@ -405,17 +424,13 @@ impl DriftWm {
                 .filter(|w| w != window)
                 .collect()
         };
-        let primary_id = self.stage.id_of(window);
         let old_member_locs = self.cluster_member_positions(&cluster_members);
         self.shift_cluster_around_primary(window, old_rect, new_rect);
-        self.animate_cluster_shift(old_member_locs, primary_id);
-        self.unfit_window(window);
+        self.animate_cluster_shift(old_member_locs, waits_for);
         for member in &cluster_members {
             self.refresh_stable_snap_rect(member);
         }
-        // Primary's cache is refreshed by `establish_exit_placement` when the
-        // exit size is unchanged, otherwise by the pending_recenter completion
-        // in `handlers/compositor.rs` once the client acks the exit configure.
+        true
     }
 
     /// Snapshot each cluster member's pre-shift canvas position, so the shift

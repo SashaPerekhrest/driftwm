@@ -30,6 +30,7 @@ mod config_reload;
 mod configure_sequences;
 mod cycle_windows;
 mod ext_workspace;
+mod fit_close;
 mod focus_center;
 mod focus_nearest;
 mod focus_placement;
