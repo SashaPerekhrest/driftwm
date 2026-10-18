@@ -123,8 +123,7 @@ pub struct StopQuery {
 /// A neighbour overlapping the primary's perpendicular span offers the docks;
 /// one clear of it but within `align_band` offers the alignments instead, and
 /// the docks too with `side_docks`. Never alignments to an overlapping one:
-/// aligning to a window the primary already overlaps perpendicularly would
-/// only z-stack the two.
+/// they would only z-stack the two.
 pub fn stops<'a>(others: &'a [SnapRect], q: &'a StopQuery) -> impl Iterator<Item = Stop> + 'a {
     others.iter().flat_map(move |other| {
         let (other_low, other_high, other_perp_low, other_perp_high) = if q.horizontal {
