@@ -883,22 +883,33 @@ impl DriftWm {
         }
     }
 
+    /// Whether pointer focus still lies in the surface tree of the constraint on
+    /// `surface`. A held button pins focus to its press target, and a dead focus
+    /// waits for the re-pick that replaces it; both count as inside until the
+    /// pull after them decides.
+    pub(crate) fn focus_within_constraint(&self, surface: &WlSurface) -> bool {
+        let pointer = self.seat.get_pointer().unwrap();
+        if self.pointer_grab_kind(&pointer) == PointerGrabKind::Click {
+            return true;
+        }
+        pointer.current_focus().is_some_and(|focus| {
+            !focus.0.is_alive()
+                || find_constraint(&focus.0, &pointer)
+                    .is_some_and(|(constraining, _)| constraining == *surface)
+        })
+    }
+
     /// smithay's leave releases only a constraint on the exact surface the
     /// pointer left, but one set on a window holds over its subsurfaces too.
     /// Checked once focus has settled rather than on leave, which can't tell
-    /// whether focus stays in the window. A dead focus waits for the re-pick
-    /// that replaces it.
+    /// whether focus stays in the window.
     fn release_stranded_constraint(&mut self) {
         let Some(armed) = self.armed_constraint.clone() else {
             return;
         };
-        let pointer = self.seat.get_pointer().unwrap();
-        let held = pointer.current_focus().is_some_and(|focus| {
-            !focus.0.is_alive()
-                || find_constraint(&focus.0, &pointer).is_some_and(|(surface, _)| surface == armed)
-        });
-        if !held {
+        if !self.focus_within_constraint(&armed) {
             self.armed_constraint = None;
+            let pointer = self.seat.get_pointer().unwrap();
             deactivate_constraint(self, &armed, &pointer);
         }
     }

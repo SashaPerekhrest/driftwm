@@ -145,9 +145,9 @@ pub struct State {
     /// Every `idled`/`resumed` this client's idle notifications have received,
     /// oldest first.
     pub idle_events: Vec<IdleEvent>,
-    /// Every `locked`/`unlocked` this client's pointer locks have received,
-    /// oldest first.
-    pub pointer_lock_events: Vec<PointerLockEvent>,
+    /// Every `locked`/`unlocked`/`confined`/`unconfined` this client's pointer
+    /// constraints have received, oldest first.
+    pub constraint_events: Vec<ConstraintEvent>,
     /// Surface-local position carried by every `wl_pointer` enter/motion this
     /// client has received, oldest first.
     pub pointer_positions: Vec<(f64, f64)>,
@@ -337,9 +337,11 @@ pub enum IdleEvent {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PointerLockEvent {
+pub enum ConstraintEvent {
     Locked,
     Unlocked,
+    Confined,
+    Unconfined,
 }
 
 /// A `wl_touch` event, recorded without its payload — these scenarios only
@@ -589,7 +591,7 @@ impl Client {
             session_locks: Vec::new(),
             touch_events: Vec::new(),
             idle_events: Vec::new(),
-            pointer_lock_events: Vec::new(),
+            constraint_events: Vec::new(),
             pointer_positions: Vec::new(),
             pointer_frames: 0,
             pointer_buttons: Vec::new(),
@@ -703,6 +705,16 @@ impl Client {
         size: (u16, u16),
     ) -> WlSurface {
         self.state.create_subsurface(parent, position, size)
+    }
+
+    pub fn create_subsurface_with_role(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> (WlSurface, WlSubsurface) {
+        self.state
+            .create_subsurface_with_role(parent, position, size)
     }
 
     pub fn set_opaque_region(&mut self, surface: &WlSurface, rects: &[(i32, i32, i32, i32)]) {
@@ -1076,6 +1088,17 @@ impl State {
         position: (i32, i32),
         size: (u16, u16),
     ) -> WlSurface {
+        self.create_subsurface_with_role(parent, position, size).0
+    }
+
+    /// [`Self::create_subsurface`], also returning the `wl_subsurface` role
+    /// object, which a client can destroy apart from the surface to detach it.
+    pub fn create_subsurface_with_role(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> (WlSurface, WlSubsurface) {
         let compositor = self.compositor.as_ref().unwrap();
         let subcompositor = self.subcompositor.as_ref().unwrap();
         let viewporter = self.viewporter.as_ref().unwrap();
@@ -1090,7 +1113,7 @@ impl State {
         surface.attach(Some(&buffer), 0, 0);
         surface.commit();
         parent.commit();
-        surface
+        (surface, subsurface)
     }
 
     /// Set `surface`'s pending opaque region to the union of `rects`
@@ -2503,10 +2526,10 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
     ) {
         match event {
             zwp_locked_pointer_v1::Event::Locked => {
-                state.pointer_lock_events.push(PointerLockEvent::Locked)
+                state.constraint_events.push(ConstraintEvent::Locked)
             }
             zwp_locked_pointer_v1::Event::Unlocked => {
-                state.pointer_lock_events.push(PointerLockEvent::Unlocked)
+                state.constraint_events.push(ConstraintEvent::Unlocked)
             }
             _ => unreachable!(),
         }
@@ -2515,7 +2538,7 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
 
 impl Dispatch<ZwpConfinedPointerV1, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &ZwpConfinedPointerV1,
         event: <ZwpConfinedPointerV1 as wayland_client::Proxy>::Event,
         _data: &(),
@@ -2523,8 +2546,12 @@ impl Dispatch<ZwpConfinedPointerV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            zwp_confined_pointer_v1::Event::Confined => (),
-            zwp_confined_pointer_v1::Event::Unconfined => (),
+            zwp_confined_pointer_v1::Event::Confined => {
+                state.constraint_events.push(ConstraintEvent::Confined)
+            }
+            zwp_confined_pointer_v1::Event::Unconfined => {
+                state.constraint_events.push(ConstraintEvent::Unconfined)
+            }
             _ => unreachable!(),
         }
     }
