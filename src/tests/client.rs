@@ -33,6 +33,8 @@ use wayland_client::protocol::wl_registry::{self, WlRegistry};
 use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_shm::{self, WlShm};
 use wayland_client::protocol::wl_shm_pool::WlShmPool;
+use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
+use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::{self, WlSurface};
 use wayland_client::protocol::wl_touch::{self, WlTouch};
 use wayland_client::{Connection, Dispatch, Proxy as _, QueueHandle, WEnum};
@@ -106,6 +108,7 @@ pub struct State {
     pub outputs: HashMap<WlOutput, String>,
 
     pub compositor: Option<WlCompositor>,
+    pub subcompositor: Option<WlSubcompositor>,
     pub xdg_wm_base: Option<XdgWmBase>,
     pub layer_shell: Option<ZwlrLayerShellV1>,
     pub spbm: Option<WpSinglePixelBufferManagerV1>,
@@ -529,6 +532,7 @@ impl Client {
             globals: Vec::new(),
             outputs: HashMap::new(),
             compositor: None,
+            subcompositor: None,
             xdg_wm_base: None,
             layer_shell: None,
             spbm: None,
@@ -804,6 +808,14 @@ impl Client {
     /// [`Lock`] (`ext_session_lock_v1.get_lock_surface`).
     pub fn create_lock_surface(&mut self, output: &WlOutput) -> &mut LockSurface {
         self.state.create_lock_surface(output)
+    }
+
+    pub fn create_surface(&mut self) -> WlSurface {
+        self.state.create_surface()
+    }
+
+    pub fn create_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) -> WlSubsurface {
+        self.state.create_subsurface(surface, parent)
     }
 
     /// Destroy this client's most recent [`Lock`] object without unlocking, and
@@ -1261,6 +1273,16 @@ impl State {
         );
         region.destroy();
         confine
+    }
+
+    pub fn create_surface(&mut self) -> WlSurface {
+        let compositor = self.compositor.as_ref().unwrap();
+        compositor.create_surface(&self.qh, ())
+    }
+
+    pub fn create_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) -> WlSubsurface {
+        let subcompositor = self.subcompositor.as_ref().unwrap();
+        subcompositor.get_subsurface(surface, parent, &self.qh, ())
     }
 
     pub fn set_confine_region(
@@ -1763,6 +1785,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 if interface == WlCompositor::interface().name {
                     let version = min(version, WlCompositor::interface().version);
                     state.compositor = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlSubcompositor::interface().name {
+                    let version = min(version, WlSubcompositor::interface().version);
+                    state.subcompositor = Some(registry.bind(name, version, qh, ()));
                 } else if interface == XdgWmBase::interface().name {
                     let version = min(version, XdgWmBase::interface().version);
                     state.xdg_wm_base = Some(registry.bind(name, version, qh, ()));
@@ -1954,6 +1979,32 @@ impl Dispatch<WlCompositor, ()> for State {
         _state: &mut Self,
         _proxy: &WlCompositor,
         _event: <WlCompositor as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<WlSubcompositor, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlSubcompositor,
+        _event: <WlSubcompositor as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        unreachable!()
+    }
+}
+
+impl Dispatch<WlSubsurface, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlSubsurface,
+        _event: <WlSubsurface as wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,

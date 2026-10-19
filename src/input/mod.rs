@@ -30,6 +30,7 @@ use std::rc::Rc;
 
 use self::constraint::{
     ConstraintKind, activate_constraint, constraint_snapshot, deactivate_constraint,
+    find_constraint,
 };
 use crate::decorations::{DecorationHit, DecorationKey};
 use crate::state::{DriftWm, FocusTarget, PickTarget, StageWindow, SuspendedWindow};
@@ -197,12 +198,33 @@ pub(crate) fn window_origin_for_surface(
     state: &DriftWm,
     surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
 ) -> Option<Point<f64, smithay::utils::Logical>> {
-    let window = state
+    let window = state.window_for_surface_root(surface)?;
+    let position = state
         .stage
-        .windows()
-        .find(|w| w.wl_surface().as_deref() == Some(surface))?;
-    let position = state.stage.position_of(window)?;
-    Some((position - window.geometry().loc).to_f64())
+        .position_of(&StageWindow::Client(window.clone()))?;
+    let toplevel_origin = (position - window.geometry().loc).to_f64();
+    if window.wl_surface().as_deref() == Some(surface) {
+        return Some(toplevel_origin);
+    }
+    let mut offset = Point::<i32, smithay::utils::Logical>::default();
+    let mut curr = surface.clone();
+    let root = window.wl_surface()?;
+    while curr != *root {
+        if let Some(parent) = smithay::wayland::compositor::get_parent(&curr) {
+            let loc = smithay::wayland::compositor::with_states(&curr, |states| {
+                states
+                    .cached_state
+                    .get::<smithay::wayland::compositor::SubsurfaceCachedState>()
+                    .current()
+                    .location
+            });
+            offset += loc;
+            curr = parent;
+        } else {
+            break;
+        }
+    }
+    Some(toplevel_origin + offset.to_f64())
 }
 
 /// Advance the per-output hot-corner latch and return a newly entered corner.
@@ -766,15 +788,30 @@ impl DriftWm {
         self.set_activated_exclusive(&target);
     }
 
-    /// Deactivate the constraint on the previous focus if focus changed,
-    /// then try to activate one on the new focus.
+    /// Deactivate the constraint on the previous focus if focus changed away from
+    /// the constraining surface, then try to activate one on the new focus.
     fn update_pointer_constraint(&mut self, old_focus: Option<FocusTarget>) {
         let pointer = self.seat.get_pointer().unwrap();
         let new_focus = pointer.current_focus();
-        let focus_changed = old_focus.as_ref().map(|f| &f.0) != new_focus.as_ref().map(|f| &f.0);
 
-        if focus_changed && let Some(old) = &old_focus {
-            deactivate_constraint(self, &old.0, &pointer);
+        let old_c = old_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer));
+        let new_c = new_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer));
+
+        let same_constraint = match (&old_c, &new_c) {
+            (Some((old_s, _)), Some((new_s, _))) => old_s == new_s,
+            _ => false,
+        };
+
+        if !same_constraint {
+            if let Some((old_s, _)) = old_c {
+                deactivate_constraint(self, &old_s, &pointer);
+            } else if let Some(old) = &old_focus {
+                deactivate_constraint(self, &old.0, &pointer);
+            }
         }
 
         self.maybe_activate_pointer_constraint();
@@ -797,7 +834,7 @@ impl DriftWm {
         // Reading the constraint and `window_origin_for_surface` both lock the
         // surface's mutex, so the region check runs against a snapshot taken
         // first rather than against the live constraint.
-        let Some(snapshot) = constraint_snapshot(&focus.0, &pointer) else {
+        let Some((constraining_surface, snapshot)) = find_constraint(&focus.0, &pointer) else {
             return;
         };
         if snapshot.active {
@@ -806,7 +843,8 @@ impl DriftWm {
 
         if let Some(region) = snapshot.region {
             let pointer_canvas = pointer.current_location();
-            let Some(surface_origin) = window_origin_for_surface(self, &focus.0) else {
+            let Some(surface_origin) = window_origin_for_surface(self, &constraining_surface)
+            else {
                 return;
             };
             let local = pointer_canvas - surface_origin;
@@ -818,7 +856,7 @@ impl DriftWm {
         // Nothing between the two calls dispatches or runs client code, so this
         // is still the same, inactive constraint — and `activate` is idempotent
         // regardless.
-        activate_constraint(&focus.0, &pointer);
+        activate_constraint(&constraining_surface, &pointer);
     }
 
     /// Send a `wl_pointer.motion` and record what the client was told, so
@@ -1024,6 +1062,17 @@ impl DriftWm {
         }
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
         let focus_unchanged = delivered.as_ref().map(|(focus, _)| focus) == old_focus.as_ref();
+        let old_constraining = old_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer))
+            .map(|(s, _)| s);
+        let new_constraining = delivered
+            .as_ref()
+            .and_then(|(f, _)| find_constraint(&f.0, &pointer))
+            .map(|(s, _)| s);
+        let lock_held = self.pointer_constraint_locked()
+            && (focus_unchanged
+                || (old_constraining.is_some() && old_constraining == new_constraining));
         // A lock still holding the surface under the cursor has nothing to
         // re-seat, and the motion below would read as a jump the client never
         // made: the lock freezes the cursor while `cursor_position_hint` keeps
@@ -1031,7 +1080,7 @@ impl DriftWm {
         // the cursor strands the lock, so that falls through to clear it.
         // Confines are excluded — that cursor really moves, and suppressing the
         // re-seat would leave it measured against a stale surface origin.
-        if self.pointer_constraint_locked() && focus_unchanged {
+        if lock_held {
             return;
         }
         // Compare the whole basis of the delivery — target, surface origin and
@@ -1227,8 +1276,8 @@ impl DriftWm {
 
         // Pointer lock: freeze position, only send relative motion
         if let Some(focus) = pointer.current_focus() {
-            let locked = constraint_snapshot(&focus.0, &pointer)
-                .is_some_and(|s| s.active && s.kind == ConstraintKind::Locked);
+            let locked = find_constraint(&focus.0, &pointer)
+                .is_some_and(|(_, s)| s.active && s.kind == ConstraintKind::Locked);
             if locked {
                 let origin = window_origin_for_surface(self, &focus.0).unwrap_or(old_canvas);
                 pointer.relative_motion(
@@ -1253,7 +1302,7 @@ impl DriftWm {
         // constraint can never re-establish.
         let confined: Option<(FocusTarget, Option<RegionAttributes>)> =
             pointer.current_focus().and_then(|focus| {
-                let snapshot = constraint_snapshot(&focus.0, &pointer)?;
+                let (constraining_surface, snapshot) = find_constraint(&focus.0, &pointer)?;
                 if !snapshot.active || snapshot.kind != ConstraintKind::Confined {
                     return None;
                 }
@@ -1262,7 +1311,7 @@ impl DriftWm {
                 // region; if it's currently outside, leave this motion free so it
                 // can move back in — the same gate activation uses.
                 if let Some(region) = &region
-                    && let Some(origin) = window_origin_for_surface(self, &focus.0)
+                    && let Some(origin) = window_origin_for_surface(self, &constraining_surface)
                     && !region.contains((old_canvas - origin).to_i32_round())
                 {
                     return None;
@@ -1360,8 +1409,20 @@ impl DriftWm {
         // the absolute cursor in place, so it can't cross to another output and
         // strand the constraint.
         if let Some((focus, region)) = &confined {
-            let origin = window_origin_for_surface(self, &focus.0);
-            let leaves_surface = under.as_ref().map(|(f, _)| &f.0) != Some(&focus.0);
+            let constraining_origin = find_constraint(&focus.0, &pointer)
+                .and_then(|(c_surf, _)| window_origin_for_surface(self, &c_surf));
+            let origin = constraining_origin.or_else(|| window_origin_for_surface(self, &focus.0));
+            let leaves_surface = match under.as_ref() {
+                Some((f, _)) => {
+                    let old_c = find_constraint(&focus.0, &pointer).map(|(s, _)| s);
+                    let new_c = find_constraint(&f.0, &pointer).map(|(s, _)| s);
+                    match (old_c, new_c) {
+                        (Some(o), Some(n)) => o != n,
+                        _ => f.0 != focus.0,
+                    }
+                }
+                None => true,
+            };
             let leaves_region = match (region, origin) {
                 (Some(region), Some(origin)) => {
                     !region.contains((canvas_pos - origin).to_i32_round())
