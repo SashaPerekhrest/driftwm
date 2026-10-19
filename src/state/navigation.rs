@@ -128,6 +128,8 @@ impl DriftWm {
         if self.window_fully_in_view_at(element, camera, zoom) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus_element(element, serial);
+            // As in `navigate_to_window_on`.
+            self.hover_follows_camera = false;
             return;
         }
         match pan {
@@ -154,6 +156,8 @@ impl DriftWm {
         };
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.raise_and_focus_element(element, serial);
+        // As in `navigate_to_window_on`.
+        self.hover_follows_camera = false;
 
         let Some(frame) = self.reveal_frame(element) else {
             return;
@@ -174,8 +178,6 @@ impl DriftWm {
         let center_screen =
             Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
         self.set_camera_anchor(&output, center, center_screen, zoom);
-        // As in `navigate_to_window_on`: this pan serves the focus just set.
-        self.hover_follows_camera = false;
     }
 
     /// The frame a minimal reveal brings into view: sized as configured, not
@@ -217,26 +219,27 @@ impl DriftWm {
         // output's camera origin, so it isn't a navigation target there at all —
         // don't focus or pan to it (mirrors the hit-test isolation). On its own
         // output, focus it but leave the locked camera put.
-        if let Some(fs_output) = window
+        let fullscreen_output = window
             .wl_surface()
-            .and_then(|s| self.find_fullscreen_output_for_surface(&s))
-        {
-            if &fs_output == output {
-                self.raise_and_focus(window, serial);
-            }
+            .and_then(|s| self.find_fullscreen_output_for_surface(&s));
+        if fullscreen_output.as_ref().is_some_and(|fs| fs != output) {
             return;
         }
+
+        self.raise_and_focus(window, serial);
+        // The pull must not hand the focus just set to whatever a camera move
+        // slides under the resting cursor: this navigation's own pan, or a
+        // flight still under way when it makes none. It stays parked until a
+        // camera move the user drives puts it back (`user_moved_camera`).
+        self.hover_follows_camera = false;
 
         // A pinned window also lives in screen space: its canvas position is
         // re-derived from the pin's screen_pos on every camera update, so panning
         // can never bring more of it into view — it would only slide the rest of
         // the canvas underneath it.
-        if self.stage.is_pinned(window) {
-            self.raise_and_focus(window, serial);
+        if fullscreen_output.is_some() || self.stage.is_pinned(window) {
             return;
         }
-
-        self.raise_and_focus(window, serial);
 
         // Below the early returns on purpose, so a deferred-adopt, fullscreen or
         // pinned window never reaches the restore — a filled window can be
@@ -299,11 +302,6 @@ impl DriftWm {
             };
 
         self.set_camera_anchor(output, anchor_canvas, anchor_screen, target_zoom);
-        // The camera is traveling to the window this navigation just focused.
-        // Handing the keyboard to whatever slid under the resting cursor on the
-        // way there would undo it, so the pull stays parked until a camera move
-        // the user drives puts it back (`user_moved_camera`).
-        self.hover_follows_camera = false;
     }
 
     /// The zoom a navigation animates to on `output`: 1.0 when `reset_zoom`
@@ -569,6 +567,8 @@ impl DriftWm {
         if self.window_visible_at_least_on(window, &home, ACTIVATION_VISIBLE_THRESHOLD) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus(window, serial);
+            // As in `navigate_to_window_on`.
+            self.hover_follows_camera = false;
         } else {
             self.navigate_to_window_on(
                 window,

@@ -1431,3 +1431,136 @@ fn a_restore_that_moves_nothing_keeps_a_navigations_focus() {
     assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
     assert!(is_activated(&b) && !is_activated(&decoy));
 }
+
+const ZOOM_OUT_CONFIG: &str = r#"
+focus_follows_mouse = true
+
+[zoom]
+step = 1.5
+"#;
+
+/// A keyboard zoom-out under way from `a`'s focus, the cursor resting on bare
+/// canvas at screen (100, 20). The step of 1.5 lands at 2/3, above
+/// `interact_min`, and carries the cursor's canvas point a few hundred px
+/// up-left onto `decoy`, which sits outside the search cone from `a`. `b`
+/// is fully visible both now and where the zoom lands, so neither a
+/// focus-nearest step nor an activation pans to it.
+fn zoom_out_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
+    map_window(f, id, "a", (300, 200));
+    let a = window_by_app_id(f, "a").unwrap();
+    place(f, &a, Point::from((0, 600)));
+    map_window(f, id, "b", (300, 200));
+    let b = window_by_app_id(f, "b").unwrap();
+    place(f, &b, Point::from((1500, 600)));
+    map_window(f, id, "decoy", (300, 200));
+    let decoy = window_by_app_id(f, "decoy").unwrap();
+    place(f, &decoy, Point::from((-450, -350)));
+    origin_view(f);
+    f.state()
+        .with_output_state(|os| os.zoom_animation_anchor = None);
+
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    f.double_roundtrip(id);
+    pointer_to(f, &FakeDevice::mouse(), Point::from((100.0, 20.0)));
+    f.double_roundtrip(id);
+    // Each map's auto-navigate parked the hover pull; a user pan re-arms it.
+    pan_viewport(f, Point::from((0.0, -40.0)));
+    f.double_roundtrip(id);
+    assert_eq!(keyboard_focus(f), Some(server_surface(&a)));
+
+    let resting = f.state().zoom_target();
+    f.state().execute_action(&Action::ZoomOut);
+    assert_ne!(
+        f.state().zoom_target(),
+        resting,
+        "test setup bug: zoom-out must arm a flight"
+    );
+    (b, decoy)
+}
+
+/// Run the zoom to its landing, which leaves the resting cursor on `decoy`.
+fn land_the_zoom_on(f: &mut Fixture, id: ClientId, decoy: &Window) {
+    settle(f);
+    f.double_roundtrip(id);
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    let decoy_rect = Rectangle::new(
+        f.state().stage.position_of(decoy).unwrap().to_f64(),
+        decoy.geometry().size.to_f64(),
+    );
+    assert!(
+        decoy_rect.contains(cursor),
+        "test setup bug: the zoom must land the cursor on the decoy, got {cursor:?}"
+    );
+}
+
+/// A focus-nearest step onto a window the zoom shows whole sets focus with no
+/// pan of its own. The zoom keeps flying, and its remaining frames must not
+/// hand the keyboard to the decoy they land under the resting cursor.
+#[test]
+fn a_focus_nearest_step_with_no_pan_keeps_the_keyboard_through_a_zoom() {
+    let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = zoom_out_past_a_decoy(&mut f, id);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    assert_eq!(
+        f.state().focused_window(),
+        Some(b.clone()),
+        "test setup bug: the step must pick b, not the decoy"
+    );
+    land_the_zoom_on(&mut f, id, &decoy);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(server_surface(&b)),
+        "a zoom still under way must not hand a focus-nearest step's keyboard \
+         to the window it lands under the resting cursor"
+    );
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}
+
+#[test]
+fn a_pan_after_a_zoom_a_focus_nearest_step_rode_hands_the_keyboard_to_the_cursor() {
+    let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = zoom_out_past_a_decoy(&mut f, id);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    land_the_zoom_on(&mut f, id, &decoy);
+    pan_viewport(&mut f, Point::from((50.0, 0.0)));
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&decoy)));
+    assert!(is_activated(&decoy) && !is_activated(&b));
+}
+
+/// An activation of a window already in full view focuses it without a pan,
+/// and holds that focus through the zoom as the step above does.
+#[test]
+fn a_visible_activation_keeps_the_keyboard_through_a_zoom() {
+    let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = zoom_out_past_a_decoy(&mut f, id);
+
+    f.state().activate_window_output_local(&b);
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    land_the_zoom_on(&mut f, id, &decoy);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}

@@ -163,6 +163,8 @@ impl DriftWm {
         let Some(s) = self.find_suspended(id) else {
             return;
         };
+        // As in `navigate_to_window_on`.
+        self.hover_follows_camera = false;
         let Some(output) = self.active_output() else {
             return;
         };
@@ -180,8 +182,6 @@ impl DriftWm {
         let center = self.nav_center(&element);
         let align = self.align_point_on(output, self.suspended_chrome(), s.size.get(), target_zoom);
         self.set_camera_anchor(output, center, align, target_zoom);
-        // As in `navigate_to_window_on`: the caller just focused this stand-in.
-        self.hover_follows_camera = false;
     }
 
     /// Relaunch the app behind a suspended window: resolve its `Exec=`, mint a

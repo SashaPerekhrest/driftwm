@@ -104,6 +104,9 @@ impl DriftWm {
     fn center_on_anchor(&mut self, p: Point<f64, Logical>) {
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.set_window_focus(None, serial);
+        // As the window arms do: otherwise the pull hands focus to whatever the
+        // pan leaves under the resting cursor, undoing the unfocus above.
+        self.hover_follows_camera = false;
         let Some(output) = self.active_output() else {
             return;
         };
@@ -112,9 +115,6 @@ impl DriftWm {
         let vc = self.usable_center_screen_on(&output);
         let zoom = self.navigation_target_zoom(&output, false);
         self.set_camera_anchor(&output, p, vc, zoom);
-        // As the window arms do: otherwise the pull hands focus to whatever the
-        // pan leaves under the resting cursor, undoing the unfocus above.
-        self.hover_follows_camera = false;
     }
 
     fn center_window(&mut self) {

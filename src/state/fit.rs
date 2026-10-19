@@ -146,6 +146,8 @@ impl DriftWm {
         // Raise, focus, animate camera + zoom to 1.0
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.raise_and_focus(window, serial);
+        // As in `navigate_to_window_on`: a fit sets focus as a navigation does.
+        self.hover_follows_camera = false;
         self.set_overview_return(None);
         let anchor = ZoomAnimationAnchor {
             canvas: anchor_canvas,
@@ -158,8 +160,6 @@ impl DriftWm {
         let Some(output) = self.active_output() else {
             return;
         };
-        // The pan below serves the focus just set, as a navigation's does.
-        self.hover_follows_camera = false;
         // This fit owns the output's view from here on, whether it parks its pan
         // or applies it below. A pan parked on some other window's freeze was
         // promised to an action this one has just superseded — including one
