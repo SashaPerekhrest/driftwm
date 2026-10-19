@@ -1143,9 +1143,16 @@ impl DriftWm {
         // pans to from losing the keyboard on the way there: the camera move
         // that `center-nearest`, `focus-center`, Alt-Tab, an activation or
         // `msg focus` makes is in service of the focus they just set, not a
-        // viewport the user is looking around in.
-        if self.hover_viewport != Some((self.camera(), self.zoom())) && self.hover_follows_camera {
-            self.maybe_hover_focus(canvas_pos);
+        // viewport the user is looking around in. A pull it holds back still
+        // stamps the view, so a later restore re-checks only what moves after
+        // it, never the navigation's own move.
+        let view = Some((self.camera(), self.zoom()));
+        if self.hover_viewport != view {
+            if self.hover_follows_camera {
+                self.maybe_hover_focus(canvas_pos);
+            } else {
+                self.hover_viewport = view;
+            }
         }
         // A second z-order walk that can re-rasterise a title bar, so only when
         // something changed or an affordance is in play: pick mode flips with

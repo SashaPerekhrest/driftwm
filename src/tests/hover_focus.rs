@@ -1403,3 +1403,36 @@ fn a_finger_lift_after_a_navigation_leaves_its_flight_alone() {
     assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
     assert!(is_activated(&b) && !is_activated(&decoy));
 }
+
+/// A restore that moves nothing re-checks nothing: `zoom-reset` at zoom 1.0
+/// leaves the view where the activation put it, so the keyboard stays on `b`
+/// even though the decoy rests under the cursor. Only a move made after the
+/// restore owes sloppy focus a re-check, not the navigation's own move before
+/// it.
+#[test]
+fn a_restore_that_moves_nothing_keeps_a_navigations_focus() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (_a, b) = park_for_navigation(&mut f, id);
+    let decoy = place_decoy_under_the_parked_cursor(&mut f, id);
+
+    f.state().activate_window_output_local(&b);
+    settle(&mut f);
+    f.double_roundtrip(id);
+    let view = (f.state().camera(), f.state().zoom());
+
+    f.state().execute_action(&Action::ZoomReset);
+    settle(&mut f);
+    assert_eq!(
+        (f.state().camera(), f.state().zoom()),
+        view,
+        "test setup bug: zoom-reset at 1.0 must leave the view put"
+    );
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}

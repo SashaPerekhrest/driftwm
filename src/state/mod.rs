@@ -1007,7 +1007,8 @@ pub struct DriftWm {
     pub last_pointer_under: Option<(FocusTarget, Point<f64, Logical>)>,
     /// The viewport `(camera, zoom)` sloppy focus was last evaluated at, on the
     /// active output. Written by [`DriftWm::maybe_hover_focus`] on every path
-    /// through it, read by [`DriftWm::refresh_pointer_focus`] to tell a viewport
+    /// through it, and by the pull while [`Self::hover_follows_camera`] holds
+    /// it back; read by [`DriftWm::refresh_pointer_focus`] to tell a viewport
     /// that has moved — the case where a different window slides under a cursor
     /// that never does — from a scene change that left the one under it alone.
     pub hover_viewport: Option<(Point<f64, Logical>, f64)>,
