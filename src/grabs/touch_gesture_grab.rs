@@ -379,10 +379,12 @@ impl TouchGestureGrab {
         if data.is_output_fullscreen(&self.output) {
             return;
         }
-        data.user_moved_camera();
         let zoom = output_state(&self.output).zoom;
         let new_zoom = (zoom * (1.0 + (scale - 1.0) * data.config.zoom_touch_speed))
             .clamp(data.min_zoom(), canvas::MAX_ZOOM);
+        if new_zoom != zoom {
+            data.user_moved_camera();
+        }
         let camera_after = output_state(&self.output).camera;
         let anchor_canvas = screen_to_canvas(ScreenPos(anchor), camera_after, zoom).0;
         let new_camera = canvas::zoom_anchor_camera(anchor_canvas, anchor, new_zoom);
