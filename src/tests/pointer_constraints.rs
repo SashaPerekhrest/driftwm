@@ -792,7 +792,7 @@ fn locking_the_session_releases_a_lock_held_over_a_subsurface() {
 
 /// A pan dispatches straight to whatever slides under the cursor. Carrying the
 /// cursor off a game locked over a subsurface has to end the lock, or the
-/// game's next cursor hint pulls the now-free cursor back onto it.
+/// game's next cursor hint pulls the freed cursor back onto it.
 #[test]
 fn panning_off_a_game_releases_a_lock_held_over_a_subsurface() {
     let mut f = Fixture::with_config(super::config(
@@ -950,9 +950,9 @@ fn destroying_the_subsurface_under_a_locked_cursor_releases_the_lock() {
     );
 }
 
-/// The other half: a subsurface destroyed inside the window leaves the cursor
-/// over the toplevel, still inside the lock's window, and the lock must hold
-/// without so much as a flap — a oneshot lock would not come back.
+/// A subsurface destroyed inside the window leaves the cursor over the
+/// toplevel, so the lock must hold without so much as a flap — a oneshot lock
+/// would not come back.
 #[test]
 fn destroying_a_subsurface_inside_a_locked_window_keeps_the_lock() {
     use smithay::reexports::wayland_server::Resource as _;

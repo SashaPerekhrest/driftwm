@@ -886,7 +886,7 @@ impl DriftWm {
     /// Whether pointer focus still lies in the surface tree of the constraint on
     /// `surface`. A held button pins focus to its press target, and a dead focus
     /// waits for the re-pick that replaces it; both count as inside until the
-    /// pull after them decides. Nothing behind the lock screen is inside.
+    /// pull after them decides.
     pub(crate) fn focus_within_constraint(&self, surface: &WlSurface) -> bool {
         if self.session_lock.is_locked() {
             return false;

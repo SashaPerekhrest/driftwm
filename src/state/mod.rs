@@ -1006,9 +1006,8 @@ pub struct DriftWm {
     /// shadow stays exact.
     pub last_pointer_under: Option<(FocusTarget, Point<f64, Logical>)>,
     /// The surface whose constraint [`DriftWm::maybe_activate_pointer_constraint`]
-    /// last armed, which the pull releases once pointer focus has left that
-    /// surface's tree. Recorded rather than found by walking up from focus: a
-    /// destroyed subsurface is cut from its parent first.
+    /// last armed, for the pull to release. Recorded rather than found by
+    /// walking up from focus: a destroyed subsurface is cut from its parent first.
     pub armed_constraint: Option<WlSurface>,
     /// The viewport `(camera, zoom)` sloppy focus was last evaluated at, on the
     /// active output. Written by [`DriftWm::maybe_hover_focus`] on every path

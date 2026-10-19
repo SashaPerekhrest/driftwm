@@ -83,8 +83,8 @@ impl Server {
         self.state.verify_stage_invariants();
     }
 
-    /// Dispatch pending client requests and nothing else of a loop iteration,
-    /// for a scenario where input lands between a request and the pull after it.
+    /// Dispatch client requests without the rest of a loop iteration, so input
+    /// can land between a request and the pull after it.
     pub fn dispatch_clients(&mut self) {
         self.display.dispatch_clients(&mut self.state).ok();
     }
