@@ -146,7 +146,7 @@ impl DriftWm {
         // Raise, focus, animate camera + zoom to 1.0
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.raise_and_focus(window, serial);
-        // As in `navigate_to_window_on`: a fit sets focus as a navigation does.
+        // As in `navigate_to_window_on`.
         self.hover_follows_camera = false;
         self.set_overview_return(None);
         let anchor = ZoomAnimationAnchor {

@@ -1558,7 +1558,7 @@ fn a_pan_after_a_zoom_a_focus_nearest_step_rode_hands_the_keyboard_to_the_cursor
 }
 
 /// An activation of a window already in full view focuses it without a pan,
-/// and holds that focus through the zoom as the step above does.
+/// and must hold that focus through the zoom.
 #[test]
 fn a_visible_activation_keeps_the_keyboard_through_a_zoom() {
     let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));

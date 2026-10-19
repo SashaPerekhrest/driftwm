@@ -352,9 +352,7 @@ impl XdgShellHandler for DriftWm {
                     if self.window_fully_in_viewport(&target) {
                         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                         self.raise_and_focus(&target, serial);
-                        // Close-follow sets focus as a navigation does, so a
-                        // flight still under way must not take it back (see
-                        // `navigate_to_window_on`).
+                        // As in `navigate_to_window_on`.
                         self.hover_follows_camera = false;
                     } else {
                         self.navigate_to_window(&target, NavZoom::Keep);

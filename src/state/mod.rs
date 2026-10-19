@@ -1018,15 +1018,15 @@ pub struct DriftWm {
     pub hover_viewport: Option<(Point<f64, Logical>, f64)>,
     /// Whether a camera move may still hand sloppy focus to whatever slides
     /// under the cursor — the viewport gate's other half, beside
-    /// [`Self::hover_viewport`]. `true` by default; a focus-setting action drops
-    /// it where it sets focus, so the pan that carries the viewport to an
-    /// Alt-Tab target, an activation, a `center-nearest`, a `focus-center` or a
-    /// `msg focus`, or a flight still under way when the action needs no pan,
-    /// does not then hand the keyboard to whatever slid under the resting
-    /// cursor — which is the bug the pull fixes, read backwards. Any camera move the user drives brings it
-    /// back, since then the viewport is where they are looking and sloppy focus
-    /// owes them the window it lands on. Real pointer motion never reads it: a
-    /// hover the user steered to with the cursor is unaffected.
+    /// [`Self::hover_viewport`]. `true` by default; a focus-setting action (an
+    /// Alt-Tab, an activation, a `center-nearest`, a `focus-center`, a `msg
+    /// focus`) drops it where it sets focus, so neither its own pan nor a
+    /// flight still under way hands the keyboard to whatever slides under the
+    /// resting cursor — which is the bug the pull fixes, read backwards. Any
+    /// camera move the user drives brings it back, since then the viewport is
+    /// where they are looking and sloppy focus owes them the window it lands
+    /// on. Real pointer motion never reads it: a hover the user steered to with
+    /// the cursor is unaffected.
     pub hover_follows_camera: bool,
     /// wl_surface commits since the last rendered frame. Tracy diagnostic
     /// counter (plotted as `frame.commits`); sampled and reset on every
