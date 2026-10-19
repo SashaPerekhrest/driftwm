@@ -52,6 +52,22 @@ pub(crate) fn constraint_snapshot(
     snapshot
 }
 
+/// Find a constraint snapshot for `surface` or any of its ancestors, returning
+/// the surface holding the constraint and the snapshot.
+pub(crate) fn find_constraint(
+    surface: &WlSurface,
+    pointer: &PointerHandle<DriftWm>,
+) -> Option<(WlSurface, ConstraintSnapshot)> {
+    let mut current = surface.clone();
+    loop {
+        if let Some(snapshot) = constraint_snapshot(&current, pointer) {
+            return Some((current, snapshot));
+        }
+        let parent = smithay::wayland::compositor::get_parent(&current)?;
+        current = parent;
+    }
+}
+
 /// No-op without a constraint; smithay's `activate` is idempotent.
 pub(crate) fn activate_constraint(surface: &WlSurface, pointer: &PointerHandle<DriftWm>) {
     #[allow(clippy::disallowed_methods)] // the sanctioned closure: it only flips the flag

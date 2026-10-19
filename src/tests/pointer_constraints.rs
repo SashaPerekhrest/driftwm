@@ -603,3 +603,99 @@ fn a_confine_with_a_region_holds_the_cursor_inside_it() {
         "a move that stays inside the region must go through untouched"
     );
 }
+
+#[test]
+fn a_locked_window_with_subsurface_delivers_relative_motion_only() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+
+    // Position cursor over the subsurface (offset 150, 150 from surface origin)
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+    let current_focus = f
+        .state()
+        .seat
+        .get_pointer()
+        .unwrap()
+        .current_focus()
+        .map(|f| f.0);
+    assert_eq!(
+        current_focus.as_ref().map(|s| s.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "pointer focus must be on the subsurface"
+    );
+
+    let _lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "a lock on the toplevel window must arm when focus is on a subsurface"
+    );
+
+    let frozen = f.state().seat.get_pointer().unwrap().current_location();
+    f.client(id).state.pointer_positions.clear();
+
+    pointer_relative_motion(&mut f, &FakeDevice::mouse(), Point::from((20.0, 15.0)));
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        frozen,
+        "a locked pointer must not move even when focused on a subsurface"
+    );
+    assert_eq!(
+        f.client(id).state.pointer_positions,
+        Vec::new(),
+        "a locked subsurface client must see relative motion only, never absolute motion"
+    );
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "the lock must remain active after relative motion"
+    );
+
+    // Position hint from client moves internal position without sending motion
+    _lock.set_cursor_position_hint(50.0, 50.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        surface_origin + Point::from((50.0, 50.0)),
+        "cursor hint must update location relative to surface origin"
+    );
+    assert_eq!(
+        f.client(id).state.pointer_positions,
+        Vec::new(),
+        "cursor position hint must not replay as absolute motion"
+    );
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "the lock must survive cursor position hints"
+    );
+
+    // Subsequent relative motion still delivers relative only
+    pointer_relative_motion(&mut f, &FakeDevice::mouse(), Point::from((10.0, 5.0)));
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.client(id).state.pointer_positions,
+        Vec::new(),
+        "further motion must remain strictly relative"
+    );
+}
