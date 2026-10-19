@@ -112,10 +112,8 @@ impl DriftWm {
         let vc = self.usable_center_screen_on(&output);
         let zoom = self.navigation_target_zoom(&output, false);
         self.set_camera_anchor(&output, p, vc, zoom);
-        // The sibling arm navigates to a window and parks the hover pull for
-        // it; this one has to park it too, or a cursor left over a window on
-        // the way would take the keyboard right back and the two halves of
-        // one command would disagree.
+        // As the window arms do: otherwise the pull hands focus to whatever the
+        // pan leaves under the resting cursor, undoing the unfocus above.
         self.hover_follows_camera = false;
     }
 

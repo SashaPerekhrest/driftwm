@@ -5,8 +5,8 @@
 //! a viewport move slides a new window under a cursor that never moves, and
 //! sloppy focus owes a move to it even where the client-pointer delivery
 //! dedup puts nothing on the wire. The ones after them are the gate's other
-//! half: a navigation that focused the window it pans to keeps that focus,
-//! until a camera move the user drives.
+//! half: a navigation that focused the window it pans to keeps that focus
+//! until the user moves the camera.
 
 use driftwm::config::{Action, Direction};
 use driftwm::stage::PinnedSite;
@@ -1012,7 +1012,7 @@ default_mode = "server"
     f.state().dismiss_suspended(sid);
 }
 
-/// The shared setup of the two navigation scenarios below: `a` holds the
+/// The shared setup of the navigation scenarios below: `a` holds the
 /// keyboard at the left edge of the canvas, `b` sits far off to the right as a
 /// navigation target, and the cursor rests on bare canvas at (100, 150).
 fn park_for_navigation(f: &mut Fixture, id: ClientId) -> (Window, Window) {
@@ -1153,9 +1153,9 @@ fn a_centering_navigation_to_a_stand_in_keeps_the_focus_intent() {
 
 /// A focus-nearest step whose target is clipped: `a` (300×200, focused) sits at
 /// the left edge, `b` hangs past the right one, and the cursor rests on bare
-/// canvas at screen (100, 20). The step pans right just far enough to show `b`
-/// (~492 px), which carries the cursor's canvas point onto `decoy`. The decoy
-/// sits above the search cone from `a`, so the step can't pick it itself.
+/// canvas at screen (100, 20). The step pans right just far enough to show `b`,
+/// which carries the cursor's canvas point onto `decoy`. The decoy sits above
+/// the search cone from `a`, so the step can't pick it itself.
 fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
     map_window(f, id, "a", (300, 200));
     let a = window_by_app_id(f, "a").unwrap();
@@ -1177,8 +1177,8 @@ fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Wi
     f.double_roundtrip(id);
     pointer_to(f, &FakeDevice::mouse(), Point::from((100.0, 20.0)));
     f.double_roundtrip(id);
-    // Each map navigated to its window and parked the hover pull; a pan of the
-    // user's own re-arms it, so the step below is what has to park it again.
+    // Each map's auto-navigate parked the hover pull; a user pan re-arms it so
+    // the step below has to park it again.
     pan_viewport(f, Point::from((0.0, -40.0)));
     f.double_roundtrip(id);
     assert_eq!(keyboard_focus(f), Some(server_surface(&a)));
@@ -1201,9 +1201,8 @@ fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Wi
 }
 
 /// focus-nearest's walking step pans through its own minimal reveal, not
-/// through `navigate_to_window_on`, so it has to park the hover pull itself:
-/// the step focused `b`, and the decoy it slid under the resting cursor must
-/// not take the keyboard back.
+/// `navigate_to_window_on`, so it parks the hover pull itself: the decoy it
+/// slid under the resting cursor must not take the keyboard from `b`.
 #[test]
 fn a_focus_nearest_step_that_panned_keeps_the_keyboard_under_a_resting_cursor() {
     let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
@@ -1240,10 +1239,9 @@ fn a_pan_after_a_focus_nearest_step_hands_the_keyboard_to_the_cursor() {
     assert!(is_activated(&decoy) && !is_activated(&b));
 }
 
-/// A mouse-wheel zoom is a camera move the user drives, as the keyboard zoom
-/// and the pinch are: after an activation parked the hover pull, it brings it
-/// back, and the decoy the activation left under the cursor takes the keyboard.
-/// The zoom anchors on the cursor, so the decoy stays under it.
+/// A mouse-wheel zoom is a user-driven camera move: after an activation parked
+/// the hover pull, it brings it back and the decoy under the cursor takes the
+/// keyboard. The zoom anchors on the cursor, so the decoy stays under it.
 #[test]
 fn a_wheel_zoom_after_a_navigation_hands_the_keyboard_to_the_cursor() {
     let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
@@ -1273,10 +1271,10 @@ fn a_wheel_zoom_after_a_navigation_hands_the_keyboard_to_the_cursor() {
     assert!(is_activated(&decoy) && !is_activated(&b));
 }
 
-/// The touchscreen's pinch, likewise. With the 2-finger swipe unbound the
-/// pinch zooms without panning, so no pan's restore can stand in for the
-/// zoom's own. The fingers converge on bare canvas below the windows, and the
-/// mouse cursor keeps its canvas point, still on the decoy.
+/// The touchscreen pinch, likewise. With the 2-finger swipe unbound the pinch
+/// zooms without panning, so only the zoom's own restore can bring the pull
+/// back. The fingers land on bare canvas below the windows; the mouse cursor
+/// keeps its canvas point on the decoy.
 #[test]
 fn a_touch_pinch_after_a_navigation_hands_the_keyboard_to_the_cursor() {
     let mut f = Fixture::with_config(config(
@@ -1343,7 +1341,7 @@ fn a_fit_window_flight_keeps_the_keyboard_under_a_resting_cursor() {
     f.double_roundtrip(id);
     pointer_to(&mut f, &FakeDevice::mouse(), Point::from((100.0, 140.0)));
     f.double_roundtrip(id);
-    // Re-arm the hover pull the maps parked, as a user pan does.
+    // A user pan re-arms the hover pull the maps parked.
     pan_viewport(&mut f, Point::from((0.0, -40.0)));
     f.double_roundtrip(id);
     assert_eq!(keyboard_focus(&mut f), Some(server_surface(&a)));
@@ -1381,10 +1379,9 @@ fn a_fit_window_flight_keeps_the_keyboard_under_a_resting_cursor() {
     assert!(is_activated(&a) && !is_activated(&b));
 }
 
-/// A finger lift launches momentum, but a navigation in between stopped the
-/// pan's and cleared its tracker, so nothing coasts. That empty launch must
-/// not count as a camera move of the user's: the activation's flight keeps
-/// the keyboard on `b` all the way in.
+/// A finger lift after a navigation launches nothing, since the navigation
+/// cleared the momentum tracker. That empty launch must not count as a user
+/// camera move: the activation's flight keeps the keyboard on `b`.
 #[test]
 fn a_finger_lift_after_a_navigation_leaves_its_flight_alone() {
     let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
@@ -1406,9 +1403,7 @@ fn a_finger_lift_after_a_navigation_leaves_its_flight_alone() {
 
 /// A restore that moves nothing re-checks nothing: `zoom-reset` at zoom 1.0
 /// leaves the view where the activation put it, so the keyboard stays on `b`
-/// even though the decoy rests under the cursor. Only a move made after the
-/// restore owes sloppy focus a re-check, not the navigation's own move before
-/// it.
+/// even though the decoy rests under the cursor.
 #[test]
 fn a_restore_that_moves_nothing_keeps_a_navigations_focus() {
     let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));

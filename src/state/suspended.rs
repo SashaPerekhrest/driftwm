@@ -180,8 +180,7 @@ impl DriftWm {
         let center = self.nav_center(&element);
         let align = self.align_point_on(output, self.suspended_chrome(), s.size.get(), target_zoom);
         self.set_camera_anchor(output, center, align, target_zoom);
-        // The caller focused the stand-in this pans to — see
-        // `navigate_to_window_on`'s tail, which this mirrors.
+        // As in `navigate_to_window_on`: the caller just focused this stand-in.
         self.hover_follows_camera = false;
     }
 
