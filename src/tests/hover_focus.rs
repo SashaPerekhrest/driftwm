@@ -1273,13 +1273,20 @@ fn a_wheel_zoom_after_a_navigation_hands_the_keyboard_to_the_cursor() {
     assert!(is_activated(&decoy) && !is_activated(&b));
 }
 
-/// The touchscreen's pinch, likewise. Its zoom has no restore of its own: the
-/// recognizer pans through every zoom frame, and that pan's `drift_pan_on` is
-/// what brings the pull back. The fingers converge on bare canvas below the
-/// windows, and the mouse cursor keeps its canvas point, still on the decoy.
+/// The touchscreen's pinch, likewise. With the 2-finger swipe unbound the
+/// pinch zooms without panning, so no pan's restore can stand in for the
+/// zoom's own. The fingers converge on bare canvas below the windows, and the
+/// mouse cursor keeps its canvas point, still on the decoy.
 #[test]
 fn a_touch_pinch_after_a_navigation_hands_the_keyboard_to_the_cursor() {
-    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    let mut f = Fixture::with_config(config(
+        r#"
+focus_follows_mouse = true
+
+[touch.on-canvas]
+"2-finger-swipe" = "none"
+"#,
+    ));
     f.add_output(1, (1920, 1080));
     let id = f.add_client();
 
