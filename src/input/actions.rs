@@ -271,6 +271,9 @@ impl DriftWm {
                 if let Some(pin) = self.pinned_owner_under(screen_pos) {
                     let serial = smithay::utils::SERIAL_COUNTER.next_serial();
                     self.raise_and_focus(&pin, serial);
+                    // Hover skips a pin's resize band for the window behind
+                    // it, so a flight under way would take this focus back.
+                    self.hover_follows_camera = false;
                 } else if let Some((element, _)) = self.topmost_under(pos, |_, _| true) {
                     // Chrome counts as part of its window, and a stand-in is
                     // centered by its own visual frame rather than the client

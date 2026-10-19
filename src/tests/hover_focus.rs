@@ -1439,13 +1439,11 @@ focus_follows_mouse = true
 step = 1.5
 "#;
 
-/// A keyboard zoom-out under way from `a`'s focus, the cursor resting on bare
-/// canvas at screen (100, 20). The step of 1.5 lands at 2/3, above
-/// `interact_min`, and carries the cursor's canvas point a few hundred px
-/// up-left onto `decoy`, which sits outside the search cone from `a`. `b`
-/// is fully visible both now and where the zoom lands, so neither a
-/// focus-nearest step nor an activation pans to it.
-fn zoom_out_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
+/// `a` at the left, `b` level with it to the right, `decoy` up-left of both and
+/// outside the search cone from `a`. `b` is fully visible both at the resting
+/// view and where [`rest_and_zoom_out`] lands, so nothing that focuses it
+/// pans to it.
+fn map_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window, Window) {
     map_window(f, id, "a", (300, 200));
     let a = window_by_app_id(f, "a").unwrap();
     place(f, &a, Point::from((0, 600)));
@@ -1455,19 +1453,27 @@ fn zoom_out_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
     map_window(f, id, "decoy", (300, 200));
     let decoy = window_by_app_id(f, "decoy").unwrap();
     place(f, &decoy, Point::from((-450, -350)));
+    (a, b, decoy)
+}
+
+/// Focus `focused`, rest the cursor on bare canvas at screen (100, 20) and set
+/// a keyboard zoom-out flying. The step of 1.5 lands at 2/3, above
+/// `interact_min`, and carries the cursor's canvas point a few hundred px
+/// up-left onto the decoy.
+fn rest_and_zoom_out(f: &mut Fixture, id: ClientId, focused: &Window) {
     origin_view(f);
     f.state()
         .with_output_state(|os| os.zoom_animation_anchor = None);
 
     let serial = SERIAL_COUNTER.next_serial();
-    f.state().raise_and_focus(&a, serial);
+    f.state().raise_and_focus(focused, serial);
     f.double_roundtrip(id);
     pointer_to(f, &FakeDevice::mouse(), Point::from((100.0, 20.0)));
     f.double_roundtrip(id);
     // Each map's auto-navigate parked the hover pull; a user pan re-arms it.
     pan_viewport(f, Point::from((0.0, -40.0)));
     f.double_roundtrip(id);
-    assert_eq!(keyboard_focus(f), Some(server_surface(&a)));
+    assert_eq!(keyboard_focus(f), Some(server_surface(focused)));
 
     let resting = f.state().zoom_target();
     f.state().execute_action(&Action::ZoomOut);
@@ -1476,6 +1482,12 @@ fn zoom_out_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
         resting,
         "test setup bug: zoom-out must arm a flight"
     );
+}
+
+/// A keyboard zoom-out under way from `a`'s focus.
+fn zoom_out_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
+    let (a, b, decoy) = map_past_a_decoy(f, id);
+    rest_and_zoom_out(f, id, &a);
     (b, decoy)
 }
 
@@ -1563,4 +1575,130 @@ fn a_visible_activation_keeps_the_keyboard_through_a_zoom() {
 
     assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
     assert!(is_activated(&b) && !is_activated(&decoy));
+}
+
+/// Close a focused `c` placed at `c_pos` while the zoom is under way;
+/// close-follow lands on `b` without a pan of its own.
+fn close_during_a_zoom_out(f: &mut Fixture, id: ClientId, c_pos: (i32, i32)) -> (Window, Window) {
+    let (_a, b, decoy) = map_past_a_decoy(f, id);
+    let c_surface = map_window(f, id, "c", (100, 100));
+    let c = window_by_app_id(f, "c").unwrap();
+    place(f, &c, Point::from(c_pos));
+    // Close-follow measures `c` by its cached rect, still where it mapped.
+    f.state()
+        .refresh_stable_snap_rect(&StageWindow::Client(c.clone()));
+    rest_and_zoom_out(f, id, &c);
+
+    f.client(id).window(&c_surface).destroy();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().focused_window(),
+        Some(b.clone()),
+        "test setup bug: close-follow must land on b"
+    );
+    (b, decoy)
+}
+
+/// Close-follow onto the window `c` sat inside, which is in full view.
+#[test]
+fn a_close_following_onto_a_window_in_view_keeps_the_keyboard_through_a_zoom() {
+    let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = close_during_a_zoom_out(&mut f, id, (1550, 650));
+    land_the_zoom_on(&mut f, id, &decoy);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}
+
+/// With nothing related to `c` to follow, the fallback focuses the nearest
+/// visible window.
+#[test]
+fn a_close_falling_back_to_the_nearest_window_keeps_the_keyboard_through_a_zoom() {
+    let mut f = Fixture::with_config(config(ZOOM_OUT_CONFIG));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (b, decoy) = close_during_a_zoom_out(&mut f, id, (1100, 300));
+    land_the_zoom_on(&mut f, id, &decoy);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}
+
+/// focus-center with the cursor on a pin's resize band focuses the pin and
+/// moves no camera. Hover skips the band for the canvas window behind it, so
+/// the zoom's landing must not hand that window the keyboard.
+#[test]
+fn focus_center_on_a_pins_resize_band_keeps_the_pin_through_a_zoom() {
+    let mut f = Fixture::with_config(config(
+        r#"
+focus_follows_mouse = true
+
+[zoom]
+step = 1.5
+
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    map_window(&mut f, id, "beneath", (600, 500));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    place(&mut f, &beneath, Point::from((500, 300)));
+    origin_view(&mut f);
+    f.state()
+        .with_output_state(|os| os.zoom_animation_anchor = None);
+    let output = f.state().stage.pin_of(&pin).unwrap().output.clone();
+    f.state().stage.set_pin(
+        &pin,
+        PinnedSite {
+            output,
+            screen_pos: Point::from((800, 400)),
+        },
+    );
+
+    let band = Point::from((796.0, 550.0));
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(band),
+            PinnedChrome::Hit(ref w, DecorationHit::ResizeBorder(_)) if *w == pin
+        ),
+        "test setup bug: the cursor must rest on the pin's resize band"
+    );
+    let canvas = to_canvas(&mut f, band);
+    pointer_to(&mut f, &FakeDevice::mouse(), canvas);
+    f.double_roundtrip(id);
+
+    f.state().execute_action(&Action::ZoomOut);
+    f.state().execute_action(&Action::FocusCenter);
+    assert_eq!(
+        f.state().focused_window(),
+        Some(pin.clone()),
+        "test setup bug: focus-center must pick the pin"
+    );
+    settle(&mut f);
+    f.double_roundtrip(id);
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    assert!(
+        Rectangle::new(Point::from((500.0, 300.0)), Size::from((600.0, 500.0))).contains(cursor),
+        "test setup bug: the zoom must land the cursor over beneath, got {cursor:?}"
+    );
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&pin)));
+    assert!(is_activated(&pin) && !is_activated(&beneath));
 }

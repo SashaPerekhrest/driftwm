@@ -1033,6 +1033,8 @@ impl DriftWm {
             match follow {
                 Some(target) if self.window_fully_in_viewport(&target) => {
                     self.raise_and_focus(&target, serial);
+                    // As a real close's follow does.
+                    self.hover_follows_camera = false;
                 }
                 Some(target) => self.navigate_to_window(&target, NavZoom::Keep),
                 None => {
@@ -1053,7 +1055,10 @@ impl DriftWm {
                         (None, _) => None,
                     };
                     match target {
-                        Some(target) => self.raise_and_focus(&target, serial),
+                        Some(target) => {
+                            self.raise_and_focus(&target, serial);
+                            self.hover_follows_camera = false;
+                        }
                         None => self.set_window_focus(None, serial),
                     }
                 }
