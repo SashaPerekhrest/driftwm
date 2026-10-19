@@ -874,7 +874,33 @@ impl DriftWm {
         // is still the same, inactive constraint — and `activate` is idempotent
         // regardless.
         activate_constraint(&constraining_surface, &pointer);
-        self.armed_constraint = Some(constraining_surface);
+        // A window may constrain its toplevel and a subsurface both; only the
+        // one nearest the focus applies.
+        if let Some(previous) = self.armed_constraint.replace(constraining_surface.clone())
+            && previous != constraining_surface
+        {
+            deactivate_constraint(self, &previous, &pointer);
+        }
+    }
+
+    /// smithay's leave releases only a constraint on the exact surface the
+    /// pointer left, but one set on a window holds over its subsurfaces too.
+    /// Checked once focus has settled rather than on leave, which can't tell
+    /// whether focus stays in the window. A dead focus waits for the re-pick
+    /// that replaces it.
+    fn release_stranded_constraint(&mut self) {
+        let Some(armed) = self.armed_constraint.clone() else {
+            return;
+        };
+        let pointer = self.seat.get_pointer().unwrap();
+        let held = pointer.current_focus().is_some_and(|focus| {
+            !focus.0.is_alive()
+                || find_constraint(&focus.0, &pointer).is_some_and(|(surface, _)| surface == armed)
+        });
+        if !held {
+            self.armed_constraint = None;
+            deactivate_constraint(self, &armed, &pointer);
+        }
     }
 
     /// Send a `wl_pointer.motion` and record what the client was told, so
@@ -1049,6 +1075,11 @@ impl DriftWm {
     /// it to make focus current at that boundary; nothing calls it *because*
     /// it changed the scene.
     pub(crate) fn refresh_pointer_focus(&mut self) {
+        self.repick_pointer_focus();
+        self.release_stranded_constraint();
+    }
+
+    fn repick_pointer_focus(&mut self) {
         if self.session_lock.is_locked() {
             return;
         }

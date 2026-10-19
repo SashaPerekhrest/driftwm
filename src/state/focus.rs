@@ -33,7 +33,6 @@ use smithay::{
     wayland::seat::WaylandFocus,
 };
 
-use crate::input::constraint::deactivate_constraint;
 use crate::state::DriftWm;
 
 // --- FocusTarget ---
@@ -225,16 +224,6 @@ impl PointerTarget<DriftWm> for FocusTarget {
 
     fn leave(&self, seat: &Seat<DriftWm>, data: &mut DriftWm, serial: Serial, time: u32) {
         <WlSurface as PointerTarget<DriftWm>>::leave(&self.0, seat, data, serial, time);
-        // smithay's leave releases only a constraint on this exact surface, but
-        // one set on a window holds over its subsurfaces too. Every path that
-        // moves pointer focus comes through here, so this is the one place that
-        // can't miss a release; a move to another surface of the same window
-        // re-arms it in `update_pointer_constraint`.
-        if let Some(armed) = data.armed_constraint.take()
-            && let Some(pointer) = seat.get_pointer()
-        {
-            deactivate_constraint(data, &armed, &pointer);
-        }
     }
 }
 

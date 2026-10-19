@@ -948,3 +948,99 @@ fn destroying_the_subsurface_under_a_locked_cursor_releases_the_lock() {
         "an ended lock's cursor hint must not move the cursor"
     );
 }
+
+/// The other half: a subsurface destroyed inside the window leaves the cursor
+/// over the toplevel, still inside the lock's window, and the lock must hold
+/// without so much as a flap — a oneshot lock would not come back.
+#[test]
+fn destroying_a_subsurface_inside_a_locked_window_keeps_the_lock() {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let _lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.pointer_lock_events,
+        vec![PointerLockEvent::Locked],
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    sub_surf.destroy();
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(surface.id().protocol_id()),
+        "the cursor must be left over the toplevel, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.pointer_lock_events,
+        vec![PointerLockEvent::Locked],
+        "the cursor never left the window, so the lock must not be released"
+    );
+}
+
+/// A window may lock its toplevel and then one of its subsurfaces too. Only the
+/// nearer lock applies, and once the cursor leaves the window every lock the
+/// game was given must have ended, or a forgotten one keeps taking its hints.
+#[test]
+fn every_nested_lock_ends_once_the_cursor_leaves_the_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let _window_lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    let _sub_lock = f.client(id).lock_pointer(&sub_surf);
+    f.double_roundtrip(id);
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "the locks must arm, or this scenario tests nothing"
+    );
+
+    f.state()
+        .warp_pointer(surface_origin - Point::from((100.0, 100.0)));
+    f.double_roundtrip(id);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .current_focus()
+            .is_none(),
+        "the cursor must be off the window, or this scenario tests nothing"
+    );
+
+    let events = &f.client(id).state.pointer_lock_events;
+    let count = |kind| events.iter().filter(|&&event| event == kind).count();
+    assert_eq!(
+        count(PointerLockEvent::Unlocked),
+        count(PointerLockEvent::Locked),
+        "every lock that armed must have ended ({events:?})"
+    );
+}
