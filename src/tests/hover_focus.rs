@@ -19,11 +19,16 @@ use crate::input::PinnedChrome;
 use crate::state::{FocusIntent, FocusTarget, StageWindow};
 
 use super::client::ClientId;
-use super::input_backend::{FakeDevice, pointer_to, trackpad_scroll};
+use super::input_backend::{
+    FakeDevice, key_press, key_release, pointer_to, touch_down, touch_motion, touch_up,
+    trackpad_scroll, wheel_notch_down,
+};
 use super::{
     Fixture, config, give_ssd, is_activated, keyboard_focus, map_window, server_surface, settle,
     to_canvas, window_by_app_id,
 };
+
+const KEY_LEFTMETA: u32 = 125;
 
 /// Force `window` to a known canvas position without touching activation —
 /// auto-placement alone doesn't guarantee two same-size windows land apart,
@@ -1228,6 +1233,77 @@ fn a_pan_after_a_focus_nearest_step_hands_the_keyboard_to_the_cursor() {
     let (b, decoy) = step_onto_a_clipped_window_past_a_decoy(&mut f, id);
 
     pan_viewport(&mut f, Point::from((50.0, 0.0)));
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&decoy)));
+    assert!(is_activated(&decoy) && !is_activated(&b));
+}
+
+/// A mouse-wheel zoom is a camera move the user drives, as the keyboard zoom
+/// and the pinch are: after an activation parked the hover pull, it brings it
+/// back, and the decoy the activation left under the cursor takes the keyboard.
+/// The zoom anchors on the cursor, so the decoy stays under it.
+#[test]
+fn a_wheel_zoom_after_a_navigation_hands_the_keyboard_to_the_cursor() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (_a, b) = park_for_navigation(&mut f, id);
+    let decoy = place_decoy_under_the_parked_cursor(&mut f, id);
+
+    f.state().activate_window_output_local(&b);
+    settle(&mut f);
+    f.double_roundtrip(id);
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+
+    key_press(&mut f, KEY_LEFTMETA);
+    wheel_notch_down(&mut f, &FakeDevice::mouse());
+    key_release(&mut f, KEY_LEFTMETA);
+    assert!(
+        f.state().zoom_target().is_some_and(|z| z < 1.0),
+        "test setup bug: mod+wheel must arm a zoom-out"
+    );
+    settle(&mut f);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&decoy)));
+    assert!(is_activated(&decoy) && !is_activated(&b));
+}
+
+/// The touchscreen's pinch, likewise. Its zoom has no restore of its own: the
+/// recognizer pans through every zoom frame, and that pan's `drift_pan_on` is
+/// what brings the pull back. The fingers converge on bare canvas below the
+/// windows, and the mouse cursor keeps its canvas point, still on the decoy.
+#[test]
+fn a_touch_pinch_after_a_navigation_hands_the_keyboard_to_the_cursor() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (_a, b) = park_for_navigation(&mut f, id);
+    let decoy = place_decoy_under_the_parked_cursor(&mut f, id);
+
+    f.state().activate_window_output_local(&b);
+    settle(&mut f);
+    f.double_roundtrip(id);
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+
+    touch_down(&mut f, Point::from((3540.0, 1110.0)), 0);
+    touch_down(&mut f, Point::from((4140.0, 1110.0)), 1);
+    for step in 1..=3 {
+        let inset = 60.0 * f64::from(step);
+        touch_motion(&mut f, Point::from((3540.0 + inset, 1110.0)), 0);
+        touch_motion(&mut f, Point::from((4140.0 - inset, 1110.0)), 1);
+    }
+    touch_up(&mut f, 0);
+    touch_up(&mut f, 1);
+    assert!(
+        f.state().zoom() < 1.0,
+        "test setup bug: the pinch must zoom out"
+    );
     f.state().refresh_pointer_focus();
     f.double_roundtrip(id);
 

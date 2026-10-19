@@ -1727,6 +1727,7 @@ impl DriftWm {
                             (base_zoom * factor).clamp(self.min_zoom(), canvas::MAX_ZOOM);
 
                         if target_zoom != base_zoom {
+                            self.user_moved_camera();
                             let screen_pos =
                                 canvas_to_screen(CanvasPos(pos), self.camera(), cur_zoom).0;
                             self.with_output_state(|os| {
