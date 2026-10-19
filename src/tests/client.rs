@@ -145,6 +145,9 @@ pub struct State {
     /// Every `idled`/`resumed` this client's idle notifications have received,
     /// oldest first.
     pub idle_events: Vec<IdleEvent>,
+    /// Every `locked`/`unlocked` this client's pointer locks have received,
+    /// oldest first.
+    pub pointer_lock_events: Vec<PointerLockEvent>,
     /// Surface-local position carried by every `wl_pointer` enter/motion this
     /// client has received, oldest first.
     pub pointer_positions: Vec<(f64, f64)>,
@@ -331,6 +334,12 @@ pub enum LockEvent {
 pub enum IdleEvent {
     Idled,
     Resumed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PointerLockEvent {
+    Locked,
+    Unlocked,
 }
 
 /// A `wl_touch` event, recorded without its payload — these scenarios only
@@ -580,6 +589,7 @@ impl Client {
             session_locks: Vec::new(),
             touch_events: Vec::new(),
             idle_events: Vec::new(),
+            pointer_lock_events: Vec::new(),
             pointer_positions: Vec::new(),
             pointer_frames: 0,
             pointer_buttons: Vec::new(),
@@ -2484,7 +2494,7 @@ impl Dispatch<ZwpPointerConstraintsV1, ()> for State {
 
 impl Dispatch<ZwpLockedPointerV1, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &ZwpLockedPointerV1,
         event: <ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
         _data: &(),
@@ -2492,8 +2502,12 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            zwp_locked_pointer_v1::Event::Locked => (),
-            zwp_locked_pointer_v1::Event::Unlocked => (),
+            zwp_locked_pointer_v1::Event::Locked => {
+                state.pointer_lock_events.push(PointerLockEvent::Locked)
+            }
+            zwp_locked_pointer_v1::Event::Unlocked => {
+                state.pointer_lock_events.push(PointerLockEvent::Unlocked)
+            }
             _ => unreachable!(),
         }
     }

@@ -7,7 +7,7 @@ use smithay::{
 
 use super::window_animation::{AnimSpace, ContentPolicy, GeometryRole};
 use super::{DriftWm, FocusTarget, StageWindow};
-use crate::input::constraint::deactivate_constraint;
+use crate::input::constraint::{deactivate_constraint, find_constraint};
 use driftwm::window_ext::WindowExt;
 
 impl DriftWm {
@@ -332,8 +332,10 @@ impl DriftWm {
             }
 
             // Deactivate any constraint on the old focused surface
-            if let Some(old) = pointer.current_focus() {
-                deactivate_constraint(self, &old.0, &pointer);
+            if let Some(old) = pointer.current_focus()
+                && let Some((constraining, _)) = find_constraint(&old.0, &pointer)
+            {
+                deactivate_constraint(self, &constraining, &pointer);
             }
             // Surface origin, not the geometry origin the stage positions by:
             // smithay subtracts it to get surface-local coordinates.

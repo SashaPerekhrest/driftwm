@@ -22,7 +22,7 @@ use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_confined_pointe
 use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
-use super::client::ClientId;
+use super::client::{ClientId, PointerLockEvent};
 use super::input_backend::{FakeDevice, pointer_relative_motion, pointer_to};
 use super::{Fixture, map_top_layer, map_window, window_by_app_id};
 
@@ -697,5 +697,58 @@ fn a_locked_window_with_subsurface_delivers_relative_motion_only() {
         f.client(id).state.pointer_positions,
         Vec::new(),
         "further motion must remain strictly relative"
+    );
+}
+
+/// Over a subsurface, the surface under the cursor is not the one holding the
+/// lock. Fullscreening another window under that cursor still has to release
+/// it, or the game is never told its lock ended.
+#[test]
+fn fullscreening_another_window_releases_a_lock_held_over_a_subsurface() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    let other_id = f.add_client();
+    let game_id = f.add_client();
+
+    // Mapped first, so the game's map leaves the camera on the game.
+    map_window(&mut f, other_id, "other", (400, 300));
+    let (surface, surface_origin) = shadowed_window(&mut f, game_id);
+    let sub_surf = f
+        .client(game_id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(game_id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(game_id);
+
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "the cursor must be over the subsurface, or this scenario tests nothing"
+    );
+
+    let _lock = f.client(game_id).lock_pointer(&surface);
+    f.double_roundtrip(game_id);
+    assert_eq!(
+        f.client(game_id).state.pointer_lock_events.last(),
+        Some(&PointerLockEvent::Locked),
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    let other = window_by_app_id(&mut f, "other").unwrap();
+    f.state().enter_fullscreen(&other, Some(output));
+    f.double_roundtrip(game_id);
+    f.double_roundtrip(other_id);
+
+    assert_eq!(
+        f.client(game_id).state.pointer_lock_events.last(),
+        Some(&PointerLockEvent::Unlocked),
+        "the game must be told its lock ended once another window takes the cursor"
     );
 }
