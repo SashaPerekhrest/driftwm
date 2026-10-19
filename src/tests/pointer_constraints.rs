@@ -298,9 +298,6 @@ fn fullscreening_a_confined_client_sends_it_the_motion() {
 /// unrelated refresh. `fullscreening_a_confined_client_sends_it_the_motion`
 /// above doesn't exercise this because its client never changes geometry —
 /// this one does, the way GTK drops its CSD margin on fullscreen.
-///
-/// Subsurface coverage is dropped: the fixture client never binds
-/// `wl_subcompositor` and has no subsurface API to exercise.
 #[test]
 fn a_csd_client_dropping_its_shadow_on_fullscreen_is_corrected_on_its_own_commit() {
     let mut f = Fixture::new();
