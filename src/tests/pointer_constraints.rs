@@ -1158,3 +1158,47 @@ fn a_hint_batched_with_destroying_an_inner_subsurface_applies() {
         "a lock that still holds must take its hint"
     );
 }
+
+/// A press handled after a session lock request but before the pull that
+/// follows starts a click grab on nothing. The lock screen still takes the
+/// game's lock, and the game's hints must not move a cursor the lock screen
+/// keeps in screen space.
+#[test]
+fn a_click_racing_the_session_lock_does_not_keep_the_game_lock() {
+    use super::input_backend::{press, release};
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let game_id = f.add_client();
+    let locker_id = f.add_client();
+    let (surface, _) = shadowed_window(&mut f, game_id);
+    let lock = lock_over_a_subsurface(&mut f, game_id, &surface);
+
+    f.client(locker_id).lock_session();
+    f.client(locker_id).flush();
+    f.state.server.dispatch_clients();
+    assert!(
+        f.state().session_lock.is_locked(),
+        "the session must lock before the press, or this scenario tests nothing"
+    );
+    let mouse = FakeDevice::mouse();
+    press(&mut f, &mouse, driftwm::config::BTN_LEFT);
+    f.double_roundtrip(game_id);
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(game_id).window(&surface).commit();
+    f.double_roundtrip(game_id);
+
+    assert_eq!(
+        f.client(game_id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "the lock screen must take the game's lock even under a held click"
+    );
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "the game's hint must not move the lock screen's cursor"
+    );
+    release(&mut f, &mouse, driftwm::config::BTN_LEFT);
+}
