@@ -373,17 +373,7 @@ impl DriftWm {
     /// hidden) and the client redraws via its own surface commits, so a blanket
     /// mark would only compete with its frames at mouse-poll rate.
     fn is_relative_motion_to_locked_pointer<I: InputBackend>(&self, event: &InputEvent<I>) -> bool {
-        if !matches!(event, InputEvent::PointerMotion { .. }) {
-            return false;
-        }
-        let Some(pointer) = self.seat.get_pointer() else {
-            return false;
-        };
-        let Some(focus) = pointer.current_focus() else {
-            return false;
-        };
-        find_constraint(&focus.0, &pointer)
-            .is_some_and(|(_, s)| s.active && s.kind == ConstraintKind::Locked)
+        matches!(event, InputEvent::PointerMotion { .. }) && self.pointer_constraint_locked()
     }
 
     /// Process a single input event from any backend (winit, libinput, etc).
