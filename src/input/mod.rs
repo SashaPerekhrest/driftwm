@@ -836,7 +836,7 @@ impl DriftWm {
 
     /// Activate a pointer constraint if the pointer is over the constraining surface
     /// and within the constraint region.
-    pub(crate) fn maybe_activate_pointer_constraint(&self) {
+    pub(crate) fn maybe_activate_pointer_constraint(&mut self) {
         // Nothing behind the lock screen may capture the pointer, and the region
         // test below reads `current_location` as canvas coords, which a locked
         // session doesn't hold. The pull after `unlock` re-runs this.
@@ -874,6 +874,7 @@ impl DriftWm {
         // is still the same, inactive constraint — and `activate` is idempotent
         // regardless.
         activate_constraint(&constraining_surface, &pointer);
+        self.armed_constraint = Some(constraining_surface);
     }
 
     /// Send a `wl_pointer.motion` and record what the client was told, so

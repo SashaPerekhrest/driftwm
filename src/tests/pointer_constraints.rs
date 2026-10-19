@@ -877,3 +877,74 @@ fn a_confine_held_over_a_subsurface_survives_crossing_onto_the_toplevel() {
         "the confine must hold across the window's own surfaces"
     );
 }
+
+/// A destroyed subsurface is cut from its parent before its leave runs, so the
+/// leave can't find the toplevel's lock by walking up from it. The lock still
+/// has to end once the cursor is left over bare canvas, or the game's next
+/// cursor hint pulls the free cursor back.
+#[test]
+fn destroying_the_subsurface_under_a_locked_cursor_releases_the_lock() {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let surface = map_window(&mut f, id, "game", (800, 600));
+    let window = window_by_app_id(&mut f, "game").unwrap();
+    // Overhangs the toplevel's right edge, so its destruction leaves the
+    // cursor over nothing.
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (700, 100), (300, 100));
+    f.double_roundtrip(id);
+    let position = f.state().stage.position_of(&window).unwrap().to_f64();
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        position + Point::from((850.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "the cursor must be over the overhanging subsurface, or this scenario \
+         tests nothing"
+    );
+    let lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.pointer_lock_events.last(),
+        Some(&PointerLockEvent::Locked),
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    sub_surf.destroy();
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .current_focus()
+            .is_none(),
+        "the cursor must be left over bare canvas, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.pointer_lock_events.last(),
+        Some(&PointerLockEvent::Unlocked),
+        "the lock must end once the cursor is off the window"
+    );
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "an ended lock's cursor hint must not move the cursor"
+    );
+}

@@ -1005,6 +1005,12 @@ pub struct DriftWm {
     /// from. `relative_motion` sets that too, but with the same focus, so the
     /// shadow stays exact.
     pub last_pointer_under: Option<(FocusTarget, Point<f64, Logical>)>,
+    /// The surface whose constraint [`DriftWm::maybe_activate_pointer_constraint`]
+    /// last armed, which the next pointer leave takes and releases. A constraint
+    /// set on a window holds over its subsurfaces, and a destroyed subsurface is
+    /// cut from its parent before its leave runs, so the leave can't find the
+    /// constraint by walking up from the surface it leaves.
+    pub armed_constraint: Option<WlSurface>,
     /// The viewport `(camera, zoom)` sloppy focus was last evaluated at, on the
     /// active output. Written by [`DriftWm::maybe_hover_focus`] on every path
     /// through it, and by the pull while [`Self::hover_follows_camera`] holds

@@ -33,7 +33,7 @@ use smithay::{
     wayland::seat::WaylandFocus,
 };
 
-use crate::input::constraint::{deactivate_constraint, find_constraint};
+use crate::input::constraint::deactivate_constraint;
 use crate::state::DriftWm;
 
 // --- FocusTarget ---
@@ -230,10 +230,10 @@ impl PointerTarget<DriftWm> for FocusTarget {
         // moves pointer focus comes through here, so this is the one place that
         // can't miss a release; a move to another surface of the same window
         // re-arms it in `update_pointer_constraint`.
-        if let Some(pointer) = seat.get_pointer()
-            && let Some((constraining, _)) = find_constraint(&self.0, &pointer)
+        if let Some(armed) = data.armed_constraint.take()
+            && let Some(pointer) = seat.get_pointer()
         {
-            deactivate_constraint(data, &constraining, &pointer);
+            deactivate_constraint(data, &armed, &pointer);
         }
     }
 }
