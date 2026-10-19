@@ -1202,3 +1202,27 @@ fn a_click_racing_the_session_lock_does_not_keep_the_game_lock() {
     );
     release(&mut f, &mouse, driftwm::config::BTN_LEFT);
 }
+
+/// Relative motion under a lock skips the blanket redraw mark, since the
+/// cursor is frozen and the game redraws through its own commits. A lock the
+/// toplevel holds is the same lock when the cursor is over its subsurface.
+#[test]
+fn relative_motion_under_a_lock_held_over_a_subsurface_marks_no_output_dirty() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    // `mark_all_dirty` copies `active_outputs`, which only the udev backend
+    // populates, so without this no motion could mark anything.
+    f.state().active_outputs.insert(output);
+    let id = f.add_client();
+
+    let (surface, _) = shadowed_window(&mut f, id);
+    let _lock = lock_over_a_subsurface(&mut f, id, &surface);
+
+    f.state().redraws_needed.clear();
+    pointer_relative_motion(&mut f, &FakeDevice::mouse(), Point::from((40.0, 25.0)));
+
+    assert!(
+        f.state().redraws_needed.is_empty(),
+        "relative motion under a lock must not mark the outputs dirty"
+    );
+}

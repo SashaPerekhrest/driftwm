@@ -35,8 +35,7 @@ use smithay::wayland::compositor::RegionAttributes;
 use std::rc::Rc;
 
 use self::constraint::{
-    ConstraintKind, activate_constraint, constraint_snapshot, deactivate_constraint,
-    find_constraint,
+    ConstraintKind, activate_constraint, deactivate_constraint, find_constraint,
 };
 use crate::decorations::{DecorationHit, DecorationKey};
 use crate::state::{DriftWm, FocusTarget, PickTarget, StageWindow, SuspendedWindow};
@@ -383,8 +382,8 @@ impl DriftWm {
         let Some(focus) = pointer.current_focus() else {
             return false;
         };
-        constraint_snapshot(&focus.0, &pointer)
-            .is_some_and(|s| s.active && s.kind == ConstraintKind::Locked)
+        find_constraint(&focus.0, &pointer)
+            .is_some_and(|(_, s)| s.active && s.kind == ConstraintKind::Locked)
     }
 
     /// Process a single input event from any backend (winit, libinput, etc).
