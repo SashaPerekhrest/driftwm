@@ -24,8 +24,8 @@ use super::input_backend::{
     trackpad_scroll, wheel_notch_down,
 };
 use super::{
-    Fixture, config, give_ssd, is_activated, keyboard_focus, map_window, server_surface, settle,
-    to_canvas, window_by_app_id,
+    Fixture, MAX_TICKS, TICK, adopt_last_configure, config, give_ssd, is_activated, keyboard_focus,
+    map_window, server_surface, settle, to_canvas, window_by_app_id,
 };
 
 const KEY_LEFTMETA: u32 = 125;
@@ -1309,4 +1309,67 @@ fn a_touch_pinch_after_a_navigation_hands_the_keyboard_to_the_cursor() {
 
     assert_eq!(keyboard_focus(&mut f), Some(server_surface(&decoy)));
     assert!(is_activated(&decoy) && !is_activated(&b));
+}
+
+/// fit-window focuses the window it fits and flies the camera to it, so it
+/// parks the hover pull as a navigation does. `a` sits off to the right; the
+/// flight sweeps the resting cursor across `b` on the way, and a pull taken
+/// mid-flight must leave the keyboard on `a`.
+#[test]
+fn a_fit_window_flight_keeps_the_keyboard_under_a_resting_cursor() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let a_surface = map_window(&mut f, id, "a", (400, 300));
+    let a = window_by_app_id(&mut f, "a").unwrap();
+    place(&mut f, &a, Point::from((2000, 400)));
+    map_window(&mut f, id, "b", (300, 250));
+    let b = window_by_app_id(&mut f, "b").unwrap();
+    place(&mut f, &b, Point::from((700, 0)));
+    origin_view(&mut f);
+    f.state()
+        .with_output_state(|os| os.zoom_animation_anchor = None);
+
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    f.double_roundtrip(id);
+    pointer_to(&mut f, &FakeDevice::mouse(), Point::from((100.0, 140.0)));
+    f.double_roundtrip(id);
+    // Re-arm the hover pull the maps parked, as a user pan does.
+    pan_viewport(&mut f, Point::from((0.0, -40.0)));
+    f.double_roundtrip(id);
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&a)));
+
+    f.state().execute_action(&Action::FitWindow);
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &a_surface);
+    let b_rect = Rectangle::new(Point::from((700.0, 0.0)), Size::from((300.0, 250.0)));
+    let mut over_b = false;
+    for _ in 0..MAX_TICKS {
+        // The fit holds its pan until the client commits the fitted size;
+        // the window-animation tick is what then releases it.
+        f.state().tick_window_animations(TICK);
+        f.state().apply_zoom_animation(TICK);
+        f.state().apply_camera_animation(TICK);
+        let cursor = f.state().seat.get_pointer().unwrap().current_location();
+        if b_rect.contains(cursor) {
+            over_b = true;
+            break;
+        }
+    }
+    assert!(
+        over_b,
+        "test setup bug: the flight must carry the cursor across b"
+    );
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        keyboard_focus(&mut f),
+        Some(server_surface(&a)),
+        "a fit's own camera flight must not hand the keyboard to a window it \
+         sweeps under the resting cursor"
+    );
+    assert!(is_activated(&a) && !is_activated(&b));
 }

@@ -158,6 +158,8 @@ impl DriftWm {
         let Some(output) = self.active_output() else {
             return;
         };
+        // The pan below serves the focus just set, as a navigation's does.
+        self.hover_follows_camera = false;
         // This fit owns the output's view from here on, whether it parks its pan
         // or applies it below. A pan parked on some other window's freeze was
         // promised to an action this one has just superseded — including one
