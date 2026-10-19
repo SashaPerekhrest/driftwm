@@ -418,11 +418,19 @@ impl DriftWm {
 
     /// Launch momentum on a specific output.
     pub fn launch_momentum_on(&mut self, output: &smithay::output::Output) {
+        self.disarm_momentum_launch_on(&output.name());
+        let coasting = {
+            let mut os = super::output_state(output);
+            os.momentum.launch();
+            os.momentum.velocity != Point::from((0.0, 0.0))
+        };
         // A fling is a pan the user started; if a navigation parked the hover
         // pull in the meantime, this coasting move is still theirs to follow.
-        self.user_moved_camera();
-        self.disarm_momentum_launch_on(&output.name());
-        super::output_state(output).momentum.launch();
+        // A navigation also clears the tracker, so a lift after one launches
+        // nothing and leaves its flight alone.
+        if coasting {
+            self.user_moved_camera();
+        }
     }
 
     /// Advance the camera animation toward `camera_target` using frame-rate independent lerp.

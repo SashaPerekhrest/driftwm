@@ -1373,3 +1373,26 @@ fn a_fit_window_flight_keeps_the_keyboard_under_a_resting_cursor() {
     );
     assert!(is_activated(&a) && !is_activated(&b));
 }
+
+/// A finger lift launches momentum, but a navigation in between stopped the
+/// pan's and cleared its tracker, so nothing coasts. That empty launch must
+/// not count as a camera move of the user's: the activation's flight keeps
+/// the keyboard on `b` all the way in.
+#[test]
+fn a_finger_lift_after_a_navigation_leaves_its_flight_alone() {
+    let mut f = Fixture::with_config(config("focus_follows_mouse = true\n"));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (_a, b) = park_for_navigation(&mut f, id);
+    let decoy = place_decoy_under_the_parked_cursor(&mut f, id);
+
+    f.state().activate_window_output_local(&b);
+    f.state().launch_momentum();
+    settle(&mut f);
+    f.state().refresh_pointer_focus();
+    f.double_roundtrip(id);
+
+    assert_eq!(keyboard_focus(&mut f), Some(server_surface(&b)));
+    assert!(is_activated(&b) && !is_activated(&decoy));
+}
