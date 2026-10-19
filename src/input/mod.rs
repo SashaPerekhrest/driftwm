@@ -1111,17 +1111,17 @@ impl DriftWm {
         let under = self.wl_pointer_under(under);
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
         let focus_unchanged = delivered.as_ref().map(|(focus, _)| focus) == old_focus.as_ref();
-        let old_constraining = old_focus
-            .as_ref()
-            .and_then(|f| find_constraint(&f.0, &pointer))
-            .map(|(s, _)| s);
-        let new_constraining = delivered
-            .as_ref()
-            .and_then(|(f, _)| find_constraint(&f.0, &pointer))
-            .map(|(s, _)| s);
         let lock_held = self.pointer_constraint_locked()
-            && (focus_unchanged
-                || (old_constraining.is_some() && old_constraining == new_constraining));
+            && (focus_unchanged || {
+                let constraining = |focus: Option<&FocusTarget>| {
+                    focus
+                        .and_then(|f| find_constraint(&f.0, &pointer))
+                        .map(|(s, _)| s)
+                };
+                let old_constraining = constraining(old_focus.as_ref());
+                old_constraining.is_some()
+                    && old_constraining == constraining(delivered.as_ref().map(|(f, _)| f))
+            });
         // A lock still holding the surface under the cursor has nothing to
         // re-seat, and the motion below would read as a jump the client never
         // made: the lock freezes the cursor while `cursor_position_hint` keeps
