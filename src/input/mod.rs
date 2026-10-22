@@ -30,6 +30,7 @@ use std::rc::Rc;
 
 use self::constraint::{
     ConstraintKind, activate_constraint, constraint_snapshot, deactivate_constraint,
+    find_constraint,
 };
 use crate::decorations::{DecorationHit, DecorationKey};
 use crate::state::{DriftWm, FocusTarget, PickTarget, StageWindow, SuspendedWindow};
@@ -197,12 +198,33 @@ pub(crate) fn window_origin_for_surface(
     state: &DriftWm,
     surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
 ) -> Option<Point<f64, smithay::utils::Logical>> {
-    let window = state
+    let window = state.window_for_surface_root(surface)?;
+    let position = state
         .stage
-        .windows()
-        .find(|w| w.wl_surface().as_deref() == Some(surface))?;
-    let position = state.stage.position_of(window)?;
-    Some((position - window.geometry().loc).to_f64())
+        .position_of(&StageWindow::Client(window.clone()))?;
+    let toplevel_origin = (position - window.geometry().loc).to_f64();
+    if window.wl_surface().as_deref() == Some(surface) {
+        return Some(toplevel_origin);
+    }
+    let mut offset = Point::<i32, smithay::utils::Logical>::default();
+    let mut curr = surface.clone();
+    let root = window.wl_surface()?;
+    while curr != *root {
+        if let Some(parent) = smithay::wayland::compositor::get_parent(&curr) {
+            let loc = smithay::wayland::compositor::with_states(&curr, |states| {
+                states
+                    .cached_state
+                    .get::<smithay::wayland::compositor::SubsurfaceCachedState>()
+                    .current()
+                    .location
+            });
+            offset += loc;
+            curr = parent;
+        } else {
+            break;
+        }
+    }
+    Some(toplevel_origin + offset.to_f64())
 }
 
 /// Advance the per-output hot-corner latch and return a newly entered corner.
@@ -566,6 +588,14 @@ impl DriftWm {
             self.pointer_over_screen_space = true;
             return Some(hit);
         }
+        if self.stage.has_pinned()
+            && (!matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
+                || self.pinned_resize_margin_under(screen_pos))
+        {
+            self.pointer_over_layer = false;
+            self.pointer_over_screen_space = true;
+            return None;
+        }
 
         // A suspended window is an opaque canvas element that sits with normal
         // windows. When one is the topmost element here it terminates the
@@ -591,6 +621,14 @@ impl DriftWm {
                 return None;
             }
             return Some(hit);
+        }
+        // Compositor chrome on canvas windows (SSD title bar, close button, resize borders)
+        // occludes lower layers (canvas layers, widgets, bottom layers) while yielding no
+        // client pointer focus.
+        if self.decoration_under(canvas_pos).is_some() || self.resize_margin_under(canvas_pos) {
+            self.pointer_over_layer = false;
+            self.pointer_over_screen_space = false;
+            return None;
         }
 
         // Canvas-positioned layer surfaces
@@ -625,9 +663,25 @@ impl DriftWm {
         None
     }
 
+    /// A camera move the user drove: a pan, its fling, a zoom, an edge-pan, a
+    /// bookmark or an IPC jump. Brings the sloppy-focus pull back after a
+    /// navigation suspended it ([`Self::hover_follows_camera`]), since a
+    /// viewport the user is looking around in owes hover the window it lands
+    /// on.
+    pub(crate) fn user_moved_camera(&mut self) {
+        self.hover_follows_camera = true;
+    }
+
     /// Sloppy focus: when enabled, focus the non-widget window under the pointer
     /// without raising it. Skips layers, widgets, and empty canvas.
+    ///
+    /// Stamps the viewport it answered for, on every path through it — a
+    /// decline is an answer too — so [`Self::refresh_pointer_focus`] can tell a
+    /// viewport that moved under a resting cursor, which this never sees, from
+    /// a scene change that left the camera where it was, which needs no second
+    /// pass.
     pub(crate) fn maybe_hover_focus(&mut self, canvas_pos: Point<f64, smithay::utils::Logical>) {
+        self.hover_viewport = Some((self.camera(), self.zoom()));
         if !self.config.focus_follows_mouse || self.pointer_over_layer {
             return;
         }
@@ -734,15 +788,30 @@ impl DriftWm {
         self.set_activated_exclusive(&target);
     }
 
-    /// Deactivate the constraint on the previous focus if focus changed,
-    /// then try to activate one on the new focus.
+    /// Deactivate the constraint on the previous focus if focus changed away from
+    /// the constraining surface, then try to activate one on the new focus.
     fn update_pointer_constraint(&mut self, old_focus: Option<FocusTarget>) {
         let pointer = self.seat.get_pointer().unwrap();
         let new_focus = pointer.current_focus();
-        let focus_changed = old_focus.as_ref().map(|f| &f.0) != new_focus.as_ref().map(|f| &f.0);
 
-        if focus_changed && let Some(old) = &old_focus {
-            deactivate_constraint(self, &old.0, &pointer);
+        let old_c = old_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer));
+        let new_c = new_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer));
+
+        let same_constraint = match (&old_c, &new_c) {
+            (Some((old_s, _)), Some((new_s, _))) => old_s == new_s,
+            _ => false,
+        };
+
+        if !same_constraint {
+            if let Some((old_s, _)) = old_c {
+                deactivate_constraint(self, &old_s, &pointer);
+            } else if let Some(old) = &old_focus {
+                deactivate_constraint(self, &old.0, &pointer);
+            }
         }
 
         self.maybe_activate_pointer_constraint();
@@ -765,7 +834,7 @@ impl DriftWm {
         // Reading the constraint and `window_origin_for_surface` both lock the
         // surface's mutex, so the region check runs against a snapshot taken
         // first rather than against the live constraint.
-        let Some(snapshot) = constraint_snapshot(&focus.0, &pointer) else {
+        let Some((constraining_surface, snapshot)) = find_constraint(&focus.0, &pointer) else {
             return;
         };
         if snapshot.active {
@@ -774,7 +843,8 @@ impl DriftWm {
 
         if let Some(region) = snapshot.region {
             let pointer_canvas = pointer.current_location();
-            let Some(surface_origin) = window_origin_for_surface(self, &focus.0) else {
+            let Some(surface_origin) = window_origin_for_surface(self, &constraining_surface)
+            else {
                 return;
             };
             let local = pointer_canvas - surface_origin;
@@ -786,7 +856,7 @@ impl DriftWm {
         // Nothing between the two calls dispatches or runs client code, so this
         // is still the same, inactive constraint — and `activate` is idempotent
         // regardless.
-        activate_constraint(&focus.0, &pointer);
+        activate_constraint(&constraining_surface, &pointer);
     }
 
     /// Send a `wl_pointer.motion` and record what the client was told, so
@@ -992,6 +1062,17 @@ impl DriftWm {
         }
         let delivered = self.delivered_focus(&pointer, grab, under.clone());
         let focus_unchanged = delivered.as_ref().map(|(focus, _)| focus) == old_focus.as_ref();
+        let old_constraining = old_focus
+            .as_ref()
+            .and_then(|f| find_constraint(&f.0, &pointer))
+            .map(|(s, _)| s);
+        let new_constraining = delivered
+            .as_ref()
+            .and_then(|(f, _)| find_constraint(&f.0, &pointer))
+            .map(|(s, _)| s);
+        let lock_held = self.pointer_constraint_locked()
+            && (focus_unchanged
+                || (old_constraining.is_some() && old_constraining == new_constraining));
         // A lock still holding the surface under the cursor has nothing to
         // re-seat, and the motion below would read as a jump the client never
         // made: the lock freezes the cursor while `cursor_position_hint` keeps
@@ -999,7 +1080,7 @@ impl DriftWm {
         // the cursor strands the lock, so that falls through to clear it.
         // Confines are excluded — that cursor really moves, and suppressing the
         // re-seat would leave it measured against a stale surface origin.
-        if self.pointer_constraint_locked() && focus_unchanged {
+        if lock_held {
             return;
         }
         // Compare the whole basis of the delivery — target, surface origin and
@@ -1048,6 +1129,24 @@ impl DriftWm {
         // region is re-set around the parked cursor becomes armable with no
         // delivery change, and nothing else re-evaluates it.
         self.update_pointer_constraint(old_focus);
+        // Sloppy focus has its own pull, for the case the delivery dedup above
+        // cannot see: a pan or a zoom slides a different window under a cursor
+        // that never moves, so nothing dispatches, yet under
+        // `focus_follows_mouse` the keyboard focus owes a move to it. Gated on
+        // the viewport, so only a camera that actually moved pays the walk — the
+        // pick above has already refreshed `pointer_over_layer`, which this
+        // reads. Reached from here rather than from the camera-move sites for
+        // the reason this function exists at all: there is no chokepoint a pan
+        // has to pass through.
+        //
+        // The second conjunct keeps a navigation that focused the window it
+        // pans to from losing the keyboard on the way there: the camera move
+        // that `center-nearest`, `focus-center`, Alt-Tab, an activation or
+        // `msg focus` makes is in service of the focus they just set, not a
+        // viewport the user is looking around in.
+        if self.hover_viewport != Some((self.camera(), self.zoom())) && self.hover_follows_camera {
+            self.maybe_hover_focus(canvas_pos);
+        }
         // A second z-order walk that can re-rasterise a title bar, so only when
         // something changed or an affordance is in play: pick mode flips with
         // the zoom and no pointer motion, and a latched affordance has to clear
@@ -1177,8 +1276,8 @@ impl DriftWm {
 
         // Pointer lock: freeze position, only send relative motion
         if let Some(focus) = pointer.current_focus() {
-            let locked = constraint_snapshot(&focus.0, &pointer)
-                .is_some_and(|s| s.active && s.kind == ConstraintKind::Locked);
+            let locked = find_constraint(&focus.0, &pointer)
+                .is_some_and(|(_, s)| s.active && s.kind == ConstraintKind::Locked);
             if locked {
                 let origin = window_origin_for_surface(self, &focus.0).unwrap_or(old_canvas);
                 pointer.relative_motion(
@@ -1203,7 +1302,7 @@ impl DriftWm {
         // constraint can never re-establish.
         let confined: Option<(FocusTarget, Option<RegionAttributes>)> =
             pointer.current_focus().and_then(|focus| {
-                let snapshot = constraint_snapshot(&focus.0, &pointer)?;
+                let (constraining_surface, snapshot) = find_constraint(&focus.0, &pointer)?;
                 if !snapshot.active || snapshot.kind != ConstraintKind::Confined {
                     return None;
                 }
@@ -1212,7 +1311,7 @@ impl DriftWm {
                 // region; if it's currently outside, leave this motion free so it
                 // can move back in — the same gate activation uses.
                 if let Some(region) = &region
-                    && let Some(origin) = window_origin_for_surface(self, &focus.0)
+                    && let Some(origin) = window_origin_for_surface(self, &constraining_surface)
                     && !region.contains((old_canvas - origin).to_i32_round())
                 {
                     return None;
@@ -1310,8 +1409,20 @@ impl DriftWm {
         // the absolute cursor in place, so it can't cross to another output and
         // strand the constraint.
         if let Some((focus, region)) = &confined {
-            let origin = window_origin_for_surface(self, &focus.0);
-            let leaves_surface = under.as_ref().map(|(f, _)| &f.0) != Some(&focus.0);
+            let constraining_origin = find_constraint(&focus.0, &pointer)
+                .and_then(|(c_surf, _)| window_origin_for_surface(self, &c_surf));
+            let origin = constraining_origin.or_else(|| window_origin_for_surface(self, &focus.0));
+            let leaves_surface = match under.as_ref() {
+                Some((f, _)) => {
+                    let old_c = find_constraint(&focus.0, &pointer).map(|(s, _)| s);
+                    let new_c = find_constraint(&f.0, &pointer).map(|(s, _)| s);
+                    match (old_c, new_c) {
+                        (Some(o), Some(n)) => o != n,
+                        _ => f.0 != focus.0,
+                    }
+                }
+                None => true,
+            };
             let leaves_region = match (region, origin) {
                 (Some(region), Some(origin)) => {
                     !region.contains((canvas_pos - origin).to_i32_round())
@@ -1648,22 +1759,10 @@ impl DriftWm {
         &self,
         canvas_pos: Point<f64, smithay::utils::Logical>,
     ) -> Option<PickTarget> {
-        // A stand-in owns no surface, so `surface_under` can't see it. Check the
-        // decoration channel first: it is topmost-first, so a client's content or
-        // chrome above the stand-in wins and this arm won't match.
-        if let Some((DecoTarget::Suspended(s), _)) = self.decoration_under(canvas_pos) {
-            return Some(PickTarget::Suspended(s.id));
+        match self.draggable_element_under(canvas_pos)? {
+            StageWindow::Suspended(s) => Some(PickTarget::Suspended(s.id)),
+            StageWindow::Client(w) => Some(PickTarget::Client(w)),
         }
-        let (target, _) = self.surface_under(canvas_pos, Some(false))?;
-        // A content hit may be a subsurface; walk to the root toplevel before
-        // resolving to a window (chrome hits already return the toplevel).
-        let mut root = target.0;
-        while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
-            root = parent;
-        }
-        let window = self.window_for_surface(&root)?;
-        self.is_canvas_window(&window)
-            .then_some(PickTarget::Client(window))
     }
 
     /// The stage element a move or resize gesture at `canvas_pos` may drag — a
@@ -1762,7 +1861,9 @@ impl DriftWm {
                 ));
             }
 
-            // Then check decoration areas for this window
+            // Then check decoration areas for this window. These are compositor chrome
+            // (not client surface content), so hitting them terminates the z-order
+            // walk (occluding anything beneath) while yielding no client pointer focus.
             let size = window.geometry().size;
             if self
                 .decorations
@@ -1773,7 +1874,7 @@ impl DriftWm {
                     || crate::decorations::resize_edge_at(pos, loc, size, bar_height, border_width)
                         .is_some()
                 {
-                    return Some((FocusTarget((*wl_surface).clone()), loc.to_f64()));
+                    return None;
                 }
             } else {
                 // CSD: compositor-side resize margin strictly outside the client
@@ -1786,7 +1887,7 @@ impl DriftWm {
                     && !is_fullscreen
                     && crate::decorations::resize_edge_at(pos, loc, size, 0, border_width).is_some()
                 {
-                    return Some((FocusTarget((*wl_surface).clone()), loc.to_f64()));
+                    return None;
                 }
             }
         }
@@ -1867,12 +1968,7 @@ impl DriftWm {
                 )
                 .is_some()
                 {
-                    let adjusted = screen_space_focus_loc(
-                        ScreenPos(p.screen_pos.to_f64()),
-                        CanvasPos(canvas_pos),
-                        ScreenPos(screen_pos),
-                    );
-                    return Some((FocusTarget((*wl_surface).clone()), adjusted));
+                    return None;
                 }
             } else {
                 let is_widget =
@@ -1887,12 +1983,7 @@ impl DriftWm {
                     )
                     .is_some()
                 {
-                    let adjusted = screen_space_focus_loc(
-                        ScreenPos(p.screen_pos.to_f64()),
-                        CanvasPos(canvas_pos),
-                        ScreenPos(screen_pos),
-                    );
-                    return Some((FocusTarget((*wl_surface).clone()), adjusted));
+                    return None;
                 }
             }
         }
@@ -2300,10 +2391,9 @@ impl DriftWm {
     /// Whether `pos` lands in the resize margin of any canvas element. The
     /// channels that report that margin — `decoration_hit_for` and
     /// `suspended_decoration_hit` — are gated on `resize_on_border` because they
-    /// answer what the band *does*; `pointer_context` asks this instead so the
-    /// band's membership stays the window's either way. A pinned window needs no
-    /// arm here: `pinned_window_under` already answers for its margin ungated, in
-    /// screen space.
+    /// answer what the band *does*; `pointer_context` and `focus_cascade` ask
+    /// this instead so the band's membership and occlusion stay the window's either way.
+    /// Pinned windows check `pinned_resize_margin_under` in screen space.
     ///
     /// No occlusion pass: anything drawn over a margin is itself on-window, so
     /// the answer is the same whichever of the two the pointer is really over.
@@ -2337,6 +2427,29 @@ impl DriftWm {
                 self.resize_margin_hit_for(w, entry.position, pos).is_some()
             }
         })
+    }
+
+    /// Whether `screen_pos` lands in the resize margin of any screen-pinned window.
+    pub(crate) fn pinned_resize_margin_under(&self, screen_pos: Point<f64, Logical>) -> bool {
+        let Some(output) = self.active_output() else {
+            return false;
+        };
+        let output_name = output.name();
+        for (window, site) in self.stage.pinned_windows() {
+            let Some(window) = window.client() else {
+                continue;
+            };
+            if site.output != output_name {
+                continue;
+            }
+            if self
+                .resize_margin_hit_for(window, site.screen_pos, screen_pos)
+                .is_some()
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Which region of a suspended window's frame `pos` lands in, or `None` if

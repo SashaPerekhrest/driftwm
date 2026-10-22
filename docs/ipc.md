@@ -9,8 +9,8 @@ JSON, so any language can speak it directly.
 
 Run `driftwm msg <command>` from inside a driftwm session. The commands —
 `camera`, `zoom`, `focus`, `move`, `resize`, `opacity`, `pin`, `close`,
-`suspend`, `relaunch`, `layout`, `action`, `bookmark`, `screenshot`, `state`,
-`subscribe`, and `debug-counters` — with their arguments, flags, and JSON reply
+`suspend`, `relaunch`, `layout`, `cursor`, `action`, `bookmark`, `screenshot`,
+`state`, `subscribe`, and `debug-counters` — with their arguments, flags, and JSON reply
 shapes are documented in the generated [CLI reference](cli.md);
 `driftwm msg <command> --help` prints the same for one command. The conventions
 they share follow below.
@@ -18,10 +18,10 @@ they share follow below.
 `camera`, `zoom`, `focus`, `move`, `resize`, `opacity`, `pin`, and `bookmark`
 read when given no arguments and write when given arguments. The others don't
 follow that rule: `action` requires its arguments, `close`/`suspend`/`relaunch`
-act on the focused window when given no selector, and `layout`, `screenshot`,
-`state`, `subscribe`, and `debug-counters` need no arguments at all. A command
-that fails (bad value, no focused window, no match) prints an error to stderr
-and exits non-zero, so scripts can branch on it.
+act on the focused window when given no selector, and `layout`, `cursor`,
+`screenshot`, `state`, `subscribe`, and `debug-counters` need no arguments at
+all. A command that fails (bad value, no focused window, no match) prints an
+error to stderr and exits non-zero, so scripts can branch on it.
 
 Add `--json` to print the raw JSON reply. The default output is a human-readable
 rendering for a terminal, not a stable format — parse `--json`, or the
@@ -186,6 +186,7 @@ A window can be targeted by a **selector**: a JSON number is its stable `id`
 | suspend           | `{"Suspend":null}` / `{"Suspend":5}` / `{"Suspend":"alacritty"}`                    |
 | relaunch          | `{"Relaunch":null}` / `{"Relaunch":5}` / `{"Relaunch":"alacritty"}`                 |
 | layout            | `{"Layout":{"short":false}}`                                                        |
+| cursor            | `"Cursor"`                                                                          |
 | run action        | `{"Action":"switch-layout next"}`                                                   |
 | bookmark          | `{"Bookmark":{}}` (list) / `{"Bookmark":{"name":"home"}}` (get) / `{"Bookmark":{"name":"home","to":[0,0]}}` (set) / `{"Bookmark":{"name":"home","delete":true}}` (delete) |
 | screenshot        | `{"Screenshot":{"target":"Viewport","scale":1.0,"path":"/abs/shot.png"}}` (all three fields required; `path` must be absolute) |
@@ -200,6 +201,7 @@ A window can be targeted by a **selector**: a JSON number is its stable `id`
 {"Ok":{"Camera":{"x":500.0,"y":300.0}}}
 {"Ok":{"Zoom":0.5}}
 {"Ok":{"Layout":"English (US)"}}    // or "us" for {"Layout":{"short":true}}
+{"Ok":{"Cursor":{"x":2600.5,"y":12.0,"output":"DP-1"}}}   // global output layout, screen space, Y-down
 {"Ok":{"Focused":{"id":5,"app_id":"alacritty"}}}   // or {"Ok":{"Focused":null}}
 {"Ok":{"Position":{"x":100,"y":200}}}
 {"Ok":{"Size":{"width":800,"height":600}}}
@@ -213,7 +215,7 @@ A window can be targeted by a **selector**: a JSON number is its stable `id`
 {"Ok":{"State":{"camera":[-960.0,-600.0],"zoom":1.0,"layout":"English (US)",
   "layout_short":"us","windows":[
   {"id":3,"app_id":"foot","title":"~","position":[0,0],"size":[800,480],
-   "is_focused":true,"is_widget":false,"suspended":false,"mode":"Normal"}
+   "is_focused":true,"is_widget":false,"suspended":false,"mode":"Normal","pid":4242}
 ]}}}
 {"Err":"no focused window"}
 ```
@@ -236,6 +238,11 @@ stand-in rather than a live client — see [Suspended windows](#suspended-window
 a fill that grew to the same rect and doesn't flicker during a configure
 round-trip the way a geometric guess does. A compositor older than this field
 omits it — treat missing as `"Normal"`.
+`pid` is the client's process ID, read from its Wayland socket credentials, so a
+tool can find the window a process owns — the terminal a command runs in, say —
+and raise it by `id`. An XWayland window reports the Xwayland server's PID, and a
+stand-in, which has no client, has no `pid`; a compositor older than this field
+omits it too.
 The reply also carries `layout` (full XKB name) and `layout_short` (the
 configured code for the active group); `fullscreen` and `pinned` (screen-space
 windows, each carrying an `id` too — a `pinned` entry's `position`/`size` are in

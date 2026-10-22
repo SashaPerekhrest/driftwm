@@ -32,6 +32,9 @@ pub enum Request {
     Layout {
         short: bool,
     },
+    /// The pointer in the global output layout (screen space, not canvas), plus
+    /// the output it is on.
+    Cursor,
     State,
     /// Sizes of the compositor's leak-prone internal collections, keyed by
     /// field name. A debug/introspection endpoint — the keys are unstable
@@ -150,6 +153,11 @@ pub enum Response {
     },
     Zoom(f64),
     Layout(String),
+    Cursor {
+        x: f64,
+        y: f64,
+        output: String,
+    },
     /// Boxed so the whole-state snapshot doesn't bloat every other (tiny)
     /// reply variant. Serde-transparent, so the wire shape is unchanged.
     State(Box<StateInfo>),
@@ -295,6 +303,10 @@ pub struct WindowInfo {
     /// The compositor's own fit/fill record — see [`WindowMode`].
     #[serde(default)]
     pub mode: WindowMode,
+    /// The client's process ID, from its Wayland socket credentials. Absent for
+    /// a stand-in, which has no client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// A fullscreen window in the IPC `state` reply — one per fullscreened output.
@@ -367,6 +379,7 @@ mod tests {
             Request::Zoom(Some(2.0)),
             Request::Layout { short: false },
             Request::Layout { short: true },
+            Request::Cursor,
             Request::State,
             Request::DebugCounters,
             Request::Subscribe,
@@ -577,6 +590,7 @@ mod tests {
                 is_widget: false,
                 suspended: false,
                 mode: WindowMode::Normal,
+                pid: Some(4242),
             }],
             fullscreen: vec![OutputFullscreen {
                 id: 2,
@@ -615,6 +629,11 @@ mod tests {
         let replies: Vec<Reply> = vec![
             Ok(Response::Camera { x: 1.0, y: 2.0 }),
             Ok(Response::Zoom(1.5)),
+            Ok(Response::Cursor {
+                x: 2600.5,
+                y: 12.0,
+                output: "DP-1".into(),
+            }),
             Ok(Response::State(Box::new(sample_state()))),
             Ok(Response::DebugCounters(
                 [("stage_entries".to_string(), 2usize)]
@@ -676,6 +695,26 @@ mod tests {
             assert!(obj.get(key).is_some(), "missing key {key}");
         }
         assert_eq!(obj["windows"][0]["mode"], "Normal");
+    }
+
+    /// `pid` is a plain number when the window has a client, left out for a
+    /// stand-in, and a reply from a compositor without the field still parses.
+    #[test]
+    fn window_pid_wire_contract() {
+        let mut state = sample_state();
+        let json = serde_json::to_value(&state).unwrap();
+        assert_eq!(json["windows"][0]["pid"], 4242);
+
+        state.windows[0].pid = None;
+        let json = serde_json::to_value(&state).unwrap();
+        assert!(json["windows"][0].get("pid").is_none());
+
+        let older: WindowInfo = serde_json::from_str(
+            r#"{"id":1,"app_id":"foot","title":"~","position":[0,0],"size":[1,1],
+                "is_focused":false,"is_widget":false}"#,
+        )
+        .unwrap();
+        assert_eq!(older.pid, None);
     }
 
     /// The documented wire contract for `mode`: `Fit`/`Fill` serialize to those

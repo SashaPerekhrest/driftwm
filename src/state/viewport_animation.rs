@@ -23,7 +23,7 @@ use smithay::output::Output;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 
 use super::{DriftWm, FocusTarget, output_state};
-use crate::input::constraint::{ConstraintKind, constraint_snapshot, deactivate_constraint};
+use crate::input::constraint::{ConstraintKind, deactivate_constraint, find_constraint};
 
 /// How long after the last pan event momentum auto-launches, covering touchpads
 /// that don't send AxisStop on finger lift.
@@ -136,16 +136,17 @@ impl DriftWm {
         let pointer = self.seat.get_pointer().unwrap();
         pointer
             .current_focus()
-            .is_some_and(|focus| constraint_snapshot(&focus.0, &pointer).is_some_and(|s| s.active))
+            .is_some_and(|focus| find_constraint(&focus.0, &pointer).is_some_and(|(_, s)| s.active))
     }
 
-    /// Whether `surface` is the focused surface and holds an active lock.
+    /// Whether `surface` is the focused surface (or its ancestor) and holds an active lock.
     pub(crate) fn locked_to(&self, surface: &WlSurface) -> bool {
         let pointer = self.seat.get_pointer().unwrap();
-        pointer
-            .current_focus()
-            .is_some_and(|focus| focus.0 == *surface)
-            && self.pointer_constraint_locked()
+        pointer.current_focus().is_some_and(|focus| {
+            find_constraint(&focus.0, &pointer).is_some_and(|(c_surf, s)| {
+                s.active && s.kind == ConstraintKind::Locked && c_surf == *surface
+            })
+        })
     }
 
     /// Whether the focused surface holds an active *lock*, as opposed to a
@@ -154,8 +155,8 @@ impl DriftWm {
     pub(crate) fn pointer_constraint_locked(&self) -> bool {
         let pointer = self.seat.get_pointer().unwrap();
         pointer.current_focus().is_some_and(|focus| {
-            constraint_snapshot(&focus.0, &pointer)
-                .is_some_and(|s| s.active && s.kind == ConstraintKind::Locked)
+            find_constraint(&focus.0, &pointer)
+                .is_some_and(|(_, s)| s.active && s.kind == ConstraintKind::Locked)
         })
     }
 
@@ -166,7 +167,19 @@ impl DriftWm {
     pub(crate) fn cursor_over_surface(&self, surface: &WlSurface) -> bool {
         let pointer = self.seat.get_pointer().unwrap();
         self.focus_under(pointer.current_location())
-            .is_some_and(|(under, _)| under.0 == *surface)
+            .is_some_and(|(under, _)| {
+                if under.0 == *surface {
+                    return true;
+                }
+                let mut curr = under.0.clone();
+                while let Some(parent) = smithay::wayland::compositor::get_parent(&curr) {
+                    if parent == *surface {
+                        return true;
+                    }
+                    curr = parent;
+                }
+                false
+            })
     }
 
     /// Keep the cursor at the same screen position after a camera or zoom
@@ -195,15 +208,25 @@ impl DriftWm {
             // cursor, stranding input on a stale lock. Reactivates itself once
             // the cursor returns.
             let same_surface_under_cursor = pointer.current_focus().is_some_and(|current| {
-                self.focus_under(new_pos)
-                    .is_some_and(|(under, _)| under == current)
+                self.focus_under(new_pos).is_some_and(|(under, _)| {
+                    if under == current {
+                        return true;
+                    }
+                    let current_c = find_constraint(&current.0, &pointer).map(|(s, _)| s);
+                    let under_c = find_constraint(&under.0, &pointer).map(|(s, _)| s);
+                    current_c.is_some() && current_c == under_c
+                })
             });
             if same_surface_under_cursor {
                 pointer.set_location(new_pos);
                 return;
             }
             if let Some(focus) = pointer.current_focus() {
-                deactivate_constraint(self, &focus.0, &pointer);
+                if let Some((c_surf, _)) = find_constraint(&focus.0, &pointer) {
+                    deactivate_constraint(self, &c_surf, &pointer);
+                } else {
+                    deactivate_constraint(self, &focus.0, &pointer);
+                }
             }
         }
 
@@ -288,6 +311,7 @@ impl DriftWm {
         // velocity is screen-space speed; convert to canvas delta
         let zoom = self.zoom();
         let canvas_delta = Point::from((velocity.x / zoom, velocity.y / zoom));
+        self.user_moved_camera();
         self.set_camera(self.camera() + canvas_delta);
         self.update_output_from_camera();
 
@@ -336,6 +360,7 @@ impl DriftWm {
         if self.is_output_fullscreen(output) {
             return Point::from((0.0, 0.0));
         }
+        self.user_moved_camera();
         {
             let mut os = super::output_state(output);
             os.camera_target = None;
@@ -402,6 +427,9 @@ impl DriftWm {
 
     /// Launch momentum on a specific output.
     pub fn launch_momentum_on(&mut self, output: &smithay::output::Output) {
+        // A fling is a pan the user started; if a navigation parked the hover
+        // pull in the meantime, this coasting move is still theirs to follow.
+        self.user_moved_camera();
         self.disarm_momentum_launch_on(&output.name());
         super::output_state(output).momentum.launch();
     }
@@ -644,6 +672,7 @@ impl DriftWm {
         };
 
         let cam = output_state(output).camera;
+        self.user_moved_camera();
         self.set_camera_on(
             output,
             Point::from((cam.x + canvas_delta.x, cam.y + canvas_delta.y)),

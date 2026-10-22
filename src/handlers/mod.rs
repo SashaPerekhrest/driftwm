@@ -369,7 +369,19 @@ impl PointerConstraintsHandler for DriftWm {
         // the constraint before the pull re-seats focus, and a constraint created
         // inside that gap would otherwise arm on a window the cursor is no
         // longer over — freezing it there with no path back.
-        let already_focused = pointer.current_focus().map(|f| f.0).as_ref() == Some(surface);
+        let already_focused = pointer.current_focus().is_some_and(|f| {
+            if f.0 == *surface {
+                return true;
+            }
+            let mut curr = f.0.clone();
+            while let Some(parent) = smithay::wayland::compositor::get_parent(&curr) {
+                if parent == *surface {
+                    return true;
+                }
+                curr = parent;
+            }
+            false
+        });
         if !already_focused || !self.cursor_over_surface(surface) {
             self.refresh_pointer_focus();
         }
@@ -382,8 +394,8 @@ impl PointerConstraintsHandler for DriftWm {
         pointer: &PointerHandle<Self>,
         location: Point<f64, Logical>,
     ) {
-        let is_active = crate::input::constraint::constraint_snapshot(surface, pointer)
-            .is_some_and(|s| s.active);
+        let is_active = crate::input::constraint::find_constraint(surface, pointer)
+            .is_some_and(|(_, s)| s.active);
         if !is_active {
             return;
         }

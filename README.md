@@ -283,6 +283,8 @@ cargo build
 cargo run
 ```
 
+#### NixOS Module
+
 To enable `driftwm` on NixOS, you can import and use the provided NixOS module in your configuration.
 
 Using Flakes:
@@ -330,6 +332,60 @@ in
 `programs.driftwm.package` selects the package providing the compositor binary.
 XWayland via `xwayland-satellite` is on by default; set
 `programs.xwayland.enable = false;` to disable it.
+
+#### Home Manager Module
+
+To enable `driftwm` using [Home Manager](https://github.com/nix-community/home-manager), you can import and use the provided Home Manager module in your configuration.
+
+Using Flakes:
+
+```nix
+# flake.nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    home-manager.url = "github:nix-community/home-manager";
+    driftwm.url = "github:malbiruk/driftwm";
+  };
+
+  outputs = { self, nixpkgs, home-manager, driftwm, ... }: {
+    homeConfigurations.myHost = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
+      modules = [
+        driftwm.homeManagerModules.default
+        ./configuration.nix
+      ];
+    };
+  };
+}
+```
+
+Then, enable it in your configuration:
+
+```nix
+{
+  wayland.windowManager.driftwm.enable = true;
+}
+```
+
+Without flakes, import the flake's output directly:
+
+```nix
+let
+  driftwm-flake = builtins.getFlake "github:malbiruk/driftwm";
+in
+{
+  imports = [ driftwm-flake.homeManagerModules.default ];
+  wayland.windowManager.driftwm.enable = true;
+}
+```
+
+`wayland.windowManager.driftwm.package` selects the package providing the compositor binary.
+XWayland via `xwayland-satellite` is on by default; set
+`wayland.windowManager.driftwm.settings.xwayland.enabled = false;` to disable it
+(and `wayland.windowManager.driftwm.xwaylandSatellitePackage = null;` to skip installing the package).
+
+The TOML-based configuration is available through `wayland.windowManager.driftwm.settings`.
 
 ### Build from source
 
@@ -497,7 +553,8 @@ supports the `wlr-layer-shell` protocol), just without compositor-specific featu
 
 - [driftwm-desktop](https://github.com/C10udburst/driftwm-desktop) — A layer for displaying `~/Desktop` contents on canvas as draggable icons.
 - [Driftmap](https://github.com/rywby-dot/driftwm-minimap) — interactive overlay minimap for driftwm
-- [driftwm-settings](https://github.com/wwmaxik/driftwm-settings) — GTK4 GUI config editor
+- [driftwm-settings](https://github.com/wwmaxik/driftwm-settings) — Iced GUI config editor
+- [DriftGlide](https://github.com/wwmaxik/driftglide) — Gesture navigation bar & Circle to Search with Gemini Vision
 - [driftwm-noctalia](https://github.com/youssefvdel/driftwm-noctalia) — noctalia shell fork adapted for driftwm
 - [Just Enough Shell](https://github.com/ORFLEM/just_enough_shell) — minimal QuickShell desktop shell, driftwm-focused
 - [Gallery](https://github.com/malbiruk/driftwm/discussions/143) — community shaders & rices, share your own

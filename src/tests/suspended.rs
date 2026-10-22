@@ -201,15 +201,11 @@ fn client_ssd_bar_right_pad_strip_is_chrome() {
         ),
         "the right-pad strip of a live window's own bar is chrome, not a hole"
     );
-    // Unlike a stand-in's strip, this one is a real surface's chrome, so the
-    // cascade answers with that surface — what it must never answer with is the
-    // client beneath.
-    assert_eq!(
-        f.state()
-            .pointer_focus_under(strip, strip)
-            .map(|(t, _)| t.0),
-        Some(server_surface(&window)),
-        "the strip belongs to the bar's own window, not the client beneath"
+    // The strip is chrome: it must not leak pointer focus to the client beneath,
+    // nor deliver out-of-bounds pointer events to the window itself.
+    assert!(
+        f.state().pointer_focus_under(strip, strip).is_none(),
+        "the strip gives no pointer focus to the client beneath or the window"
     );
 }
 
@@ -642,6 +638,13 @@ fn hover_on_a_widgets_title_bar_over_a_stand_in_focuses_neither() {
     );
     f.add_output(1, (1920, 1080));
     origin_view(&mut f);
+    // Park the cursor on bare canvas before anything is staged. A viewport
+    // move re-runs hover focus (see `refresh_pointer_focus`), and leaving the
+    // cursor at the output origin would have it resting on the stand-in from
+    // the moment that lands — the scenario needs "nothing focused yet" as its
+    // starting state, since the assertion below is that the bar focuses
+    // neither.
+    f.state().warp_pointer(pt(1000.0, 500.0));
 
     let sid = f.state().insert_suspended_for_test(
         1,
