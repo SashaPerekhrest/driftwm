@@ -60,9 +60,14 @@ pub enum Action {
     PanViewport(Direction),
     CenterWindow,
     CenterNearest(Direction),
-    CycleWindows { backward: bool },
+    CycleWindows {
+        backward: bool,
+    },
     HomeToggle,
     GoToBookmark(String),
+    /// Jump to the 1-based workspace/zone ordinal: a snap zone in `zones`
+    /// mode, or a bookmark name in `bookmarks` mode.
+    GoToWorkspace(usize),
     SetBookmark(String),
     MoveToBookmark(String),
     ZoomIn,
@@ -196,6 +201,19 @@ pub enum ModKey {
     Alt,
     Super,
     Mod3,
+}
+
+/// What the ext-workspace pills represent.
+///
+/// The protocol is called `workspace`, but driftwm has no real workspaces. In
+/// `Bookmarks` mode each bookmark is one pill (the historical behavior); in
+/// `Zones` mode each connected snap cluster is one pill and activating it
+/// frames the whole cluster, like `zoom-to-fit-snapped`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum WorkspaceSource {
+    #[default]
+    Bookmarks,
+    Zones,
 }
 
 /// How a new window is placed on the canvas when no window rule positions it.

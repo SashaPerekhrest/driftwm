@@ -77,6 +77,7 @@ mod window_animation;
 mod window_mode;
 mod window_opening;
 mod window_rules;
+mod zones;
 mod zoom_to_fit;
 
 use fixture::Fixture;

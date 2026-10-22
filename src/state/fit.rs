@@ -6,6 +6,7 @@ use smithay::{
 };
 
 use super::{DriftWm, PendingView, StageWindow, ZoomAnimationAnchor, output_state};
+use driftwm::canvas::Chrome;
 use driftwm::config;
 use driftwm::stage::ElementId;
 use driftwm::window_ext::WindowExt;
@@ -54,18 +55,37 @@ struct FitGeometry {
 }
 
 impl DriftWm {
-    fn compute_fit_geometry(&self, window: &Window) -> FitGeometry {
+    /// Content size a fit fills: the usable area minus the outer gap, with the
+    /// window's own chrome taken out.
+    pub(crate) fn fit_target_size(&self, chrome: Chrome) -> Size<i32, Logical> {
         let usable = self.get_usable_area();
-        let chrome = self.element_chrome(window);
         // The inset measures to the bar/content edge, not to the frame, so the
         // frame sits one border further out than the inset — past the usable
         // area once `outer_gap` is under the border width, flush with it at 0
         // with no border — and the content inside gives up the whole chrome.
         let inset = self.config.outer_frame_inset(chrome.border);
-        let target_size = chrome.content_size(Size::from((
+        chrome.content_size(Size::from((
             usable.size.w - (2.0 * inset) as i32,
             usable.size.h - (2.0 * inset) as i32,
-        )));
+        )))
+    }
+
+    /// A docked restore recorded for an initially maximized window, valid only
+    /// while the fit still sits where it was recorded. A later move makes the
+    /// stored center describe the wrong spot, so the default center-preserving
+    /// restore takes over.
+    fn fit_restore_center(&self, window: &Window) -> Option<Point<f64, Logical>> {
+        self.stage
+            .fit_restore(window)
+            .filter(|r| self.stage.position_of(window) == Some(r.at))
+            .map(|r| r.center)
+    }
+
+    fn compute_fit_geometry(&self, window: &Window) -> FitGeometry {
+        let usable = self.get_usable_area();
+        let chrome = self.element_chrome(window);
+        let inset = self.config.outer_frame_inset(chrome.border);
+        let target_size = self.fit_target_size(chrome);
         let usable_center_x = usable.loc.x as f64 + usable.size.w as f64 / 2.0;
         let usable_center_y = usable.loc.y as f64 + usable.size.h as f64 / 2.0;
         // `window_visual_center` sizes from the last configure, so a fit pressed
@@ -202,6 +222,7 @@ impl DriftWm {
             return;
         }
 
+        let restore_center = self.fit_restore_center(window);
         let Some(saved_size) = self.stage.take_fit_saved_size(window) else {
             return;
         };
@@ -209,7 +230,8 @@ impl DriftWm {
         // Resize in-place around the preserved visual center. Sized from the last
         // configure, so an unfit dispatched out of a fullscreen exit centers on
         // the restored (fit-sized) window, not the viewport still being reported.
-        let center = self.window_visual_center(window).unwrap_or_default();
+        let center =
+            restore_center.unwrap_or_else(|| self.window_visual_center(window).unwrap_or_default());
         let bar = self.window_ssd_bar(window);
         let new_loc = super::frame_loc_for_center(center, saved_size, bar);
 
@@ -391,7 +413,9 @@ impl DriftWm {
         let bar = self.window_ssd_bar(window);
         let bw = self.window_border_width(&wl_surface);
         // Mirror unfit_window's new_loc so per-edge deltas match.
-        let center = self.window_visual_center(window).unwrap_or_default();
+        let center = self
+            .fit_restore_center(window)
+            .unwrap_or_else(|| self.window_visual_center(window).unwrap_or_default());
         let new_loc = super::frame_loc_for_center(center, saved_size, bar);
         let old_rect = snap_rect_at(old_loc, old_size, bar, bw);
         let new_rect = snap_rect_at(new_loc, saved_size, bar, bw);

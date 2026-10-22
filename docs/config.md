@@ -362,6 +362,12 @@ Default: `100.0`
 
 px per pan-viewport action (mod-ctrl-arrow by default)
 
+### `workspace_source`
+
+Default: `"bookmarks"`
+
+What ext-workspace pills represent. "bookmarks" keeps one pill per named bookmark and mod+1..4 jump to bookmarks 1..4. "zones" exports one pill per connected snap cluster (with a synthetic pill on an empty canvas), and mod+1..4 frame zones 1..4.
+
 ### `anchors`
 
 Default: `[]`
@@ -771,6 +777,7 @@ Actions:
 - `zoom-out` — step zoom out
 - `zoom-reset` — zoom to 1.0
 - `go-to-bookmark <name>` — jump the camera to a saved bookmark
+- `go-to-workspace <n>` — frame zone <n> in zones mode; in bookmarks mode, jump to bookmark "<n>" (alias: go-to-zone)
 - `set-bookmark <name>` — save the current camera center as a bookmark (create or overwrite)
 - `move-to-bookmark <name>` — move the focused window's center to a bookmark point
 - `zoom-to-fit` — fit all windows in viewport
@@ -824,10 +831,10 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+z"` | `zoom-reset` |  |
 | `"mod+w"` | `zoom-to-fit` |  |
 | `"mod+shift+w"` | `zoom-to-fit-snapped` |  |
-| `"mod+1"` | `go-to-bookmark 1` | jump to bookmark 1 (top-left corner by default) |
-| `"mod+2"` | `go-to-bookmark 2` | jump to bookmark 2 (top-right corner) |
-| `"mod+3"` | `go-to-bookmark 3` | jump to bookmark 3 (bottom-right corner) |
-| `"mod+4"` | `go-to-bookmark 4` | jump to bookmark 4 (bottom-left corner) |
+| `"mod+1"` | `go-to-workspace 1` | zones: frame zone 1; bookmarks: jump to bookmark 1 (top-left by default) |
+| `"mod+2"` | `go-to-workspace 2` | zones: frame zone 2; bookmarks: jump to bookmark 2 (top-right) |
+| `"mod+3"` | `go-to-workspace 3` | zones: frame zone 3; bookmarks: jump to bookmark 3 (bottom-right) |
+| `"mod+4"` | `go-to-workspace 4` | zones: frame zone 4; bookmarks: jump to bookmark 4 (bottom-left) |
 | `"mod+shift+1"` | `set-bookmark 1` | overwrite bookmark 1 at the current view |
 | `"mod+shift+2"` | `set-bookmark 2` |  |
 | `"mod+shift+3"` | `set-bookmark 3` |  |

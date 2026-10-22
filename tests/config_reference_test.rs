@@ -350,7 +350,14 @@ fn keybinding_actions_are_all_documented() {
     // const entry names a real action (a bad action surfaces as a warning).
     let mut toml = String::from("[keybindings]\n");
     for (i, (_, sample)) in ACTION_NAMES.iter().enumerate() {
-        toml.push_str(&format!("\"ctrl+F{}\" = \"{sample}\"\n", i + 1));
+        // xkb only knows F1–F35. Wrap the overflow behind Alt so every action
+        // still gets a unique, parseable sample combo.
+        let combo = if i < 35 {
+            format!("ctrl+F{}", i + 1)
+        } else {
+            format!("ctrl+alt+F{}", i - 34)
+        };
+        toml.push_str(&format!("\"{combo}\" = \"{sample}\"\n"));
     }
     let (_, warnings) = Config::from_toml_collect(&toml)
         .unwrap_or_else(|e| panic!("sample action bindings failed to parse: {e}\n\n{toml}"));
