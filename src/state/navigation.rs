@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::surface_tree::focus_belongs_to_window;
@@ -859,42 +860,45 @@ impl DriftWm {
     /// user last saw as the cluster.
     #[allow(clippy::mutable_key_type)]
     pub fn first_spatially_related_in_history(&self, departing: &StageWindow) -> Option<Window> {
-        let destroyed_elem = departing.clone();
         // Only a client has a surface to key the stable-rect cache on; a
         // stand-in's live rect is already its settled one.
         let cached_destroyed_rect = departing
             .client()
             .and_then(|w| w.wl_surface())
             .and_then(|s| self.stable_snap_rects.get(&s.id()).copied());
-        let destroyed_rect =
-            cached_destroyed_rect.or_else(|| self.snap_rect_for(&destroyed_elem))?;
-
-        let mut rects = self.all_windows_with_snap_rects();
-        if cached_destroyed_rect.is_some() {
-            for (w, r) in &mut rects {
-                if w == &destroyed_elem {
-                    *r = destroyed_rect;
-                }
-            }
-        }
-        // Members may traverse through a suspended stand-in, so a client on the
-        // far side of a stand-in it was snapped to still resolves as related.
-        let cluster =
-            driftwm::layout::cluster::cluster_of(&destroyed_elem, &rects, self.config.snap_gap);
+        let destroyed_rect = cached_destroyed_rect.or_else(|| self.snap_rect_for(departing))?;
+        let related = self.spatial_relatives(departing, destroyed_rect);
 
         self.stage
             .focus_history()
             .iter()
             .filter_map(|w| w.client())
-            .filter(|w| destroyed_elem != **w)
-            .find(|w| {
-                let elem = StageWindow::Client((*w).clone());
-                cluster.contains(&elem)
-                    || self
-                        .snap_rect_for(&elem)
-                        .is_some_and(|r| destroyed_rect.overlaps(&r))
-            })
+            .filter(|w| *departing != **w)
+            .find(|w| related.contains(&StageWindow::Client((*w).clone())))
             .cloned()
+    }
+
+    /// The elements spatially related to `of` with its frame at `frame`: the
+    /// members of its snap cluster and every element overlapping `frame`, `of`
+    /// itself included.
+    #[allow(clippy::mutable_key_type)]
+    fn spatial_relatives(&self, of: &StageWindow, frame: SnapRect) -> HashSet<StageWindow> {
+        let mut rects = self.all_windows_with_snap_rects();
+        for (w, r) in &mut rects {
+            if w == of {
+                *r = frame;
+            }
+        }
+        // Members may traverse through a suspended stand-in, so a client on the
+        // far side of a stand-in it was snapped to still resolves as related.
+        let mut related = driftwm::layout::cluster::cluster_of(of, &rects, self.config.snap_gap);
+        related.extend(
+            rects
+                .into_iter()
+                .filter(|(_, r)| frame.overlaps(r))
+                .map(|(w, _)| w),
+        );
+        related
     }
 
     /// One Alt-Tab step: select the next window in the cycle and reveal it,
