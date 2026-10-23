@@ -16,8 +16,8 @@ use driftwm::config::{Action, Direction};
 const THRESHOLD_SQ: f64 = 16.0 * 16.0;
 
 /// Pointer grab that accumulates drag delta to navigate to the nearest window.
-/// Uses "natural" direction: drag right → navigate right (negated screen delta,
-/// matching 4-finger swipe convention).
+/// Uses the pan sense: drag right → navigate left, as if the drag pulled the
+/// canvas (negated screen delta, matching the 4-finger swipe).
 pub struct NavigateGrab {
     pub start_data: GrabStartData<DriftWm>,
     last_screen_pos: Point<f64, Logical>,
@@ -65,7 +65,7 @@ impl PointerGrab<DriftWm> for NavigateGrab {
         self.last_screen_pos = current_screen;
 
         if !self.fired {
-            // Natural direction: negate delta (drag right → navigate right)
+            // Pan sense: negate delta (drag right → navigate left)
             self.cumulative -= screen_delta;
 
             let mag_sq =
