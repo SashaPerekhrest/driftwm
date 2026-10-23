@@ -203,7 +203,7 @@
                                # resize-to-snap (fit-window is edge to edge)
 # distance = 24.0              # screen px from an edge where snapping starts
 # break_force = 32.0           # screen px past a snap to break free
-# corners = true               # also line up parallel edges (top to top)
+# corners = true               # also line up parallel edges (e.g. top to top)
 # centers = false              # also line up midpoints
 
 [decorations]

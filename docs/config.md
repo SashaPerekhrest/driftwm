@@ -503,7 +503,7 @@ screen px past a snap to break free
 
 Default: `true`
 
-also line up parallel edges (top to top)
+also line up parallel edges (e.g. top to top)
 
 ### `centers`
 
