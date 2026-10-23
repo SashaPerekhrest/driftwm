@@ -105,7 +105,7 @@ pub(super) fn default_bindings(mod_key: ModKey) -> HashMap<KeyCombo, Action> {
         ),
         (
             KeyCombo {
-                modifiers: m_ctrl.clone(),
+                modifiers: m_ctrl,
                 sym: Keysym::from(keysyms::KEY_Right),
             },
             Action::PanViewport(Direction::Right),
@@ -147,28 +147,28 @@ pub(super) fn default_bindings(mod_key: ModKey) -> HashMap<KeyCombo, Action> {
         ),
         (
             KeyCombo {
-                modifiers: m_ctrl.clone(),
+                modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_1),
             },
             Action::SetBookmark("1".into()),
         ),
         (
             KeyCombo {
-                modifiers: m_ctrl.clone(),
+                modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_2),
             },
             Action::SetBookmark("2".into()),
         ),
         (
             KeyCombo {
-                modifiers: m_ctrl.clone(),
+                modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_3),
             },
             Action::SetBookmark("3".into()),
         ),
         (
             KeyCombo {
-                modifiers: m_ctrl,
+                modifiers: m_shift.clone(),
                 sym: Keysym::from(keysyms::KEY_4),
             },
             Action::SetBookmark("4".into()),

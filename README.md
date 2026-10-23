@@ -69,7 +69,7 @@ spots the camera jumps straight to.
 | 4-finger hold / `Mod+X`      | Center and focus the window under the pointer                                                   |
 | `Mod+C`                      | Center focused window                                                                           |
 | `Mod+1-4`                    | Jump to bookmarked canvas position                                                              |
-| `Mod+Ctrl+1-4`               | Save the current position as that bookmark                                                      |
+| `Mod+Shift+1-4`              | Save the current position as that bookmark                                                      |
 
 All 4-finger navigation gestures also work as `Mod` + 3-finger for smaller
 trackpads.

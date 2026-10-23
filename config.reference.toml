@@ -494,10 +494,10 @@
 # "mod+2" = "go-to-bookmark 2"     # jump to bookmark 2 (top-right corner)
 # "mod+3" = "go-to-bookmark 3"     # jump to bookmark 3 (bottom-right corner)
 # "mod+4" = "go-to-bookmark 4"     # jump to bookmark 4 (bottom-left corner)
-# "mod+ctrl+1" = "set-bookmark 1"   # overwrite bookmark 1 at the current view
-# "mod+ctrl+2" = "set-bookmark 2"
-# "mod+ctrl+3" = "set-bookmark 3"
-# "mod+ctrl+4" = "set-bookmark 4"
+# "mod+shift+1" = "set-bookmark 1"  # overwrite bookmark 1 at the current view
+# "mod+shift+2" = "set-bookmark 2"
+# "mod+shift+3" = "set-bookmark 3"
+# "mod+shift+4" = "set-bookmark 4"
 # "mod+alt+up" = "send-to-output up"        # move window to output above
 # "mod+alt+down" = "send-to-output down"
 # "mod+alt+left" = "send-to-output left"
