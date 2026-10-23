@@ -2496,7 +2496,7 @@ mod tests {
                 .on_window
                 .get(&GestureTrigger::Doubletap { fingers: 3 }),
             Some(&GestureConfigEntry::Threshold(ThresholdAction::Fixed(
-                Action::FitWindow
+                Action::FitWindowSnapped
             )))
         );
         assert_eq!(
@@ -2512,7 +2512,7 @@ mod tests {
                 .on_window
                 .get(&GestureTrigger::HoldSwipe { fingers: 3 }),
             Some(&GestureConfigEntry::Continuous(
-                ContinuousAction::ResizeWindow
+                ContinuousAction::ResizeWindowSnapped
             ))
         );
         // Forwarding tiers (1-2 fingers on a window) stay unbound.

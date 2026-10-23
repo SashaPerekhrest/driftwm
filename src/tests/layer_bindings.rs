@@ -367,8 +367,8 @@ fn a_bare_scroll_over_a_layer_reaches_the_layer() {
 }
 
 /// On-window bindings stay off over a bar even with a window right beneath it:
-/// neither the default `alt+left` move nor the default `mod+middle`
-/// toggle-fullscreen may act on the hidden window.
+/// neither the default `alt+left` move nor the default `mod+middle` fill may
+/// act on the hidden window.
 #[test]
 fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
     let mut f = Fixture::new();
@@ -380,7 +380,7 @@ fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
     assert_eq!(
         f.state().focused_window(),
         Some(window.clone()),
-        "precondition: toggle-fullscreen acts on the focused window"
+        "precondition: the hidden window is the focused one"
     );
     let before = f.state().stage.position_of(&window).expect("staged");
 
@@ -404,8 +404,8 @@ fn an_on_window_binding_does_not_fire_over_a_bar_covering_a_window() {
         "alt+left is an on-window binding, so it must not move the window under the bar"
     );
     assert!(
-        !f.state().is_fullscreen(),
-        "mod+middle is an on-window binding, so it must not fullscreen the window under the bar"
+        !f.state().stage.is_fill(&window),
+        "mod+middle is an on-window binding, so it must not fill the window under the bar"
     );
     assert_eq!(
         layer_buttons(&mut f, bar),

@@ -809,6 +809,7 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+f"` | `toggle-fullscreen` |  |
 | `"mod+m"` | `fit-window-snapped` |  |
 | `"mod+shift+m"` | `fit-window` |  |
+| `"mod+g"` | `fill-window` |  |
 | `"mod+t"` | `toggle-pin-to-screen` |  |
 | `"mod+c"` | `center-window` |  |
 | `"mod+x"` | `focus-center` |  |
@@ -875,12 +876,6 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 
 ```toml
 "alt+shift" = "switch-layout next"
-```
-
-**Example: fill-window on a key (alt+middle runs it by default)**
-
-```toml
-"mod+g" = "fill-window"
 ```
 
 **Example: set-trackpad (unbound by default)**
@@ -955,9 +950,9 @@ Any action from the [keybindings] Actions list also works on button and wheel-up
 | `"alt+shift+left"` | `move-snapped-windows` |  |
 | `"alt+right"` | `resize-window-snapped` |  |
 | `"alt+shift+right"` | `resize-window` |  |
-| `"alt+middle"` | `fill-window` |  |
-| `"alt+shift+middle"` | `fit-window-snapped` |  |
-| `"mod+middle"` | `toggle-fullscreen` |  |
+| `"alt+middle"` | `fit-window-snapped` |  |
+| `"alt+shift+middle"` | `fit-window` |  |
+| `"mod+middle"` | `fill-window` |  |
 
 ## `[mouse.on-canvas]`
 
@@ -1027,12 +1022,13 @@ Threshold actions: any action from the [keybindings] Actions list. center-neares
 | `"alt+3-finger-swipe"` | `resize-window-snapped` |  |
 | `"alt+shift+3-finger-swipe"` | `resize-window` |  |
 | `"3-finger-doubletap-swipe"` | `move-window` |  |
-| `"alt+2-finger-pinch-in"` | `fit-window-snapped` |  |
-| `"alt+2-finger-pinch-out"` | `fit-window-snapped` |  |
-| `"alt+shift+2-finger-pinch-in"` | `fit-window` |  |
-| `"alt+shift+2-finger-pinch-out"` | `fit-window` |  |
-| `"alt+3-finger-pinch-in"` | `toggle-fullscreen` |  |
-| `"alt+3-finger-pinch-out"` | `toggle-fullscreen` |  |
+
+**Example: fit and fullscreen on a pinch (unbound by default)**
+
+```toml
+"alt+2-finger-pinch-out" = "fit-window-snapped"
+"alt+3-finger-pinch-out" = "toggle-fullscreen"
+```
 
 ## `[gestures.on-canvas]`
 
@@ -1145,9 +1141,9 @@ Continuous and threshold actions: the same sets and rules as under [gestures].
 
 | Binding | Action | Notes |
 | --- | --- | --- |
-| `"3-finger-doubletap"` | `fit-window` |  |
+| `"3-finger-doubletap"` | `fit-window-snapped` |  |
 | `"3-finger-doubletap-swipe"` | `move-window` | continuous |
-| `"3-finger-hold-swipe"` | `resize-window` | continuous (dwell then drag) |
+| `"3-finger-hold-swipe"` | `resize-window-snapped` | continuous (dwell then drag) |
 | `"3-finger-doubletap-hold-swipe"` | `move-snapped-windows` | continuous (tap, hold, then drag — moves the whole snap cluster) |
 
 ## `[touch.on-canvas]`

@@ -105,14 +105,11 @@ an app, navigating — exits it.
 | `Alt+Shift` + 3-finger swipe              | Resize window                         |
 | `Alt` + RMB drag                          | Resize snapped window                 |
 | `Alt+Shift` + RMB drag                    | Resize window                         |
-| `Alt+Shift` + MMB click / `Mod+M`         | Fit snapped window (maximize/restore) |
-| `Mod+Shift+M`                             | Fit window                            |
-| `Alt` + MMB click                         | Fill free space (press again to undo) |
+| `Alt` + MMB click / `Mod+M`               | Fit snapped window (maximize/restore) |
+| `Alt+Shift` + MMB click / `Mod+Shift+M`   | Fit window                            |
+| `Mod` + MMB click / `Mod+G`               | Fill free space (press again to undo) |
 | `Mod` + 4-finger pinch in / `Mod+Shift+W` | Zoom-to-fit snapped windows           |
-| `Alt` + 2-finger pinch in/out             | Fit snapped window                    |
-| `Alt+Shift` + 2-finger pinch in/out       | Fit window                            |
-| `Alt` + 3-finger pinch in/out             | Toggle fullscreen                     |
-| `Mod` + MMB click / `Mod+F`               | Toggle fullscreen                     |
+| `Mod+F`                                   | Toggle fullscreen                     |
 | `Mod+Shift` + arrow                       | Move to the next snap stop            |
 
 </details>
@@ -137,9 +134,9 @@ trackpad.
 | 4-finger swipe           | Focus nearest window        | anywhere  |
 | 4-finger pinch in / out  | Zoom-to-fit / home toggle   | anywhere  |
 | 3-finger tap             | Center window               | anywhere  |
-| 3-finger double-tap      | Fit window                  | on-window |
+| 3-finger double-tap      | Fit snapped window          | on-window |
 | 3-finger doubletap-swipe | Move window (hold: cluster) | on-window |
-| 3-finger hold-swipe      | Resize window               | on-window |
+| 3-finger hold-swipe      | Resize snapped window       | on-window |
 
 </details>
 

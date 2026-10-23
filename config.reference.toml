@@ -467,6 +467,7 @@
 # "mod+f" = "toggle-fullscreen"
 # "mod+m" = "fit-window-snapped"
 # "mod+shift+m" = "fit-window"
+# "mod+g" = "fill-window"
 # "mod+t" = "toggle-pin-to-screen"
 # "mod+c" = "center-window"
 # "mod+x" = "focus-center"
@@ -522,8 +523,6 @@
 # # "mod+alt+shift+up" = "center-nearest up"
 # # Example: tap binding — bare modifier chord, fires on release with no key on top
 # # "alt+shift" = "switch-layout next"
-# # Example: fill-window on a key (alt+middle runs it by default)
-# # "mod+g" = "fill-window"
 # # Example: set-trackpad (unbound by default)
 # # "mod+f10" = "set-trackpad toggle"   # flip the trackpad between on and off
 # # "mod+shift+f10" = "set-trackpad off"   # turn it off whatever the current state
@@ -587,9 +586,9 @@
 # "alt+shift+left" = "move-snapped-windows"
 # "alt+right" = "resize-window-snapped"
 # "alt+shift+right" = "resize-window"
-# "alt+middle" = "fill-window"
-# "alt+shift+middle" = "fit-window-snapped"
-# "mod+middle" = "toggle-fullscreen"
+# "alt+middle" = "fit-window-snapped"
+# "alt+shift+middle" = "fit-window"
+# "mod+middle" = "fill-window"
 
 [mouse.on-canvas]
 # "left" = "pan-viewport"            # unmodified left-click on empty canvas → pan
@@ -642,12 +641,9 @@
 # "alt+3-finger-swipe" = "resize-window-snapped"
 # "alt+shift+3-finger-swipe" = "resize-window"
 # "3-finger-doubletap-swipe" = "move-window"
-# "alt+2-finger-pinch-in" = "fit-window-snapped"
-# "alt+2-finger-pinch-out" = "fit-window-snapped"
-# "alt+shift+2-finger-pinch-in" = "fit-window"
-# "alt+shift+2-finger-pinch-out" = "fit-window"
-# "alt+3-finger-pinch-in" = "toggle-fullscreen"
-# "alt+3-finger-pinch-out" = "toggle-fullscreen"
+# # Example: fit and fullscreen on a pinch (unbound by default)
+# # "alt+2-finger-pinch-out" = "fit-window-snapped"
+# # "alt+3-finger-pinch-out" = "toggle-fullscreen"
 
 [gestures.on-canvas]
 # "2-finger-pinch" = "zoom"
@@ -726,9 +722,9 @@
 # # pan/zoom/navigate gestures are bound "anywhere" so they apply over windows
 # # too. The window-targeted gestures live here: they act on the window the
 # # fingers land on (a gesture starting on empty canvas just pans).
-# "3-finger-doubletap" = "fit-window"
+# "3-finger-doubletap" = "fit-window-snapped"
 # "3-finger-doubletap-swipe" = "move-window"  # continuous
-# "3-finger-hold-swipe" = "resize-window"     # continuous (dwell then drag)
+# "3-finger-hold-swipe" = "resize-window-snapped"  # continuous (dwell then drag)
 # "3-finger-doubletap-hold-swipe" = "move-snapped-windows"  # continuous (tap, hold, then drag — moves the whole snap cluster)
 
 [touch.on-canvas]
