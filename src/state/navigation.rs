@@ -878,6 +878,17 @@ impl DriftWm {
             .cloned()
     }
 
+    /// Whether `target` is spatially related to the focused element, at their
+    /// live frames. Nothing focused, or a focused element with no canvas frame
+    /// (pinned), relates to nothing.
+    pub fn related_to_focus(&self, target: &StageWindow) -> bool {
+        let Some(focused) = self.focused_anchor_element() else {
+            return false;
+        };
+        self.snap_rect_for(&focused)
+            .is_some_and(|frame| self.spatial_relatives(&focused, frame).contains(target))
+    }
+
     /// The elements spatially related to `of` with its frame at `frame`: the
     /// members of its snap cluster and every element overlapping `frame`, `of`
     /// itself included.

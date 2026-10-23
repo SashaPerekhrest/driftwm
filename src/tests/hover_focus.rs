@@ -1151,21 +1151,23 @@ fn a_centering_navigation_to_a_stand_in_keeps_the_focus_intent() {
     f.state().dismiss_suspended(sid);
 }
 
-/// A focus-nearest step whose target is clipped: `a` (300×200, focused) sits at
-/// the left edge, `b` hangs past the right one, and the cursor rests on bare
-/// canvas at screen (100, 20). The step pans right just far enough to show `b`,
-/// which carries the cursor's canvas point onto `decoy`. The decoy sits above
-/// the search cone from `a`, so the step can't pick it itself.
+/// A focus-nearest step whose target is clipped: `a` (300×200, focused) sits
+/// one snap gap left of `b`, which hangs past the right edge, and the cursor
+/// rests on bare canvas at screen (100, 20). The step walks within the cluster,
+/// panning right just far enough to show `b`, which carries the cursor's canvas
+/// point onto `decoy`. The decoy sits behind `a`, outside the search cone, so
+/// the step can't pick it itself.
 fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
+    let gap = f.state().config.snap_gap as i32;
     map_window(f, id, "a", (300, 200));
     let a = window_by_app_id(f, "a").unwrap();
-    place(f, &a, Point::from((0, 800)));
+    place(f, &a, Point::from((1700 - gap - 300, 800)));
     map_window(f, id, "b", (400, 200));
     let b = window_by_app_id(f, "b").unwrap();
-    place(f, &b, Point::from((2000, 800)));
+    place(f, &b, Point::from((1700, 800)));
     map_window(f, id, "decoy", (300, 240));
     let decoy = window_by_app_id(f, "decoy").unwrap();
-    place(f, &decoy, Point::from((500, -200)));
+    place(f, &decoy, Point::from((200, -200)));
     origin_view(f);
     // The search runs from `landing_view()`, which an anchor left armed by the
     // last map would move off the origin view.
@@ -1194,7 +1196,7 @@ fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Wi
     f.double_roundtrip(id);
     let cursor = f.state().seat.get_pointer().unwrap().current_location();
     assert!(
-        Rectangle::new(Point::from((500.0, -200.0)), Size::from((300.0, 240.0))).contains(cursor),
+        Rectangle::new(Point::from((200.0, -200.0)), Size::from((300.0, 240.0))).contains(cursor),
         "test setup bug: the step's pan must leave the cursor on the decoy, got {cursor:?}"
     );
     (b, decoy)

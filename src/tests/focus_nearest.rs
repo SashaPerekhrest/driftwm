@@ -1,9 +1,11 @@
 //! `focus-nearest <dir>`: the directional search of `center-nearest` with
 //! reveal semantics. A target already fully on screen only takes the keyboard
-//! and the top of the z-order; a clipped one pans in only as far as it takes
-//! to show it whole, `outer_gap` in from the edge; a bare `navigation.anchors`
-//! point still centers. `center-nearest` itself keeps parking unconditionally
-//! — it is the walk-through for a non-center `focus_placement`.
+//! and the top of the z-order; a clipped one in the focused window's snap
+//! cluster pans in only as far as it takes to show it whole, `outer_gap` in
+//! from the edge, and one outside it parks on `focus_placement` as a jump
+//! does; a bare `navigation.anchors` point still centers. `center-nearest`
+//! itself keeps parking unconditionally — it is the walk-through for a
+//! non-center `focus_placement`.
 
 use driftwm::config::{Action, BTN_LEFT, Direction};
 use smithay::desktop::Window;
@@ -19,6 +21,10 @@ use super::{Fixture, TICK, client::ClientId, config, map_window, settle, window_
 
 const GAP_CONFIG: &str = "[snap]\nouter_gap = 20.0\n";
 const GAP: f64 = 20.0;
+
+/// The default `snap.gap`: windows this far apart are one cluster, so a step
+/// between them walks.
+const SNAP_GAP: i32 = 12;
 
 /// Park the viewport at the canvas origin, zoom 1, nothing in flight: the
 /// usable area is then the canvas rect (0,0)–(1920,1080).
@@ -51,11 +57,16 @@ fn sized_window_at(
     window
 }
 
-/// `a` (300×200) focused in the middle of the origin view and `b` (`size`) at
-/// `b_pos`, nothing in flight.
-fn focused_a_and_b(f: &mut Fixture, b_pos: (i32, i32), size: (u16, u16)) -> (Window, Window) {
+/// `a` (300×200) focused at `a_pos` and `b` (`size`) at `b_pos`, in the origin
+/// view with nothing in flight.
+fn focused_a_and_b(
+    f: &mut Fixture,
+    a_pos: (i32, i32),
+    b_pos: (i32, i32),
+    size: (u16, u16),
+) -> (Window, Window) {
     let id = f.add_client();
-    let a = window_at(f, id, "a", (810, 440));
+    let a = window_at(f, id, "a", a_pos);
     let b = sized_window_at(f, id, "b", b_pos, size);
     origin_view(f);
     let serial = SERIAL_COUNTER.next_serial();
@@ -152,10 +163,10 @@ fn a_fully_visible_target_takes_focus_without_moving_the_camera() {
     assert_eq!(f.state().camera(), camera, "and the camera stayed put");
 }
 
-/// A target hanging off the viewport edge still pans in — a half-visible
-/// window is never left where it is, matching click-to-navigate — but only as
-/// far as it takes to show it whole, `outer_gap` in from the edge it hung
-/// past. The other axis holds.
+/// A target in the focused window's cluster hanging off the viewport edge
+/// still pans in — a half-visible window is never left where it is, matching
+/// click-to-navigate — but only as far as it takes to show it whole,
+/// `outer_gap` in from the edge it hung past. The other axis holds.
 #[test]
 fn a_clipped_target_pans_in_just_far_enough_to_show_it() {
     // Each target sits off the view's center on the other axis, so a pan that
@@ -170,7 +181,16 @@ fn a_clipped_target_pans_in_just_far_enough_to_show_it() {
         let mut f = Fixture::with_config(config(GAP_CONFIG));
         f.add_output(1, (1920, 1080));
         f.skip_baseline_check();
-        let (_a, b) = focused_a_and_b(&mut f, b_pos, (300, 200));
+        // One snap gap short of b, on the side the step leaves from.
+        let (x, y) = b_pos;
+        let a_pos = match dir {
+            Direction::Right => (x - SNAP_GAP - 300, y),
+            Direction::Left => (x + 300 + SNAP_GAP, y),
+            Direction::Down => (x, y - SNAP_GAP - 200),
+            Direction::Up => (x, y + 200 + SNAP_GAP),
+            _ => unreachable!(),
+        };
+        let (_a, b) = focused_a_and_b(&mut f, a_pos, b_pos, (300, 200));
         assert!(
             !f.state().window_fully_in_viewport(&b),
             "precondition ({dir:?}): b is clipped"
@@ -200,6 +220,149 @@ fn a_clipped_target_pans_in_just_far_enough_to_show_it() {
     }
 }
 
+/// Two snapped pairs: `a` focused in the middle of the origin view with `a2`
+/// docked under it, and `b` at `b_pos` with `b2` docked to its right. The pairs
+/// sit apart, so a step from `a` to `b` leaves `a`'s cluster.
+fn two_clusters(f: &mut Fixture, b_pos: (i32, i32)) -> Window {
+    let id = f.add_client();
+    let a = window_at(f, id, "a", (810, 440));
+    window_at(f, id, "a2", (810, 640 + SNAP_GAP));
+    let b = window_at(f, id, "b", b_pos);
+    window_at(f, id, "b2", (b_pos.0 + 300 + SNAP_GAP, b_pos.1));
+    origin_view(f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    b
+}
+
+/// Where the camera rests after a `center-nearest` step `dir` on the layout
+/// `setup` builds: the `focus_placement` park.
+fn center_nearest_rest(
+    setup: impl FnOnce(&mut Fixture) -> Window,
+    dir: Direction,
+) -> Point<f64, Logical> {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    setup(&mut f);
+    f.state().execute_action(&Action::CenterNearest(dir));
+    settle(&mut f);
+    f.state().camera()
+}
+
+/// A step out of the focused window's cluster is a jump: a clipped target in
+/// another cluster parks on `focus_placement`, as `center-nearest` lands it.
+#[test]
+fn a_step_to_a_clipped_window_in_another_cluster_parks_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let b = two_clusters(&mut f, (1750, 440));
+    assert!(
+        !f.state().window_fully_in_viewport(&b),
+        "precondition: b is clipped"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b));
+    settle(&mut f);
+    let parked = center_nearest_rest(|f| two_clusters(f, (1750, 440)), Direction::Right);
+    let camera = f.state().camera();
+    assert_near(camera.x, parked.x, "camera x");
+    assert_near(camera.y, parked.y, "camera y");
+}
+
+/// A clipped target the focused window reaches through its snap cluster is a
+/// walk, though the two aren't neighbours: `m` runs under both, one snap gap
+/// below, and the step scrolls `b` just far enough to show it whole.
+#[test]
+fn a_step_to_a_clipped_window_in_the_same_cluster_pans_minimally() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a = window_at(&mut f, id, "a", (810, 440));
+    let b = window_at(&mut f, id, "b", (1750, 440));
+    sized_window_at(&mut f, id, "m", (810, 640 + SNAP_GAP), (1240, 200));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    assert!(
+        !f.state().window_fully_in_viewport(&b),
+        "precondition: b is clipped"
+    );
+    let camera = f.state().camera();
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    settle(&mut f);
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.right, 1920.0 - GAP, "b's right edge");
+    assert_eq!(f.state().camera().y, camera.y, "the other axis held");
+}
+
+/// A target in another cluster that is already fully on screen takes focus
+/// with no camera move, the jump's park only applying to a clipped one.
+#[test]
+fn a_step_to_a_visible_window_in_another_cluster_only_focuses_it() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let b = two_clusters(&mut f, (1300, 440));
+    assert!(
+        f.state().window_fully_in_viewport(&b),
+        "precondition: b is fully on screen"
+    );
+    let camera = f.state().camera();
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b));
+    assert_eq!(f.state().camera_target(), None, "no pan was armed");
+    assert_eq!(f.state().camera(), camera, "and the camera stayed put");
+}
+
+/// `b` with `b2` docked to its right, `b` hanging past the right edge of the
+/// origin view, and nothing focused.
+fn unfocused_pair_past_the_right_edge(f: &mut Fixture) -> Window {
+    let id = f.add_client();
+    let b = window_at(f, id, "b", (1750, 440));
+    window_at(f, id, "b2", (2050 + SNAP_GAP, 440));
+    origin_view(f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().set_window_focus(None, serial);
+    b
+}
+
+/// With nothing focused the step starts from the view center and has no
+/// cluster to walk in, so it parks its target like any jump.
+#[test]
+fn a_step_with_nothing_focused_parks_its_target() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let b = unfocused_pair_past_the_right_edge(&mut f);
+    assert!(
+        !f.state().window_fully_in_viewport(&b),
+        "precondition: b is clipped"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b));
+    settle(&mut f);
+    let parked = center_nearest_rest(unfocused_pair_past_the_right_edge, Direction::Right);
+    let camera = f.state().camera();
+    assert_near(camera.x, parked.x, "camera x");
+    assert_near(camera.y, parked.y, "camera y");
+}
+
 /// `focus_placement` is where jumps land, not walks: a directional step onto
 /// a clipped window under `"left"` still stops as soon as the window is whole
 /// rather than carrying it across to the left edge.
@@ -208,7 +371,12 @@ fn focus_placement_does_not_move_where_focus_nearest_lands() {
     let mut f = Fixture::with_config(config(&format!("focus_placement = \"left\"\n{GAP_CONFIG}")));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+    let (_a, b) = focused_a_and_b(
+        &mut f,
+        (1750 - SNAP_GAP - 300, 440),
+        (1750, 440),
+        (300, 200),
+    );
 
     f.state()
         .execute_action(&Action::FocusNearest(Direction::Right));
@@ -226,7 +394,12 @@ fn a_target_taller_than_the_view_centers_vertically_and_pans_minimally_across() 
     let mut f = Fixture::with_config(config(GAP_CONFIG));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b) = focused_a_and_b(&mut f, (1750, -500), (300, 1200));
+    let (_a, b) = focused_a_and_b(
+        &mut f,
+        (1750 - SNAP_GAP - 300, 440),
+        (1750, -500),
+        (300, 1200),
+    );
 
     f.state()
         .execute_action(&Action::FocusNearest(Direction::Right));
@@ -251,7 +424,12 @@ fn the_gap_scales_with_zoom() {
     f.skip_baseline_check();
     // At zoom 0.5 the view spans canvas (0,0)–(3840,2160); b's right edge at
     // canvas 4000 hangs past it.
-    let (_a, b) = focused_a_and_b(&mut f, (3700, 980), (300, 200));
+    let (_a, b) = focused_a_and_b(
+        &mut f,
+        (3700 - SNAP_GAP - 300, 980),
+        (3700, 980),
+        (300, 200),
+    );
     f.state().with_output_state(|os| os.zoom = 0.5);
     assert!(
         !f.state().window_fully_in_viewport(&b),
@@ -277,7 +455,14 @@ fn a_border_wider_than_the_gap_lands_the_frame_on_the_edge() {
     ));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+    // Each border hangs outside its window, and the snap gap runs between
+    // them.
+    let (_a, b) = focused_a_and_b(
+        &mut f,
+        (1750 - 6 - SNAP_GAP - 6 - 300, 440),
+        (1750, 440),
+        (300, 200),
+    );
     let elem = StageWindow::Client(b.clone());
     assert_eq!(
         f.state().element_border_width(&elem),
@@ -327,7 +512,7 @@ fn center_nearest_still_parks_a_clipped_target_on_the_placement_point() {
     let mut f = Fixture::with_config(config(&format!("focus_placement = \"left\"\n{GAP_CONFIG}")));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b) = focused_a_and_b(&mut f, (1750, 440), (300, 200));
+    let (_a, b) = focused_a_and_b(&mut f, (810, 440), (1750, 440), (300, 200));
 
     f.state()
         .execute_action(&Action::CenterNearest(Direction::Right));
@@ -449,7 +634,8 @@ fn a_clipped_stand_in_pans_in_just_far_enough() {
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (810, 440));
+    // One snap gap under the stand-in's body.
+    let a = window_at(&mut f, id, "a", (810, 200 + SNAP_GAP));
     origin_view(&mut f);
     let sid = f.state().insert_suspended_for_test(
         1,
@@ -491,8 +677,8 @@ fn a_step_mid_pan_retargets_the_pan_instead_of_focusing_in_place() {
     f.skip_baseline_check();
     let id = f.add_client();
     let a = window_at(&mut f, id, "a", (1300, 400));
-    // Far enough right that revealing it carries a off screen.
-    let b = window_at(&mut f, id, "b", (4000, 400));
+    // Docked to a and wide enough that revealing it clips a.
+    let b = sized_window_at(&mut f, id, "b", (1600 + SNAP_GAP, 400), (1700, 200));
     origin_view(&mut f);
     let serial = SERIAL_COUNTER.next_serial();
     f.state().raise_and_focus(&a, serial);
@@ -569,9 +755,11 @@ fn a_walk_steps_on_past_a_window_too_tall_to_show_whole() {
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (810, 440));
+    // One cluster, each window a snap gap from the next; `c` is level with
+    // `t`'s center, where the step from `t` searches.
+    let a = window_at(&mut f, id, "a", (1750 - SNAP_GAP - 300, 440));
     let t = sized_window_at(&mut f, id, "t", (1750, -500), (300, 1200));
-    let c = window_at(&mut f, id, "c", (2300, 440));
+    let c = window_at(&mut f, id, "c", (2050 + SNAP_GAP, 0));
     origin_view(&mut f);
     let serial = SERIAL_COUNTER.next_serial();
     f.state().raise_and_focus(&a, serial);
@@ -597,9 +785,9 @@ fn a_frame_revealed_flush_at_a_fractional_zoom_reads_as_on_screen() {
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (-2500, 400));
+    let a = window_at(&mut f, id, "a", (-1498 - SNAP_GAP - 300, 400));
     let b = sized_window_at(&mut f, id, "b", (-1498, 400), (1000, 400));
-    let c = window_at(&mut f, id, "c", (0, 400));
+    let c = window_at(&mut f, id, "c", (-498 + SNAP_GAP, 400));
     f.state().with_output_state(|os| {
         os.camera = Point::from((-2996.73, 0.0));
         os.camera_target = None;
@@ -662,7 +850,7 @@ fn a_clipped_step_during_a_zoom_out_lets_the_zoom_land() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b) = focused_a_and_b(&mut f, (2100, 440), (300, 200));
+    let (_a, b) = focused_a_and_b(&mut f, (1300, 440), (1600 + SNAP_GAP, 440), (600, 200));
     let resting = f.state().zoom_target();
 
     f.state().execute_action(&Action::ZoomOut);
@@ -698,7 +886,8 @@ fn a_walk_steps_on_past_a_too_tall_window_whose_size_lags_its_configure() {
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (810, 440));
+    // Laid out as in `a_walk_steps_on_past_a_window_too_tall_to_show_whole`.
+    let a = window_at(&mut f, id, "a", (1750 - SNAP_GAP - 300, 440));
     let t_surface = map_window(&mut f, id, "t", (300, 1200));
     let t = window_by_app_id(&mut f, "t").unwrap();
     f.state().map_window(
@@ -706,7 +895,7 @@ fn a_walk_steps_on_past_a_too_tall_window_whose_size_lags_its_configure() {
         Point::from((1750, -500)),
         false,
     );
-    let c = window_at(&mut f, id, "c", (2300, 440));
+    let c = window_at(&mut f, id, "c", (2050 + SNAP_GAP, 0));
     let toplevel = t.toplevel().unwrap();
     toplevel.with_pending_state(|s| s.size = Some((300, 1260).into()));
     toplevel.send_configure();
@@ -740,9 +929,9 @@ fn a_quick_second_step_walks_on_from_where_the_first_pan_lands() {
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
-    let a = window_at(&mut f, id, "a", (810, 440));
+    let a = window_at(&mut f, id, "a", (1750 - SNAP_GAP - 300, 440));
     let _b = window_at(&mut f, id, "b", (1750, 440));
-    let c = window_at(&mut f, id, "c", (2300, 440));
+    let c = window_at(&mut f, id, "c", (2050 + SNAP_GAP, 440));
     origin_view(&mut f);
     let serial = SERIAL_COUNTER.next_serial();
     f.state().raise_and_focus(&a, serial);
@@ -765,11 +954,14 @@ fn a_step_during_a_zoom_in_pans_from_where_the_zoom_lands() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    let (_a, b, c) = row_of_three(&mut f);
+    let id = f.add_client();
+    let b = window_at(&mut f, id, "b", (700, 400));
+    let c = sized_window_at(&mut f, id, "c", (1000 + SNAP_GAP, 400), (500, 200));
+    origin_view(&mut f);
     let serial = SERIAL_COUNTER.next_serial();
     f.state().raise_and_focus(&b, serial);
     // Zoomed to 2 on the viewport center the view spans canvas x 480–1440:
-    // b stays whole, c at 1300–1600 is cut off.
+    // b stays whole, c at 1012–1512 is cut off.
     f.state().zoom_to_anchored(2.0);
     f.state().apply_zoom_animation(TICK);
     assert!(
