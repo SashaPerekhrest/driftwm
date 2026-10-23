@@ -302,8 +302,7 @@ impl DriftWm {
             Action::FocusNearest(dir) => {
                 match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
                     Some(NavTarget::Window(elem)) => {
-                        // A step out of the focused window's cluster is a jump,
-                        // and a jump parks rather than walks.
+                        // A step to an unrelated window is a jump, and jumps park.
                         let pan = if self.related_to_focus(&elem, was_fullscreen.as_ref()) {
                             RevealPan::Minimal
                         } else {

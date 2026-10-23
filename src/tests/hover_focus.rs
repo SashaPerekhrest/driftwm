@@ -1155,7 +1155,7 @@ fn a_centering_navigation_to_a_stand_in_keeps_the_focus_intent() {
 /// one snap gap left of `b`, which hangs past the right edge, and the cursor
 /// rests on bare canvas at screen (100, 20). The step walks within the cluster,
 /// panning right just far enough to show `b`, which carries the cursor's canvas
-/// point onto `decoy`. The decoy sits behind `a`, outside the search cone, so
+/// point onto `decoy`. The decoy sits left of `a`, outside the search cone, so
 /// the step can't pick it itself.
 fn step_onto_a_clipped_window_past_a_decoy(f: &mut Fixture, id: ClientId) -> (Window, Window) {
     let gap = f.state().config.snap_gap as i32;

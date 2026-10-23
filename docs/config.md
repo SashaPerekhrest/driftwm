@@ -772,7 +772,7 @@ Actions:
 - `center-window` — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 - `focus-center` — focus the window under the pointer and bring it there too + reset zoom; same fill exception. With no window under the pointer it acts as center-window; a pinned window under the pointer is focused where it is
 - `center-nearest <dir>` — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
-- `focus-nearest <dir>` — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, when it is in the focused window's snap cluster or overlaps it, and otherwise lands on the focus_placement point; a navigation.anchors target still centers
+- `focus-nearest <dir>` — focus the nearest window in direction; a clipped one in the focused window's snap cluster, or overlapping it, scrolls just far enough to show it, snap.outer_gap in from the edge, and any other clipped one lands on the focus_placement point; a navigation.anchors target still centers
 - `cycle-windows forward` — Alt-Tab style window cycling
 - `cycle-windows backward` — reverse cycle
 - `home-toggle` — toggle between current position and origin

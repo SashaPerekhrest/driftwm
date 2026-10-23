@@ -1,11 +1,11 @@
 //! `focus-nearest <dir>`: the directional search of `center-nearest` with
 //! reveal semantics. A target already fully on screen only takes the keyboard
 //! and the top of the z-order; a clipped one in the focused window's snap
-//! cluster pans in only as far as it takes to show it whole, `outer_gap` in
-//! from the edge, and one outside it parks on `focus_placement` as a jump
-//! does; a bare `navigation.anchors` point still centers. `center-nearest`
-//! itself keeps parking unconditionally — it is the walk-through for a
-//! non-center `focus_placement`.
+//! cluster, or overlapping it, pans in only as far as it takes to show it
+//! whole, `outer_gap` in from the edge, and any other parks on
+//! `focus_placement` as a jump does; a bare `navigation.anchors` point still
+//! centers. `center-nearest` itself parks unconditionally — it is the
+//! walk-through for a non-center `focus_placement`.
 
 use driftwm::config::{Action, BTN_LEFT, Direction};
 use smithay::desktop::Window;
@@ -363,8 +363,8 @@ fn a_step_with_nothing_focused_parks_its_target() {
     assert_near(camera.y, parked.y, "camera y");
 }
 
-/// A clipped target overlapping the focused window is related to it with no
-/// snap gap between them, so the step walks.
+/// A clipped target overlapping the focused window, with no snap gap joining
+/// them, is related by the overlap alone, so the step walks.
 #[test]
 fn a_step_to_a_clipped_window_overlapping_the_focused_one_pans_minimally() {
     let mut f = Fixture::with_config(config(GAP_CONFIG));
@@ -581,8 +581,7 @@ fn a_border_wider_than_the_gap_lands_the_frame_on_the_edge() {
     ));
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
-    // Each border hangs outside its window, and the snap gap runs between
-    // them.
+    // The snap gap runs border to border, each 6 px outside its window.
     let (_a, b) = focused_a_and_b(
         &mut f,
         (1750 - 6 - SNAP_GAP - 6 - 300, 440),
