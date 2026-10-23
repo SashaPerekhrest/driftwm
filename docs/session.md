@@ -150,8 +150,7 @@ Two things to keep in mind:
   app that should never leave a stand-in behind.
 - **Key the rule on `app_id`.** Saved records carry no title, so a `title`
   criterion narrows only what gets *saved*; on the way back the rule is read
-  off `app_id` alone, and decides for every saved window of that app. The
-  [config reference](config.md#window-rules) has the rest.
+  off `app_id` alone, and decides for every saved window of that app.
 
 ## `restore_camera`
 
