@@ -74,9 +74,9 @@
 # # to a clipped window in the same cluster, or one overlapping the focused
 # # window, scrolls it just far enough to show it whole, snap.outer_gap in from
 # # the edge it hung past, and centers only on an axis where the window doesn't
-# # fit. A step to a clipped window in another cluster, or with no window
-# # focused, lands it here, as Alt-Tab does. A window already fully on screen
-# # takes focus without a pan either way.
+# # fit. A step to a clipped window in another cluster, or from no focused
+# # window or a pinned one, lands it here, as Alt-Tab does. A window already
+# # fully on screen takes focus without a pan either way.
 # #
 # # Because the spawn point follows it too (see window_placement above), this
 # # also shifts where a new window lands on the *canvas* — the position
@@ -433,7 +433,7 @@
 # #   center-window           — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 # #   focus-center            — focus the window under the pointer and bring it there too + reset zoom; same fill exception. With no window under the pointer it acts as center-window; a pinned window under the pointer is focused where it is
 # #   center-nearest <dir>    — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
-# #   focus-nearest <dir>     — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, when it is in the focused window's snap cluster, and otherwise lands on the focus_placement point; a navigation.anchors target still centers
+# #   focus-nearest <dir>     — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, when it is in the focused window's snap cluster or overlaps it, and otherwise lands on the focus_placement point; a navigation.anchors target still centers
 # #   cycle-windows forward   — Alt-Tab style window cycling
 # #   cycle-windows backward  — reverse cycle
 # #   home-toggle             — toggle between current position and origin
