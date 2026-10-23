@@ -70,9 +70,13 @@
 # # the view it was filled in.
 # #
 # # focus-nearest (Mod+Arrow, the 4-finger swipe and Mod+Ctrl+drag by default)
-# # walks rather than jumps, so it doesn't land here: it scrolls a clipped
-# # window just far enough to show it whole, snap.outer_gap in from the edge it
-# # hung past, and centers only on an axis where the window doesn't fit.
+# # walks within the focused window's snap cluster and jumps out of it. A step
+# # to a clipped window in the same cluster, or one overlapping the focused
+# # window, scrolls it just far enough to show it whole, snap.outer_gap in from
+# # the edge it hung past, and centers only on an axis where the window doesn't
+# # fit. A step to a clipped window in another cluster, or with no window
+# # focused, lands it here, as Alt-Tab does. A window already fully on screen
+# # takes focus without a pan either way.
 # #
 # # Because the spawn point follows it too (see window_placement above), this
 # # also shifts where a new window lands on the *canvas* — the position
@@ -429,7 +433,7 @@
 # #   center-window           — bring the focused window to the focus_placement point + reset zoom; a window still filled returns to the camera + zoom it was filled in instead
 # #   focus-center            — focus the window under the pointer and bring it there too + reset zoom; same fill exception. With no window under the pointer it acts as center-window; a pinned window under the pointer is focused where it is
 # #   center-nearest <dir>    — navigate to nearest window in direction; a window target lands on the focus_placement point, a navigation.anchors target still centers
-# #   focus-nearest <dir>     — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, a navigation.anchors target still centers
+# #   focus-nearest <dir>     — focus the nearest window in direction; one not fully on screen scrolls just far enough to show it, snap.outer_gap in from the edge, when it is in the focused window's snap cluster, and otherwise lands on the focus_placement point; a navigation.anchors target still centers
 # #   cycle-windows forward   — Alt-Tab style window cycling
 # #   cycle-windows backward  — reverse cycle
 # #   home-toggle             — toggle between current position and origin
@@ -573,7 +577,7 @@
 # #   pan-viewport            — drag or scroll to pan the camera
 # #   zoom                    — drag or scroll to zoom
 # #   center-nearest          — navigate toward the drag direction
-# #   focus-nearest           — the same direction, with focus-nearest's reveal instead of parking
+# #   focus-nearest           — the same direction, with focus-nearest's reveal
 # #
 # # Any action from the [keybindings] Actions list also works on button and
 # # wheel-up/wheel-down triggers: `exec <cmd>`, close-window, toggle-fullscreen, etc.
