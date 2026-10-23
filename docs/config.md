@@ -591,13 +591,13 @@ px; 0 = no border
 
 ### `border_color`
 
-Default: `"#303030"`
+Default: `"#333333"`
 
 unfocused border
 
 ### `border_color_focused`
 
-Default: `"#303030"`
+Default: `"#333333"`
 
 focused border; set it apart from border_color for a focus indicator
 

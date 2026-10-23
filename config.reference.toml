@@ -233,8 +233,8 @@
 
 # # Borders apply in every mode but "none".
 # border_width = 0               # px; 0 = no border
-# border_color = "#303030"       # unfocused border
-# border_color_focused = "#303030"  # focused border; set it apart from
+# border_color = "#333333"       # unfocused border
+# border_color_focused = "#333333"  # focused border; set it apart from
                                     # border_color for a focus indicator
 
 # # Focus-dependent opacity for windows with no `opacity` rule or `msg opacity`
