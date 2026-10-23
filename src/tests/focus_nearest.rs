@@ -436,6 +436,59 @@ fn a_step_out_of_fullscreen_judges_the_cluster_at_the_restored_size() {
     assert_near(camera.y, parked.y, "camera y");
 }
 
+/// A touch swipe exits fullscreen at touch-down and steps on a later motion,
+/// so the client may have answered the exit by then, with a size of its own.
+/// The step then judges the cluster at the frame the window took: `b` is
+/// docked to it, and the step walks.
+#[test]
+fn a_touch_step_after_the_fullscreen_exit_settled_judges_the_live_frame() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let id = f.add_client();
+    let a_surface = map_window(&mut f, id, "a", (300, 200));
+    let a = window_by_app_id(&mut f, "a").unwrap();
+    f.state().map_window(
+        StageWindow::Client(a.clone()),
+        Point::from((810, 440)),
+        false,
+    );
+    // One snap gap right of where `a` recenters at the 600 px it will take.
+    let b = sized_window_at(&mut f, id, "b", (1260 + SNAP_GAP, 440), (800, 200));
+    origin_view(&mut f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    let output = f.state().active_output();
+    f.state().enter_fullscreen(&a, output);
+    f.double_roundtrip(id);
+    super::adopt_last_configure(&mut f, id, &a_surface);
+    f.state().exit_fullscreen();
+    super::ack_with_size(&mut f, id, &a_surface, (600, 200));
+    assert_eq!(
+        f.state().stage.position_of(&a),
+        Some(Point::from((660, 440))),
+        "precondition: a recentered at the size it took"
+    );
+    assert_ne!(
+        crate::state::configured_window_size(&a),
+        a.geometry().size,
+        "precondition: a took a size other than the one the exit configured"
+    );
+    assert!(
+        !f.state().window_fully_in_viewport(&b),
+        "precondition: b is clipped"
+    );
+    f.state().pre_exited_fullscreen = Some(a);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    settle(&mut f);
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.right, 1920.0 - GAP, "b's right edge");
+}
+
 /// `focus_placement` is where jumps land, not walks: a directional step onto
 /// a clipped window under `"left"` still stops as soon as the window is whole
 /// rather than carrying it across to the left edge.

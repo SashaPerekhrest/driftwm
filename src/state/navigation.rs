@@ -882,9 +882,10 @@ impl DriftWm {
     /// live frames. Nothing focused, or a focused element with no canvas frame
     /// (pinned), relates to nothing.
     ///
-    /// `left_fullscreen` is a window this dispatch took out of fullscreen. Its
-    /// client still commits the fullscreen size until it acks the exit, so it
-    /// is measured at the size the exit configured instead.
+    /// `left_fullscreen` is a window this action took out of fullscreen. Until
+    /// its client answers the exit it still commits the fullscreen size, so
+    /// while the exit's recenter is owed it is measured at the size the exit
+    /// configured instead, as `map_window_to_rule_point` does.
     pub fn related_to_focus(&self, target: &StageWindow, left_fullscreen: Option<&Window>) -> bool {
         let Some(focused) = self.focused_anchor_element() else {
             return false;
@@ -892,9 +893,15 @@ impl DriftWm {
         let Some(live) = self.snap_rect_for(&focused) else {
             return false;
         };
-        let frame = match left_fullscreen {
-            Some(w) if focused == *w => self.reveal_frame(&focused).unwrap_or(live),
-            _ => live,
+        let exit_unanswered = left_fullscreen.is_some_and(|w| {
+            focused == *w
+                && w.wl_surface()
+                    .is_some_and(|s| self.pending_recenter.contains_key(&s.id()))
+        });
+        let frame = if exit_unanswered {
+            self.reveal_frame(&focused).unwrap_or(live)
+        } else {
+            live
         };
         self.spatial_relatives(&focused, frame).contains(target)
     }
