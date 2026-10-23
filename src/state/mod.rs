@@ -167,7 +167,8 @@ pub struct PendingMiddleClick {
 
 /// A click armed for auto-navigate: a normal window was pressed with
 /// `auto_navigate_on_click` enabled. On release — if the pointer barely moved
-/// and the window is still clipped — the camera pans to it like activation does.
+/// and the window is still clipped — the camera scrolls it just into view, as a
+/// focus-nearest walk does.
 pub struct PendingClickNavigate {
     pub window: Window,
     /// Press position in screen space, so the click/drag slop is measured in

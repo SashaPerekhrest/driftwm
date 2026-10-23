@@ -1,16 +1,18 @@
 //! `auto_navigate_on_click`: a completed click on a partially off-screen
-//! window pans the camera to it (like activation), while a fully visible
-//! window keeps focus-only. Content clicks pan immediately on release; only the
+//! window scrolls it just into view, while a fully visible window keeps
+//! focus-only. Content clicks pan immediately on release; only the
 //! SSD title bar defers past the double-click window (its own double-click-fit
 //! must beat the pan). Tests split at the resolve/fire seam: the content path
 //! pans inside `resolve` (assert `camera_target`), the title-bar path schedules
 //! a deferred fire (assert the timer), and `fire` performs the final gated pan
 //! (assert `camera_target`).
 
-use driftwm::config::{BTN_LEFT, BTN_RIGHT, Config};
+use driftwm::config::{Action, BTN_LEFT, BTN_RIGHT, Config};
 use smithay::utils::{Point, SERIAL_COUNTER};
 
-use super::{Fixture, map_window, window_by_app_id};
+use crate::state::StageWindow;
+
+use super::{Fixture, map_window, settle, window_by_app_id};
 
 fn config_on() -> Config {
     Config::from_toml(
@@ -61,6 +63,141 @@ fn content_click_on_clipped_window_pans() {
     assert!(
         f.state().click_navigate_timer.is_none(),
         "content clicks must not defer"
+    );
+}
+
+/// A click on a window hanging off the right edge scrolls it just far enough to
+/// show it whole, `outer_gap` in from that edge, rather than parking it on
+/// `focus_placement`. The other axis holds.
+#[test]
+fn click_on_clipped_window_scrolls_it_just_into_view() {
+    let mut f = Fixture::with_config(
+        Config::from_toml(
+            r#"
+            [navigation]
+            auto_navigate_on_click = true
+            [snap]
+            outer_gap = 20.0
+        "#,
+        )
+        .unwrap(),
+    );
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "clip", (300, 200));
+    let window = window_by_app_id(&mut f, "clip").unwrap();
+    let elem = StageWindow::Client(window.clone());
+    f.state()
+        .map_window(elem.clone(), Point::from((1750, 100)), false);
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((0.0, 0.0));
+        os.camera_target = None;
+        os.zoom = 1.0;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+    focus(&mut f, &window);
+    assert!(
+        !f.state().window_fully_in_viewport(&window),
+        "precondition: the window hangs off the right edge"
+    );
+
+    let press = Point::from((1800.0, 200.0));
+    f.state()
+        .arm_click_navigate(&window, press, BTN_LEFT, false);
+    f.state().resolve_click_navigate(BTN_LEFT, press);
+    settle(&mut f);
+
+    let frame = f.state().visual_frame_rect(&elem).unwrap();
+    let camera = f.state().camera();
+    let right = frame.x_high - camera.x;
+    assert!(
+        (right - (1920.0 - 20.0)).abs() < 1e-6,
+        "the right edge lands outer_gap in from the screen edge: {right}"
+    );
+    assert_eq!(camera.y, 0.0, "the other axis held");
+}
+
+/// A click on a window shown whole leaves a camera flight under way alone, even
+/// one heading where the window will be clipped.
+#[test]
+fn click_on_visible_window_leaves_a_flight_alone() {
+    let mut f = Fixture::with_config(config_on());
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "vis", (640, 480));
+    let window = window_by_app_id(&mut f, "vis").unwrap();
+    focus(&mut f, &window);
+    let far = f.state().camera() + Point::from((5000.0, 0.0));
+    f.state().with_output_state(|os| {
+        os.camera_target = Some(far);
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+    assert!(
+        f.state().window_fully_in_viewport(&window),
+        "precondition: the window is in view now"
+    );
+
+    f.state().fire_click_navigate(&window);
+
+    assert_eq!(
+        f.state().camera_target(),
+        Some(far),
+        "the flight still heads where it was going"
+    );
+}
+
+/// A click on a pinned window, which lives in screen space, pans nothing.
+#[test]
+fn click_on_pinned_window_does_not_pan() {
+    let mut f = Fixture::with_config(config_on());
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (640, 480));
+    let window = window_by_app_id(&mut f, "pin").unwrap();
+    focus(&mut f, &window);
+    f.state().execute_action(&Action::TogglePinToScreen);
+    assert!(f.state().stage.is_pinned(&window), "precondition: pinned");
+    f.state().with_output_state(|os| {
+        os.camera_target = None;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+
+    f.state().fire_click_navigate(&window);
+
+    assert!(
+        f.state().camera_target().is_none(),
+        "a pinned window must not pan the canvas"
+    );
+}
+
+/// A click that fires just after its window went fullscreen pans nothing.
+#[test]
+fn click_on_fullscreen_window_does_not_pan() {
+    let mut f = Fixture::with_config(config_on());
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "fs", (640, 480));
+    let window = window_by_app_id(&mut f, "fs").unwrap();
+    focus(&mut f, &window);
+    f.state().execute_action(&Action::ToggleFullscreen);
+    assert!(
+        f.state().stage.is_fullscreen(&window),
+        "precondition: fullscreen"
+    );
+    f.state().with_output_state(|os| {
+        os.camera_target = None;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+
+    f.state().fire_click_navigate(&window);
+
+    assert!(
+        f.state().camera_target().is_none(),
+        "a fullscreen window must not pan the camera"
     );
 }
 

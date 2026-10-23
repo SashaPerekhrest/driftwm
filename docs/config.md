@@ -29,7 +29,7 @@ Default: `"center"`
 
 Where navigation parks a window within the usable area (the screen minus panels): "center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left" or "bottom-right". An edge or corner keeps the window snap.outer_gap in from that edge; a window too big for an axis centers on that axis.
 
-center-window, focus-center and center-nearest always park the window here (a filled window returns to the view it was filled in instead). Alt-Tab, click-to-navigate, activation, `msg focus` and the focus that follows a close park it only when it isn't fully on screen. focus-nearest, for a window not fully on screen, scrolls just far enough to show it when it is in the focused window's snap cluster or overlaps it, and parks it otherwise. Overridable per monitor (see Outputs).
+center-window, focus-center and center-nearest always park the window here (a filled window returns to the view it was filled in instead). Alt-Tab, activation, `msg focus` and the focus that follows a close park it only when it isn't fully on screen. focus-nearest, for a window not fully on screen, scrolls just far enough to show it when it is in the focused window's snap cluster or overlaps it, and parks it otherwise; a click under auto_navigate_on_click only scrolls it into view. Overridable per monitor (see Outputs).
 
 ### `window_placement`
 
@@ -336,7 +336,7 @@ on close, pan to the newly focused window if it's off screen (false = focus only
 
 Default: `false`
 
-a click on a partly off-screen window pans it in
+a click on a partly off-screen window scrolls it just into view
 
 ### `nudge_step`
 

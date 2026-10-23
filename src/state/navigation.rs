@@ -420,9 +420,17 @@ impl DriftWm {
         if !focused {
             return;
         }
-        if !self.window_fully_in_viewport(window) {
-            self.navigate_to_window(window, NavZoom::Keep);
+        // Judged at the live view the click was made on, not the landing view, so
+        // a window shown whole leaves a flight under way alone. Pinned and
+        // fullscreen windows live in screen space, with no canvas frame to scroll.
+        if self.window_fully_in_viewport(window)
+            || self.stage.is_pinned(window)
+            || self.stage.is_fullscreen(window)
+        {
+            return;
         }
+        let (camera, zoom) = self.landing_view();
+        self.pan_minimally_to_element(&StageWindow::Client(window.clone()), camera, zoom);
     }
 
     /// Cancel any armed or deferred click-navigate. Clearing the deferred timer
