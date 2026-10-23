@@ -288,13 +288,6 @@ pub(super) fn default_bindings(mod_key: ModKey) -> HashMap<KeyCombo, Action> {
         (
             KeyCombo {
                 modifiers: m.clone(),
-                sym: Keysym::from(keysyms::KEY_g),
-            },
-            Action::FillWindow,
-        ),
-        (
-            KeyCombo {
-                modifiers: m.clone(),
                 sym: Keysym::from(keysyms::KEY_t),
             },
             Action::TogglePinToScreen,

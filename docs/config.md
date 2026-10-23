@@ -809,7 +809,6 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 | `"mod+f"` | `toggle-fullscreen` |  |
 | `"mod+m"` | `fit-window-snapped` |  |
 | `"mod+shift+m"` | `fit-window` |  |
-| `"mod+g"` | `fill-window` |  |
 | `"mod+t"` | `toggle-pin-to-screen` |  |
 | `"mod+c"` | `center-window` |  |
 | `"mod+x"` | `focus-center` |  |
@@ -876,6 +875,12 @@ Directions: up, down, left, right, up-left, up-right, down-left, down-right
 
 ```toml
 "alt+shift" = "switch-layout next"
+```
+
+**Example: fill-window on a key (mod+middle runs it by default)**
+
+```toml
+"mod+g" = "fill-window"
 ```
 
 **Example: set-trackpad (unbound by default)**

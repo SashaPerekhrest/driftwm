@@ -107,7 +107,7 @@ an app, navigating — exits it.
 | `Alt+Shift` + RMB drag                    | Resize window                         |
 | `Alt` + MMB click / `Mod+M`               | Fit snapped window (maximize/restore) |
 | `Alt+Shift` + MMB click / `Mod+Shift+M`   | Fit window                            |
-| `Mod` + MMB click / `Mod+G`               | Fill free space (press again to undo) |
+| `Mod` + MMB click                         | Fill free space (press again to undo) |
 | `Mod` + 4-finger pinch in / `Mod+Shift+W` | Zoom-to-fit snapped windows           |
 | `Mod+F`                                   | Toggle fullscreen                     |
 | `Mod+Shift` + arrow                       | Move to the next snap stop            |

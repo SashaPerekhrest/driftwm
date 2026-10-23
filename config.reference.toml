@@ -467,7 +467,6 @@
 # "mod+f" = "toggle-fullscreen"
 # "mod+m" = "fit-window-snapped"
 # "mod+shift+m" = "fit-window"
-# "mod+g" = "fill-window"
 # "mod+t" = "toggle-pin-to-screen"
 # "mod+c" = "center-window"
 # "mod+x" = "focus-center"
@@ -523,6 +522,8 @@
 # # "mod+alt+shift+up" = "center-nearest up"
 # # Example: tap binding — bare modifier chord, fires on release with no key on top
 # # "alt+shift" = "switch-layout next"
+# # Example: fill-window on a key (mod+middle runs it by default)
+# # "mod+g" = "fill-window"
 # # Example: set-trackpad (unbound by default)
 # # "mod+f10" = "set-trackpad toggle"   # flip the trackpad between on and off
 # # "mod+shift+f10" = "set-trackpad off"   # turn it off whatever the current state
