@@ -18,19 +18,11 @@
 # # they set. Empty canvas keeps focus; click it to unfocus.
 # focus_follows_mouse = false
 
-# # Where a new window opens when no window rule positions it:
-# #   "auto"   — docked beside the focused window, or the nearest one in view;
-# #              falls back to "center" when nothing fits or after you clear
-# #              focus by clicking empty canvas
-# #   "center" — at the focus_placement point; the camera follows it
-# #   "cursor" — centered on the cursor, kept inside the usable area; the
-# #              camera stays put unless zoom.reset_on_new_window zooms it
-# window_placement = "auto"
-
-# # Where navigation parks a window in the viewport: "center", "top", "bottom",
-# # "left", "right", "top-left", "top-right", "bottom-left" or "bottom-right".
-# # An edge or corner keeps the window snap.outer_gap in from the usable area;
-# # a window too big for an axis centers on that axis.
+# # Where navigation parks a window within the usable area (the screen minus
+# # panels): "center", "top", "bottom", "left", "right", "top-left",
+# # "top-right", "bottom-left" or "bottom-right". An edge or corner keeps the
+# # window snap.outer_gap in from that edge; a window too big for an axis
+# # centers on that axis.
 # #
 # # center-window, focus-center and center-nearest always park the window here
 # # (a filled window returns to the view it was filled in instead). Alt-Tab,
@@ -40,6 +32,15 @@
 # # in the focused window's snap cluster or overlaps it, and parks it otherwise.
 # # Overridable per monitor (see Outputs).
 # focus_placement = "center"
+
+# # Where a new window opens when no window rule positions it:
+# #   "auto"   — docked beside the focused window, or the nearest one in view;
+# #              falls back to "center" when nothing fits or after you clear
+# #              focus by clicking empty canvas
+# #   "center" — at the focus_placement point; the camera follows it
+# #   "cursor" — centered on the cursor, kept inside the usable area; the
+# #              camera stays put unless zoom.reset_on_new_window zooms it
+# window_placement = "auto"
 
 # # Commands run at startup, each through sh -c.
 # autostart = []

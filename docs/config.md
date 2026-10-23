@@ -23,6 +23,14 @@ Default: `false`
 
 Keyboard focus follows the pointer onto windows, also when a pan or zoom slides a window under a resting cursor; navigation actions keep the focus they set. Empty canvas keeps focus; click it to unfocus.
 
+### `focus_placement`
+
+Default: `"center"`
+
+Where navigation parks a window within the usable area (the screen minus panels): "center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left" or "bottom-right". An edge or corner keeps the window snap.outer_gap in from that edge; a window too big for an axis centers on that axis.
+
+center-window, focus-center and center-nearest always park the window here (a filled window returns to the view it was filled in instead). Alt-Tab, click-to-navigate, activation, `msg focus` and the focus that follows a close park it only when it isn't fully on screen. focus-nearest, for a window not fully on screen, scrolls just far enough to show it when it is in the focused window's snap cluster or overlaps it, and parks it otherwise. Overridable per monitor (see Outputs).
+
 ### `window_placement`
 
 Default: `"auto"`
@@ -32,14 +40,6 @@ Where a new window opens when no window rule positions it:
 - `"auto"` — docked beside the focused window, or the nearest one in view; falls back to "center" when nothing fits or after you clear focus by clicking empty canvas
 - `"center"` — at the focus_placement point; the camera follows it
 - `"cursor"` — centered on the cursor, kept inside the usable area; the camera stays put unless zoom.reset_on_new_window zooms it
-
-### `focus_placement`
-
-Default: `"center"`
-
-Where navigation parks a window in the viewport: "center", "top", "bottom", "left", "right", "top-left", "top-right", "bottom-left" or "bottom-right". An edge or corner keeps the window snap.outer_gap in from the usable area; a window too big for an axis centers on that axis.
-
-center-window, focus-center and center-nearest always park the window here (a filled window returns to the view it was filled in instead). Alt-Tab, click-to-navigate, activation, `msg focus` and the focus that follows a close park it only when it isn't fully on screen. focus-nearest, for a window not fully on screen, scrolls just far enough to show it when it is in the focused window's snap cluster or overlaps it, and parks it otherwise. Overridable per monitor (see Outputs).
 
 ### `autostart`
 
