@@ -16,7 +16,7 @@ use crate::ipc::protocol::{Request, Response, WindowSelector};
 use crate::state::{StageWindow, SuspendedId};
 
 use super::real::TempDir;
-use super::{Fixture, map_window, server_surface, window_by_app_id};
+use super::{Fixture, TICK, map_window, server_surface, settle, window_by_app_id};
 
 /// SSD-on config plus an optional `[session]` / per-rule `suspend_on_close` body.
 fn config_with(body: &str) -> Config {
@@ -1128,6 +1128,48 @@ fn ipc_focus_and_move_route_to_suspended() {
         f.state(),
     );
     assert!(matches!(read, Ok(Response::Position { x: 1000, y: -500 })));
+
+    f.state().dismiss_suspended(sid);
+}
+
+/// `msg focus <id>` on a clipped stand-in during a zoom animation pans to it at
+/// the zoom the view is heading to, so the zoom lands instead of freezing where
+/// this frame caught it.
+#[test]
+fn ipc_focus_on_a_clipped_stand_in_during_a_zoom_out_lets_the_zoom_land() {
+    let mut f = Fixture::with_config(config_with(""));
+    f.add_output(1, (1920, 1080));
+    origin_view(&mut f);
+    let sid = f.state().insert_suspended_for_test(
+        7,
+        Point::from((3000, 200)),
+        Size::from((320, 240)),
+        "susapp",
+        "Sus App",
+    );
+    let element = StageWindow::Suspended(f.state().find_suspended(sid).unwrap());
+    let ipc_id = f.state().stage.id_of(&element).unwrap().0;
+    let resting = f.state().zoom_target();
+
+    f.state().execute_action(&Action::ZoomOut);
+    let heading = f.state().zoom_target().expect("zoom-out armed a zoom");
+    assert_ne!(Some(heading), resting, "the zoom target moved");
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > heading,
+        "precondition: the zoom is under way"
+    );
+    assert!(
+        !f.state().window_fully_in_viewport(&element),
+        "precondition: the stand-in is clipped"
+    );
+
+    let reply = crate::ipc::dispatch(Request::Focus(Some(WindowSelector::Id(ipc_id))), f.state());
+    assert!(matches!(reply, Ok(Response::Focused(Some(_)))));
+    settle(&mut f);
+    assert_eq!(f.state().zoom(), heading, "the zoom-out landed");
+    assert!(f.state().window_fully_in_viewport(&element));
 
     f.state().dismiss_suspended(sid);
 }

@@ -9,9 +9,12 @@ use smithay::utils::Point;
 use wayland_protocols_wlr::layer_shell::v1::client::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 
 use super::client::{ClientId, LayerConfigureProps};
-use super::input_backend::{FakeDevice, pointer_to_screen, press, release};
+use super::input_backend::{FakeDevice, key_press, pointer_to_screen, press, release};
 use super::popups::grow_popup;
-use super::{Fixture, keyboard_focus};
+use super::{Fixture, keyboard_focus, pointer_focus};
+
+/// evdev code of Super, the default `mod_key`.
+const KEY_LEFTMETA: u32 = 125;
 
 /// Map a 200×150 top layer with `OnDemand` keyboard interactivity — unanchored,
 /// so it centers on the 1920×1080 fixture output at screen (860,465)-(1060,615)
@@ -149,6 +152,55 @@ fn press_outside_a_grabbed_layer_popup_dismisses_it() {
     assert!(
         f.client(id).popup(&popup_surface).popup_done,
         "a press outside both the popup and its owning layer must dismiss it"
+    );
+
+    f.client(id).popup(&popup_surface).destroy();
+    f.client(id).layer(&layer_surface).layer_surface.destroy();
+    f.double_roundtrip(id);
+}
+
+/// While a layer's popup holds the pointer grab, an `anywhere` binding pressed
+/// over the layer leaves the press to that grab. A pan grab installed in its
+/// place would leave the menu open with nothing to dismiss it.
+#[test]
+fn an_anywhere_pan_over_a_layer_with_a_grabbed_popup_leaves_the_grab_alone() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let device = FakeDevice::mouse();
+
+    let (layer_surface, layer_root, popup_surface, layer_topleft) =
+        setup_focused_layer_with_grabbed_popup(&mut f, id, &device);
+
+    // The layer's bottom row, below the popup.
+    let popup_pos = f.client(id).popup(&popup_surface).pending_configure.pos;
+    assert!(
+        popup_pos.1 + 100 < 145,
+        "test setup bug: the popup must leave the layer's bottom row clear"
+    );
+    let on_layer = layer_topleft + Point::from((100.0, 145.0));
+    pointer_to_screen(&mut f, &device, on_layer);
+    assert_eq!(
+        pointer_focus(&mut f),
+        Some(layer_root),
+        "test setup bug: the pointer must rest on the layer, clear of its popup"
+    );
+    let camera = f.state().camera();
+
+    key_press(&mut f, KEY_LEFTMETA);
+    press(&mut f, &device, BTN_LEFT);
+    pointer_to_screen(&mut f, &device, on_layer - Point::from((200.0, 0.0)));
+    release(&mut f, &device, BTN_LEFT);
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        f.state().camera(),
+        camera,
+        "the popup grab owns the pointer, so mod+left must not pan"
+    );
+    assert!(
+        f.state().popup_grab.is_some() && !f.client(id).popup(&popup_surface).popup_done,
+        "the press landed on the popup's own layer, so the menu stays open under its grab"
     );
 
     f.client(id).popup(&popup_surface).destroy();

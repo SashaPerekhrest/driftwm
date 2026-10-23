@@ -5,6 +5,7 @@ use std::time::Duration;
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use crate::config::Direction;
+use crate::layout::snap::SnapRect;
 
 /// Hard floor for zoom — prevents division by zero / absurd values.
 pub const MIN_ZOOM_FLOOR: f64 = 0.001;
@@ -477,6 +478,49 @@ pub fn zoom_anchor_camera(
     Point::from((
         anchor_canvas.x - anchor_screen.x / new_zoom,
         anchor_canvas.y - anchor_screen.y / new_zoom,
+    ))
+}
+
+/// The camera nearest `camera` that shows `frame` (canvas px) whole inside
+/// `usable` (screen px) at `zoom`, `inset` canvas px clear of its edges. On an
+/// axis where the frame and both insets don't fit, the frame centers instead.
+pub fn minimal_reveal_camera(
+    frame: &SnapRect,
+    camera: Point<f64, Logical>,
+    zoom: f64,
+    usable: Rectangle<i32, Logical>,
+    inset: f64,
+) -> Point<f64, Logical> {
+    let axis = |camera: f64, low: f64, high: f64, usable_low: i32, usable_span: i32| {
+        let (usable_low, usable_span) = (usable_low as f64 / zoom, usable_span as f64 / zoom);
+        if high - low + 2.0 * inset > usable_span {
+            return (low + high) / 2.0 - (usable_low + usable_span / 2.0);
+        }
+        let short_of_low = camera + usable_low + inset - low;
+        let past_high = high - (camera + usable_low + usable_span - inset);
+        if short_of_low > 0.0 {
+            camera - short_of_low
+        } else if past_high > 0.0 {
+            camera + past_high
+        } else {
+            camera
+        }
+    };
+    Point::from((
+        axis(
+            camera.x,
+            frame.x_low,
+            frame.x_high,
+            usable.loc.x,
+            usable.size.w,
+        ),
+        axis(
+            camera.y,
+            frame.y_low,
+            frame.y_high,
+            usable.loc.y,
+            usable.size.h,
+        ),
     ))
 }
 
@@ -1351,5 +1395,52 @@ mod tests {
             ),
             Coverage::None
         );
+    }
+
+    fn snap_rect(x: f64, y: f64, w: f64, h: f64) -> SnapRect {
+        SnapRect {
+            x_low: x,
+            x_high: x + w,
+            y_low: y,
+            y_high: y + h,
+        }
+    }
+
+    #[test]
+    fn minimal_reveal_holds_a_frame_already_clear_of_the_inset() {
+        let frame = snap_rect(100.0, 100.0, 300.0, 200.0);
+        let usable = usable_rect(0, 0, 1920, 1080);
+        assert_eq!(
+            minimal_reveal_camera(&frame, cam(0.0, 0.0), 1.0, usable, 20.0),
+            cam(0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn minimal_reveal_pans_each_clipped_edge_to_the_inset() {
+        let usable = usable_rect(0, 40, 1920, 1040);
+        // Past the right edge and short of the top one (under a 40 px bar).
+        let frame = snap_rect(1750.0, 30.0, 300.0, 200.0);
+        let camera = minimal_reveal_camera(&frame, cam(0.0, 0.0), 1.0, usable, 20.0);
+        assert_eq!(camera, cam(2050.0 - 1900.0, 30.0 - 60.0));
+    }
+
+    #[test]
+    fn minimal_reveal_centers_an_axis_the_frame_and_insets_overflow() {
+        let usable = usable_rect(0, 0, 1920, 1080);
+        // 1050 tall plus two 20 px insets overflows 1080; the width fits.
+        let frame = snap_rect(1750.0, 0.0, 300.0, 1050.0);
+        let camera = minimal_reveal_camera(&frame, cam(0.0, 0.0), 1.0, usable, 20.0);
+        assert_eq!(camera, cam(2050.0 - 1900.0, 525.0 - 540.0));
+    }
+
+    #[test]
+    fn minimal_reveal_measures_the_inset_in_canvas_px() {
+        let usable = usable_rect(0, 0, 1920, 1080);
+        let frame = snap_rect(3700.0, 100.0, 300.0, 200.0);
+        // At zoom 0.5 the 20 px inset shows as 10: the right edge lands at
+        // screen 1910, i.e. canvas 4000 = camera + 1910 / 0.5.
+        let camera = minimal_reveal_camera(&frame, cam(0.0, 0.0), 0.5, usable, 20.0);
+        assert_eq!(camera, cam(4000.0 - 3820.0, 0.0));
     }
 }

@@ -24,12 +24,7 @@ pub fn fill_rect(
     min_size: (f64, f64),
     max_size: (f64, f64),
 ) -> Option<SnapRect> {
-    let b = SnapRect {
-        x_low: bounds.x_low + bounds_inset,
-        x_high: bounds.x_high - bounds_inset,
-        y_low: bounds.y_low + bounds_inset,
-        y_high: bounds.y_high - bounds_inset,
-    };
+    let b = bounds.inset(bounds_inset);
     if !current.overlaps(&b) {
         return None;
     }

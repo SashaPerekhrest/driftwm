@@ -11,26 +11,29 @@
 //! reads to it as user input. Installing one takes the viewport out of flight —
 //! except for edge-pan, the one camera motion a grab does cause.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::input::keyboard::ModifiersState;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER, Size};
 
-use driftwm::config::{Action, BTN_LEFT, Config, Direction};
+use driftwm::config::{Action, BTN_LEFT, BTN_MIDDLE, Config, Direction};
 
 use crate::grabs::PanGrab;
 use crate::state::{StageWindow, ZoomAnimationAnchor, output_state};
 
 use super::client::ClientId;
 use super::input_backend::{
-    FakeDevice, pointer_relative_motion, pointer_relative_motion_at, pointer_to, press, release,
-    touch_down, touch_motion, touch_up,
+    FakeDevice, key_press, key_release, pointer_relative_motion, pointer_relative_motion_at,
+    pointer_to, press, release, touch_down, touch_motion, touch_up, wheel_notch_down,
 };
-use super::{Fixture, end_grab, map_window, motion, window_by_app_id, window_position};
+use super::{Fixture, config, end_grab, map_window, motion, window_by_app_id, window_position};
 
 const TICK: Duration = Duration::from_millis(16);
 const MAX_TICKS: usize = 600;
+
+/// evdev code for Super, the default `mod_key`.
+const KEY_LEFTMETA: u32 = 125;
 
 fn approx(a: Point<f64, Logical>, b: Point<f64, Logical>, tol: f64) -> bool {
     (a.x - b.x).abs() <= tol && (a.y - b.y).abs() <= tol
@@ -636,6 +639,171 @@ fn edge_pan_still_drives_the_camera_under_a_live_move_grab() {
         previous = now;
     }
     end_grab(&mut f);
+}
+
+/// A wheel zoom anchors the canvas point under the cursor, and every zoom tick
+/// rebuilds the camera from that anchor. Edge-pan moving the camera underneath
+/// it would get pulled straight back, stalling a drag in the edge zone — and the
+/// zoom would never finish either, the pan keeping it off its anchor.
+///
+/// `frame` runs one frame's edge-pan and zoom ticks, so each backend's own
+/// entry points can drive the same drag.
+fn wheel_zoom_during_an_edge_pan_drag(frame: impl Fn(&mut Fixture)) {
+    let mut f = Fixture::with_config(config(
+        r#"
+        [mouse.on-window]
+        "mod+middle" = "move-window"
+    "#,
+    ));
+    let out = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "a", (400, 300));
+    let window = window_by_app_id(&mut f, "a").unwrap();
+    origin_view(&mut f);
+    f.state().map_window(
+        StageWindow::Client(window.clone()),
+        Point::from((400, 300)),
+        true,
+    );
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTMETA);
+    pointer_to(&mut f, &mouse, Point::from((600.0, 450.0)));
+    press(&mut f, &mouse, BTN_MIDDLE);
+    pointer_to(&mut f, &mouse, Point::from((50.0, 500.0)));
+    assert!(
+        { output_state(&out).edge_pan_velocity }.is_some(),
+        "precondition: the drag armed edge-pan"
+    );
+
+    let resting = f.state().zoom_target();
+    wheel_notch_down(&mut f, &mouse);
+    assert_ne!(
+        f.state().zoom_target(),
+        resting,
+        "precondition: the notch armed a zoom-out"
+    );
+
+    let mut trace = Vec::new();
+    for _ in 0..60 {
+        frame(&mut f);
+        trace.push((f.state().camera().x, window_position(&mut f, &window).x));
+    }
+
+    // A whole pixel per tick: the stall is an asymptotic approach, so a bare
+    // "still decreasing" passes on the vanishing steps it ends in.
+    for pair in trace[trace.len() - 10..].windows(2) {
+        let ((camera_before, window_before), (camera_after, window_after)) = (pair[0], pair[1]);
+        assert!(
+            camera_before - camera_after >= 1.0,
+            "the edge-pan keeps moving the camera: {camera_before} -> {camera_after}"
+        );
+        assert!(
+            window_before - window_after >= 1,
+            "and the dragged window with it: {window_before} -> {window_after}"
+        );
+    }
+    assert_eq!(f.state().zoom_target(), None, "the zoom lands");
+
+    release(&mut f, &mouse, BTN_MIDDLE);
+    key_release(&mut f, KEY_LEFTMETA);
+}
+
+#[test]
+fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on_winit() {
+    wheel_zoom_during_an_edge_pan_drag(|f| {
+        f.state().apply_edge_pan();
+        f.state().apply_zoom_animation(TICK);
+    });
+}
+
+#[test]
+fn a_wheel_zoom_during_an_edge_pan_drag_lets_both_carry_on_udev() {
+    wheel_zoom_during_an_edge_pan_drag(|f| {
+        // The udev turn measures its own dt off the wall clock.
+        f.state().last_animation_tick = Instant::now() - TICK;
+        f.state().tick_all_animations();
+    });
+}
+
+/// A press on the canvas catches a flight in progress, as every grab install
+/// does — even though the pan grab, held still, ignores the warps the flight
+/// sends it.
+#[test]
+fn a_press_on_the_canvas_catches_a_camera_flight() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    origin_view(&mut f);
+    arm_distant_flight(&mut f);
+
+    let mouse = FakeDevice::mouse();
+    pointer_to(&mut f, &mouse, Point::from((600.0, 450.0)));
+    press(&mut f, &mouse, BTN_LEFT);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .with_grab(|_, g| g.is::<PanGrab>())
+            .unwrap_or(false),
+        "precondition: a press on empty canvas starts a PanGrab"
+    );
+
+    for _ in 0..10 {
+        f.state().apply_zoom_animation(TICK);
+        f.state().apply_camera_animation(TICK);
+    }
+    assert!(f.state().camera_target().is_none(), "the pan is called off");
+    assert!(f.state().zoom_target().is_none(), "and so is the zoom");
+
+    release(&mut f, &mouse, BTN_LEFT);
+}
+
+/// The zoom tick warps the pointer to hold its screen spot, and under a pan
+/// grab that warp arrives as a motion. A cursor that has not moved on screen is
+/// no pan, so it must not end the wheel zoom that caused it.
+#[test]
+fn a_wheel_zoom_under_a_held_still_pan_grab_lands() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    // Far from the origin, so the warp's canvas-to-screen round trip leaves
+    // float noise instead of the exact zero it happens to give at the origin.
+    let camera = Point::from((12345.678, -9876.543));
+    f.state().with_output_state(|os| {
+        os.camera = camera;
+        os.zoom = 1.0;
+    });
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTMETA);
+    pointer_to(&mut f, &mouse, camera + Point::from((600.37, 450.71)));
+    press(&mut f, &mouse, BTN_LEFT);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .with_grab(|_, g| g.is::<PanGrab>())
+            .unwrap_or(false),
+        "precondition: mod+left started a PanGrab"
+    );
+
+    wheel_notch_down(&mut f, &mouse);
+    let target = f
+        .state()
+        .zoom_target()
+        .expect("precondition: the notch armed a zoom");
+    assert!(target < 1.0, "precondition: the notch zooms out");
+
+    run_zoom_animation(&mut f);
+    assert_eq!(
+        f.state().zoom(),
+        target,
+        "the zoom lands where the notch aimed it"
+    );
+
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTMETA);
 }
 
 /// Drag the right edge out by a fractional amount, so the grab is carrying a

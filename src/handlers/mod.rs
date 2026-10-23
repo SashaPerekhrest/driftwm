@@ -394,9 +394,12 @@ impl PointerConstraintsHandler for DriftWm {
         pointer: &PointerHandle<Self>,
         location: Point<f64, Logical>,
     ) {
+        // Focus, not just the active flag: a lock held over a subsurface stays
+        // active until the next pull sees the cursor gone from its window, and
+        // its hints must not drag back a cursor it no longer holds.
         let is_active = crate::input::constraint::find_constraint(surface, pointer)
             .is_some_and(|(_, s)| s.active);
-        if !is_active {
+        if !is_active || !self.focus_within_constraint(surface) {
             return;
         }
 

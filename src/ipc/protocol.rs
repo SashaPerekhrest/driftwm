@@ -303,8 +303,9 @@ pub struct WindowInfo {
     /// The compositor's own fit/fill record — see [`WindowMode`].
     #[serde(default)]
     pub mode: WindowMode,
-    /// The client's process ID, from its Wayland socket credentials. Absent for
-    /// a stand-in, which has no client.
+    /// The PID of the process that opened the window's Wayland connection, from
+    /// the socket's credentials. Absent with no client: a stand-in, or a window
+    /// whose client is already gone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
 }
@@ -316,6 +317,9 @@ pub struct OutputFullscreen {
     pub output: String,
     pub app_id: String,
     pub title: String,
+    /// As [`WindowInfo::pid`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// A screen-pinned window in the IPC `state` reply. `position` is the visible
@@ -330,6 +334,9 @@ pub struct OutputPinned {
     pub title: String,
     pub position: [i32; 2],
     pub size: [i32; 2],
+    /// As [`WindowInfo::pid`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// A canvas-positioned layer surface, shared by the IPC `state` reply and the
@@ -597,6 +604,7 @@ mod tests {
                 output: "DP-1".into(),
                 app_id: "mpv".into(),
                 title: "video".into(),
+                pid: Some(4343),
             }],
             pinned: vec![OutputPinned {
                 id: 3,
@@ -605,6 +613,7 @@ mod tests {
                 title: "Volume".into(),
                 position: [20, 40],
                 size: [320, 240],
+                pid: Some(4444),
             }],
             layers: vec!["waybar".into()],
             canvas_layers: vec![CanvasLayerInfo {

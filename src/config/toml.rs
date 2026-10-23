@@ -26,7 +26,8 @@ pub(super) struct ConfigFile {
     pub touch: TouchFileConfig,
     pub env: HashMap<String, String>,
     pub xwayland: XwaylandConfig,
-    /// Placement mode for newly mapped windows: `"center"` (default) or `"cursor"`.
+    /// Placement mode for newly mapped windows: `"auto"` (default), `"center"` or
+    /// `"cursor"`.
     pub window_placement: Option<String>,
     /// Where a centering navigation parks the focused window in the viewport:
     /// `"center"` (default), an edge, or a corner.
@@ -186,12 +187,11 @@ pub(super) struct SessionFileConfig {
     /// suspended windows on the next launch.
     pub restore_windows: Option<bool>,
     /// Seed each output's camera and zoom from the durable session on the next
-    /// launch. Off by default, so the default config starts every output at its
-    /// centered camera.
+    /// launch. On by default; off starts every output at its centered camera.
     pub restore_camera: Option<bool>,
     /// Restore the bookmark registry from the durable session on the next
-    /// launch, overlaying saved bookmarks on top of the config seeds. Off by
-    /// default, so runtime bookmark edits don't persist across restarts.
+    /// launch, overlaying saved bookmarks on top of the config seeds. On by
+    /// default; off keeps runtime bookmark edits from persisting across restarts.
     pub restore_bookmarks: Option<bool>,
 }
 

@@ -10,8 +10,8 @@ JSON, so any language can speak it directly.
 Run `driftwm msg <command>` from inside a driftwm session. The commands —
 `camera`, `zoom`, `focus`, `move`, `resize`, `opacity`, `pin`, `close`,
 `suspend`, `relaunch`, `layout`, `cursor`, `action`, `bookmark`, `screenshot`,
-`state`, `subscribe`, and `debug-counters` — with their arguments, flags, and JSON reply
-shapes are documented in the generated [CLI reference](cli.md);
+`state`, `subscribe`, and `debug-counters` — with their arguments, flags, and
+JSON reply shapes are documented in the generated [CLI reference](cli.md);
 `driftwm msg <command> --help` prints the same for one command. The conventions
 they share follow below.
 
@@ -52,6 +52,11 @@ rather than refusing. The practical consequence: a script that polls `camera` an
 writes the value back — a follow-the-focus panner, say — will drop a user out of
 a fullscreen video the first time it writes. Reading is always safe; `camera` and
 `zoom` with no argument never disturb fullscreen.
+
+`cursor` and `screenshot region --from-screen` use a third space, the global
+output layout: the one outputs advertise their positions in and slurp prints, in
+logical pixels from the layout's origin with Y pointing down. `cursor` also
+names the output the pointer is on, and reads the same on the lock screen.
 
 ### Sizes and the visual frame
 
@@ -238,19 +243,24 @@ stand-in rather than a live client — see [Suspended windows](#suspended-window
 a fill that grew to the same rect and doesn't flicker during a configure
 round-trip the way a geometric guess does. A compositor older than this field
 omits it — treat missing as `"Normal"`.
-`pid` is the client's process ID, read from its Wayland socket credentials, so a
-tool can find the window a process owns — the terminal a command runs in, say —
-and raise it by `id`. An XWayland window reports the Xwayland server's PID, and a
-stand-in, which has no client, has no `pid`; a compositor older than this field
-omits it too.
+`pid` is the ID of the process that opened the window's Wayland connection, read
+from the socket's credentials, so a tool can find the windows a process owns and
+raise one by `id`. It belongs to the connection, not the window: every window of
+a single-process app (a terminal server, say) shares one, every X11 window
+reports xwayland-satellite's, and a client reached through a proxy such as
+waypipe reports the proxy's. A sandboxed app connecting through a security
+context (Flatpak) reports its own process, numbered as seen from outside the
+sandbox. A stand-in, which has no client, has no `pid`, and neither has a window
+whose client has just exited; a compositor older than this field omits it too.
 The reply also carries `layout` (full XKB name) and `layout_short` (the
 configured code for the active group); `fullscreen` and `pinned` (screen-space
-windows, each carrying an `id` too — a `pinned` entry's `position`/`size` are in
-rule coordinates, output-relative, so they paste straight into a
-`pinned_to_screen` rule); `layers` (namespaces of screen-space layer-shell
-surfaces); `canvas_layers` (canvas-positioned layers with rule-coordinate
-position and size); and `outputs` (per-output `name`, viewport `camera` (center,
-Y-up), `zoom`, logical `size`, `active` flag, and `active_bookmark`).
+windows, each carrying an `id` and `pid` too — a `pinned` entry's
+`position`/`size` are in rule coordinates, output-relative, so they paste
+straight into a `pinned_to_screen` rule); `layers` (namespaces of screen-space
+layer-shell surfaces); `canvas_layers` (canvas-positioned layers with
+rule-coordinate position and size); and `outputs` (per-output `name`, viewport
+`camera` (center, Y-up), `zoom`, logical `size`, `active` flag, and
+`active_bookmark`).
 
 `active_bookmark` (top-level) is the focused output's active bookmark — the
 bookmark nearest the viewport's usable center among those currently visible, or
@@ -297,8 +307,8 @@ observe; when you'd rather be pushed than poll, use
 | `layers`                                        | Comma-separated layer-shell namespaces                         |
 | `canvas_layers`                                 | JSON array of canvas-positioned layers                         |
 | `outputs.<name>.camera_x`, `.camera_y`, `.zoom` | That output's viewport                                         |
-| `outputs.<name>.fullscreen`                     | JSON object: `id`, `app_id`, `title`                           |
-| `outputs.<name>.pinned`                         | JSON array: `id`, `app_id`, `title`, `position`, `size`        |
+| `outputs.<name>.fullscreen`                     | JSON object: `id`, `app_id`, `title`, `pid`                    |
+| `outputs.<name>.pinned`                         | JSON array: `id`, `app_id`, `title`, `position`, `size`, `pid` |
 
 A key with nothing to report is omitted, not written empty: no windows means no
 `windows=` line at all, no layer surfaces no `layers=` line, and an output with

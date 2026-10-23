@@ -280,7 +280,7 @@ resize border still resizes.
 
 A claimed click behaves exactly as an unbound one, which also means it still
 focuses and raises the window — and with `auto_navigate_on_click = true` it
-still pans the camera to the window.
+still scrolls a partly off-screen window into view.
 
 Below `[zoom] interact_min` a canvas window has no pointer focus to forward to,
 so a *canvas window's* `pass_mouse` claims are ignored there and the compositor

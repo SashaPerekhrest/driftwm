@@ -114,7 +114,9 @@ impl DriftWm {
         let time = event.time_msec();
 
         // Drives the seat pointer too, so menus and hover keep working in
-        // clients that speak no tablet protocol.
+        // clients that speak no tablet protocol; a client that does is
+        // withheld from `wl_pointer` while the pen owns the pointer.
+        self.pointer_pen = Some(event.tool());
         let under = self.dispatch_absolute_motion(&output, screen_pos, canvas_pos, serial, time);
 
         // Forward native tablet events to supporting clients
@@ -160,9 +162,13 @@ impl DriftWm {
         // `active_output()`, so the pen's own output has to be active before it
         // runs or a pinned tablet hit-tests its coordinates against another
         // monitor's scene.
-        if event.state() == ProximityState::In {
-            self.focused_output = Some(output.clone());
-            self.cursor.hidden_by_touch = false;
+        match event.state() {
+            ProximityState::In => {
+                self.focused_output = Some(output.clone());
+                self.cursor.hidden_by_touch = false;
+                self.pointer_pen = Some(event.tool());
+            }
+            ProximityState::Out => self.pointer_pen = None,
         }
 
         // Below `interact_min` a canvas window is a click target, not an input
@@ -205,6 +211,10 @@ impl DriftWm {
 
     pub fn on_tablet_tool_tip<I: InputBackend>(&mut self, event: I::TabletToolTipEvent) {
         let tool = self.seat.tablet_seat().get_tool(&event.tool());
+        // A tip carries no motion, so after a mouse moved the pointer the pen
+        // has to reclaim it here, or the emulated press below reaches a
+        // client that already has the tip on tablet-v2.
+        self.pointer_pen = Some(event.tool());
 
         let serial = SERIAL_COUNTER.next_serial();
         let time = event.time_msec();
@@ -227,7 +237,17 @@ impl DriftWm {
             tool.frame(self, time);
         }
 
-        self.on_pointer_button::<I, _>(TabletTipButtonEvent::new(event, button_state));
+        // The press borrows the tip's serial, which a tablet-v2 client cites to
+        // start a drag and smithay checks against the pointer grab the press
+        // installs. Only while the pointer is at the tool: after a mouse moved
+        // it the press lands on whatever client is under the mouse, whose click
+        // the pen's client could then take over.
+        let at_tool = tool.as_ref().and_then(|tool| tool.current_location())
+            == Some(self.seat.get_pointer().unwrap().current_location());
+        self.on_pointer_button::<I, _>(
+            TabletTipButtonEvent::new(event, button_state),
+            at_tool.then_some(serial),
+        );
     }
 
     pub fn on_tablet_tool_button<I: InputBackend>(&mut self, event: I::TabletToolButtonEvent) {

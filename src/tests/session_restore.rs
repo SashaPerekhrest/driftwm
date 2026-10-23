@@ -36,6 +36,10 @@ fn config_restore(on: bool) -> Config {
     .unwrap()
 }
 
+fn config_camera_off() -> Config {
+    Config::from_toml("[session]\nrestore_camera = false\n").unwrap()
+}
+
 /// `config_restore`'s TOML plus an extra `[[window_rules]]` block appended
 /// verbatim — as text, so a hot-reload can feed the compositor the same shape.
 fn restore_toml(on: bool, rules_toml: &str) -> String {
@@ -1007,7 +1011,7 @@ fn invalid_zoom_seed_is_ignored_and_reserializes_sane() {
     );
 }
 
-/// With `restore_camera` off (the default), a durable per-output camera is not
+/// With `restore_camera` off, a durable per-output camera is not
 /// seeded — the output connects at its default centered camera — while saved
 /// windows still materialize.
 #[test]
@@ -1034,12 +1038,8 @@ fn restore_camera_off_skips_seed_but_materializes_windows() {
     };
     session::write(&path, &envelope, false).unwrap();
 
-    // Default config: restore_camera is off.
-    let mut f = Fixture::with_config(Config::default());
-    assert!(
-        !f.state().config.session.restore_camera,
-        "restore_camera defaults off"
-    );
+    let mut f = Fixture::with_config(config_camera_off());
+    assert!(!f.state().config.session.restore_camera);
     f.state().session_store.path = Some(path.clone());
     f.state().load_session();
 
@@ -1110,8 +1110,7 @@ fn restore_camera_off_preserves_disconnected_output_camera() {
     };
     session::write(&path, &envelope, false).unwrap();
 
-    // Default config: restore_camera off.
-    let mut f = Fixture::with_config(Config::default());
+    let mut f = Fixture::with_config(config_camera_off());
     assert!(!f.state().config.session.restore_camera);
     // Only HEADLESS-1 connects; HEADLESS-2 stays absent this session.
     f.add_output(1, (1920, 1080));
@@ -1400,7 +1399,7 @@ fn a_pan_alone_reaches_the_file() {
     let tmp = TempDir::new();
     let path = tmp.path().join("session.json");
 
-    let mut f = Fixture::with_config(Config::default());
+    let mut f = Fixture::with_config(config_camera_off());
     assert!(!f.state().config.session.restore_camera);
     let output = f.add_output(1, (1920, 1080));
     f.state().session_store.path = Some(path.clone());

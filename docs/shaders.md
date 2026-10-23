@@ -226,7 +226,7 @@ type = "none"
 The `wallpaper` mode scales the image to cover the output while preserving its
 aspect ratio, centering and cropping any overflow.
 
-Other `[background]` keys, described in full in the
+Other `[background]` keys, also listed in the
 [config reference](config.md#background):
 
 | Key                  | Effect                                                                                                         |

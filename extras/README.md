@@ -2,8 +2,8 @@
 
 A curated, install-and-go starting point for driftwm: a single
 [Quickshell](https://quickshell.org/) dashboard pinned at the canvas origin
-(your "home"), plus opinionated power-canvas defaults. It's an alternative to
-bare driftwm rather than a copy of the built-in defaults — tweak or strip freely.
+(your "home"), plus the shell around it. It's an alternative to bare driftwm
+rather than a copy of the built-in defaults — tweak or strip freely.
 
 ## Install
 

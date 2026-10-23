@@ -1,12 +1,12 @@
-//! `driftwm msg zoom` / `driftwm msg camera` setters on a fullscreen output
-//! must exit fullscreen before applying, not arm a target the per-tick
-//! fullscreen disarm silently drops. The disarm and the camera/zoom locks it
-//! backs up live in `src/state/viewport_animation.rs` and
-//! `src/state/viewport.rs`.
+//! `driftwm msg zoom` / `driftwm msg camera` setters: on a fullscreen output
+//! they must exit fullscreen before applying, not arm a target the per-tick
+//! fullscreen disarm silently drops, and during a flight they must land rather
+//! than be steered away by it. The disarm and the camera/zoom locks it backs up
+//! live in `src/state/viewport_animation.rs` and `src/state/viewport.rs`.
 
 use smithay::output::Output;
 
-use super::{Fixture, map_window, settle, window_by_app_id};
+use super::{Fixture, TICK, map_window, settle, window_by_app_id};
 use crate::ipc::dispatch;
 use crate::ipc::protocol::{Request, Response};
 
@@ -91,12 +91,12 @@ fn camera_set_on_fullscreen_output_exits_fullscreen_and_applies() {
     );
 }
 
-/// The ordering trap: `cmd_camera` derives its target from `state.zoom()`,
-/// which a fullscreen park pins at 1.0 — the exit has to run *before* that
-/// read, or the target is derived from the wrong (parked) zoom while the
-/// camera actually converges under the restored one. A pre-fullscreen zoom of
-/// 1.0 can't tell the two orderings apart (both read the same value), so this
-/// deliberately zooms out first.
+/// The ordering trap: `cmd_camera` derives its target from the zoom the view
+/// is heading to, which a fullscreen park pins at 1.0 — the exit has to run
+/// *before* that read, or the target is derived from the wrong (parked) zoom
+/// while the camera actually converges under the restored one. A
+/// pre-fullscreen zoom of 1.0 can't tell the two orderings apart (both read
+/// the same value), so this deliberately zooms out first.
 #[test]
 fn camera_set_on_fullscreen_output_uses_the_restored_zoom_not_the_parked_one() {
     let mut f = Fixture::new();
@@ -232,28 +232,38 @@ fn camera_set_rejecting_a_non_finite_target_leaves_fullscreen_intact() {
     f.state().exit_fullscreen_on(&output);
 }
 
-/// `cursor` reports the pointer in the global output layout, not canvas space:
-/// the camera and zoom must not leak into it, the output's layout offset must.
+/// The script `msg zoom 0.5; msg camera X Y` lands at X Y at zoom 0.5, with or
+/// without a frame between the two. The zoom flight's every tick steers the
+/// camera by its anchor, so a camera move sent during it has to land through
+/// that anchor or the next tick drops it.
 #[test]
-fn cursor_reports_screen_space_in_the_output_layout() {
-    use smithay::utils::Point;
+fn camera_set_right_behind_a_zoom_set_lands_at_the_point_and_the_zoom() {
+    for ticks_between in [0, 1] {
+        let mut f = Fixture::new();
+        f.skip_baseline_check();
+        f.add_output(1, (1920, 1080));
 
-    use super::input_backend::{FakeDevice, pointer_to_screen};
-
-    let mut f = Fixture::new();
-    let output = f.add_output(1, (1920, 1080));
-    f.state().with_output_state(|os| {
-        os.zoom = 0.5;
-        os.camera = Point::from((-700.0, 300.0));
-        os.layout_position = Point::from((2560, 0));
-    });
-    pointer_to_screen(&mut f, &FakeDevice::mouse(), Point::from((300.0, 200.0)));
-
-    match dispatch(Request::Cursor, f.state()) {
-        Ok(Response::Cursor { x, y, output: name }) => {
-            assert!(approx((x, y), (2860.0, 200.0), 0.01), "got ({x}, {y})");
-            assert_eq!(name, output.name());
+        assert_eq!(
+            dispatch(Request::Zoom(Some(0.5)), f.state()),
+            Ok(Response::Zoom(0.5))
+        );
+        for _ in 0..ticks_between {
+            f.state().apply_zoom_animation(TICK);
+            f.state().apply_camera_animation(TICK);
         }
-        other => panic!("expected a Cursor reply, got {other:?}"),
+        let want = (300.0, -150.0);
+        dispatch(Request::Camera(Some(want)), f.state()).unwrap();
+        settle(&mut f);
+
+        assert_eq!(
+            read_zoom(&mut f),
+            0.5,
+            "{ticks_between} tick(s) between: the zoom must land"
+        );
+        let got = read_camera(&mut f);
+        assert!(
+            approx(got, want, 1e-6),
+            "{ticks_between} tick(s) between: the camera must land at {want:?}, got {got:?}"
+        );
     }
 }

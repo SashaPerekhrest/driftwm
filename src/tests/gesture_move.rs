@@ -236,6 +236,62 @@ size = [320, 240]
     end_swipe(&mut f);
 }
 
+/// A swipe starting on a pin's title bar moves the pin. The bar gives no
+/// pointer focus, so a picker that asks only for the pin's content falls
+/// through to the canvas walk — which skips pins and drags the window drawn
+/// behind this one instead.
+#[test]
+fn swipe_move_from_a_pins_title_bar_moves_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(
+        r#"
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [320, 240]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    origin_view(&mut f);
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (320, 240));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    give_ssd(&mut f, &pin);
+    let before = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    // Canvas == screen here, so the bar's screen point doubles as the
+    // gesture's canvas position.
+    let bar = f.state().config.decorations.title_bar_height as f64;
+    let grab_at = pt(before.x as f64 + 100.0, before.y as f64 - bar / 2.0);
+
+    map_window(&mut f, id, "beneath", (320, 240));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((grab_at.x as i32 - 50, grab_at.y as i32 - 50));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        f.state().draggable_element_under(grab_at).is_some(),
+        "precondition: the canvas walk must have the window behind the pin to offer"
+    );
+
+    assert!(
+        f.state().try_start_gesture_move(grab_at, false),
+        "the swipe found something to drag"
+    );
+    motion(&mut f, grab_at + pt(50.0, 30.0));
+
+    assert_eq!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        before + Point::from((50, 30)),
+        "the swipe started on the pin's own title bar, so the pin moves"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&beneath),
+        Some(origin),
+        "the window drawn behind the pin stays put"
+    );
+    end_swipe(&mut f);
+}
+
 /// A touch move gesture lands a client and a stand-in on the same canvas point,
 /// through the touch picker and `MoveGrab::new_touch`.
 #[test]

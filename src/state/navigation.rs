@@ -1,9 +1,12 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::surface_tree::focus_belongs_to_window;
 use driftwm::canvas::{
-    CanvasPos, ScreenPos, canvas_to_screen, closest_point_on_rect, screen_to_canvas,
+    CanvasPos, ScreenPos, canvas_to_screen, closest_point_on_rect, minimal_reveal_camera,
+    screen_to_canvas,
 };
+use driftwm::layout::snap::SnapRect;
 use driftwm::window_ext::WindowExt;
 use smithay::{
     desktop::Window,
@@ -33,6 +36,11 @@ const ACTIVATION_VISIBLE_THRESHOLD: f64 = 1.0;
 /// size-dependent cutoff. See `window_already_active`.
 const ACTIVATION_ONSCREEN_THRESHOLD: f64 = f64::EPSILON;
 
+/// How far (screen px) a frame may sit past the usable edge and still count as
+/// inside it. A pan that lands a frame flush on an edge carries float rounding
+/// through the camera anchor, and a hair's overhang must not read as clipped.
+const IN_VIEW_NOISE: f64 = 1e-6;
+
 /// What a navigation does to the zoom it arrives at. The restore variant names
 /// its fallback rather than leaving it implied, so a call site picking a restore
 /// never inherits a centering policy it didn't choose.
@@ -41,9 +49,10 @@ pub enum NavZoom {
     /// Bring the window to the `focus_placement` point, animating zoom to 1.0 —
     /// an intentional navigation to a specific window.
     Reset,
-    /// Bring the window to the `focus_placement` point, leaving the current zoom
-    /// alone. Directional and gesture-driven navigation rides this, where a zoom
-    /// jump would break the direction correspondence.
+    /// Bring the window to the `focus_placement` point, leaving the zoom alone:
+    /// the current one, or the one a zoom animation is heading to. Directional
+    /// and gesture-driven navigation rides this, where a zoom jump would break
+    /// the direction correspondence.
     Keep,
     /// A window still in `fill` state returns to the camera *and* zoom its fill
     /// was computed in, rather than being placed — see `fill_restore_view`.
@@ -76,6 +85,17 @@ impl NavZoom {
     }
 }
 
+/// How [`DriftWm::reveal_element`] pans to a target that isn't fully on
+/// screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RevealPan {
+    /// Park it on the `focus_placement` point, as a jump does.
+    Park(NavZoom),
+    /// The least pan that shows it whole, at the current zoom — a directional
+    /// walk, where parking each step would throw the view around.
+    Minimal,
+}
+
 impl DriftWm {
     /// Navigate the active output's viewport to a window: raise, focus, animate
     /// the camera until the window sits on the `focus_placement` point (the
@@ -95,6 +115,88 @@ impl DriftWm {
             // restore policy is only ever its fallback here.
             StageWindow::Suspended(s) => self.center_on_suspended(s.id, zoom.resets_zoom()),
         }
+    }
+
+    /// Focus + raise a stage element, panning the camera to it only when it
+    /// isn't already fully on screen, unlike the centering navigations, which
+    /// always park.
+    pub fn reveal_element(&mut self, element: &StageWindow, pan: RevealPan) {
+        // Judged where the view will land, not at the current frame of a
+        // flight still under way: a step onto a window the flight is about to
+        // leave behind re-targets it, and one onto a window it will show lets
+        // it land, zoom included.
+        let (camera, zoom) = self.landing_view();
+        if self.window_fully_in_view_at(element, camera, zoom) {
+            let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+            self.raise_and_focus_element(element, serial);
+            // As in `navigate_to_window_on`.
+            self.hover_follows_camera = false;
+            return;
+        }
+        match pan {
+            RevealPan::Park(nav_zoom) => self.navigate_to_element(element, nav_zoom),
+            RevealPan::Minimal => self.pan_minimally_to_element(element, camera, zoom),
+        }
+    }
+
+    /// Focus + raise `element` and pan the active output's view from `camera`
+    /// at `zoom` by the least amount that shows the element's frame whole,
+    /// `outer_gap` in from the usable edge.
+    fn pan_minimally_to_element(
+        &mut self,
+        element: &StageWindow,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) {
+        // As in `navigate_to_window_on`: nothing is drawn for it yet.
+        if self.hidden_by_deferred_adopt(element) {
+            return;
+        }
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.raise_and_focus_element(element, serial);
+        // As in `navigate_to_window_on`.
+        self.hover_follows_camera = false;
+
+        let Some(frame) = self.reveal_frame(element) else {
+            return;
+        };
+        // A border wider than `outer_gap` puts the inset past the usable edge,
+        // which would leave the revealed frame clipped.
+        let border = self.element_chrome(element).border;
+        let inset = self.config.outer_frame_inset(border).max(0.0);
+        let target =
+            minimal_reveal_camera(&frame, camera, zoom, self.usable_area_on(&output), inset);
+
+        // Through the anchor, not a bare `camera_target`: an anchor still armed
+        // by the previous pan would steer the camera back every tick.
+        let center = Point::from((
+            (frame.x_low + frame.x_high) / 2.0,
+            (frame.y_low + frame.y_high) / 2.0,
+        ));
+        let center_screen =
+            Point::from(((center.x - target.x) * zoom, (center.y - target.y) * zoom));
+        self.set_camera_anchor(&output, center, center_screen, zoom);
+    }
+
+    /// The frame a minimal reveal brings into view: sized as configured, not
+    /// as committed, the way the park measures it, so a window riding an
+    /// unacked configure lands where it is about to be.
+    fn reveal_frame(&self, element: &StageWindow) -> Option<SnapRect> {
+        let loc = self.stage.position_of(element)?;
+        let chrome = self.element_chrome(element);
+        let size = match element {
+            StageWindow::Client(w) => super::configured_window_size(w),
+            StageWindow::Suspended(s) => s.size.get(),
+        };
+        Some(super::fit::snap_rect_at(
+            loc,
+            size,
+            chrome.bar,
+            chrome.border,
+        ))
     }
 
     /// As `navigate_to_window`, but pans `output`'s camera instead of the
@@ -118,26 +220,27 @@ impl DriftWm {
         // output's camera origin, so it isn't a navigation target there at all —
         // don't focus or pan to it (mirrors the hit-test isolation). On its own
         // output, focus it but leave the locked camera put.
-        if let Some(fs_output) = window
+        let fullscreen_output = window
             .wl_surface()
-            .and_then(|s| self.find_fullscreen_output_for_surface(&s))
-        {
-            if &fs_output == output {
-                self.raise_and_focus(window, serial);
-            }
+            .and_then(|s| self.find_fullscreen_output_for_surface(&s));
+        if fullscreen_output.as_ref().is_some_and(|fs| fs != output) {
             return;
         }
+
+        self.raise_and_focus(window, serial);
+        // The pull must not hand the focus just set to whatever a camera move
+        // slides under the resting cursor: this navigation's own pan, or a
+        // flight still under way when it makes none. It stays parked until a
+        // camera move the user drives puts it back (`user_moved_camera`).
+        self.hover_follows_camera = false;
 
         // A pinned window also lives in screen space: its canvas position is
         // re-derived from the pin's screen_pos on every camera update, so panning
         // can never bring more of it into view — it would only slide the rest of
         // the canvas underneath it.
-        if self.stage.is_pinned(window) {
-            self.raise_and_focus(window, serial);
+        if fullscreen_output.is_some() || self.stage.is_pinned(window) {
             return;
         }
-
-        self.raise_and_focus(window, serial);
 
         // Below the early returns on purpose, so a deferred-adopt, fullscreen or
         // pinned window never reaches the restore — a filled window can be
@@ -200,20 +303,16 @@ impl DriftWm {
             };
 
         self.set_camera_anchor(output, anchor_canvas, anchor_screen, target_zoom);
-        // The camera is traveling to the window this navigation just focused.
-        // Handing the keyboard to whatever slid under the resting cursor on the
-        // way there would undo it, so the pull stays parked until a camera move
-        // the user drives puts it back (`user_moved_camera`).
-        self.hover_follows_camera = false;
     }
 
     /// The zoom a navigation animates to on `output`: 1.0 when `reset_zoom`
-    /// (intentional navigation), else the zoom already in effect.
+    /// (intentional navigation), else the zoom the view is heading to. The
+    /// live zoom would stop a zoom animation where this frame caught it.
     pub(crate) fn navigation_target_zoom(&self, output: &Output, reset_zoom: bool) -> f64 {
         if reset_zoom {
             1.0
         } else {
-            output_state(output).zoom
+            self.landing_view_on(output).1
         }
     }
 
@@ -321,9 +420,17 @@ impl DriftWm {
         if !focused {
             return;
         }
-        if !self.window_fully_in_viewport(window) {
-            self.navigate_to_window(window, NavZoom::Keep);
+        // Judged at the live view the click was made on, not the landing view, so
+        // a window shown whole leaves a flight under way alone. Pinned and
+        // fullscreen windows live in screen space, with no canvas frame to scroll.
+        if self.window_fully_in_viewport(window)
+            || self.stage.is_pinned(window)
+            || self.stage.is_fullscreen(window)
+        {
+            return;
         }
+        let (camera, zoom) = self.landing_view();
+        self.pan_minimally_to_element(&StageWindow::Client(window.clone()), camera, zoom);
     }
 
     /// Cancel any armed or deferred click-navigate. Clearing the deferred timer
@@ -469,6 +576,8 @@ impl DriftWm {
         if self.window_visible_at_least_on(window, &home, ACTIVATION_VISIBLE_THRESHOLD) {
             let serial = smithay::utils::SERIAL_COUNTER.next_serial();
             self.raise_and_focus(window, serial);
+            // As in `navigate_to_window_on`.
+            self.hover_follows_camera = false;
         } else {
             self.navigate_to_window_on(
                 window,
@@ -595,14 +704,32 @@ impl DriftWm {
     where
         super::StageWindow: PartialEq<Q>,
     {
+        self.window_fully_in_view_at(w, self.camera(), self.zoom())
+    }
+
+    /// As `window_fully_in_viewport`, at `camera` and `zoom` instead of the
+    /// live view.
+    pub fn window_fully_in_view_at<Q>(&self, w: &Q, camera: Point<f64, Logical>, zoom: f64) -> bool
+    where
+        super::StageWindow: PartialEq<Q>,
+    {
         let Some(elem) = self.stage.windows().find(|e| **e == *w) else {
             return false;
         };
         let Some(rect) = self.visual_frame_rect(elem) else {
             return false;
         };
-        let camera = self.camera();
-        let zoom = self.zoom();
+        self.frame_fully_in_view_at(&rect, camera, zoom)
+    }
+
+    /// Is the canvas rect `rect` inside the active output's usable area at
+    /// `camera` and `zoom`?
+    pub(crate) fn frame_fully_in_view_at(
+        &self,
+        rect: &SnapRect,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) -> bool {
         let usable = self.get_usable_area();
 
         let screen_x_low = (rect.x_low - camera.x) * zoom;
@@ -610,15 +737,32 @@ impl DriftWm {
         let screen_x_high = (rect.x_high - camera.x) * zoom;
         let screen_y_high = (rect.y_high - camera.y) * zoom;
 
-        let u_x_low = usable.loc.x as f64;
-        let u_y_low = usable.loc.y as f64;
-        let u_x_high = (usable.loc.x + usable.size.w) as f64;
-        let u_y_high = (usable.loc.y + usable.size.h) as f64;
+        let u_x_low = usable.loc.x as f64 - IN_VIEW_NOISE;
+        let u_y_low = usable.loc.y as f64 - IN_VIEW_NOISE;
+        let u_x_high = (usable.loc.x + usable.size.w) as f64 + IN_VIEW_NOISE;
+        let u_y_high = (usable.loc.y + usable.size.h) as f64 + IN_VIEW_NOISE;
 
         screen_x_low >= u_x_low
             && screen_y_low >= u_y_low
             && screen_x_high <= u_x_high
             && screen_y_high <= u_y_high
+    }
+
+    /// Whether the active output's view at `camera` and `zoom` shows `w` as
+    /// fully as any pan could: its frame inside the usable area, or centered on
+    /// an axis it is too big for, as a `focus-nearest` reveal leaves it.
+    pub fn window_shown_as_fully_at(
+        &self,
+        w: &StageWindow,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+    ) -> bool {
+        let Some(frame) = self.reveal_frame(w) else {
+            return false;
+        };
+        let reveal = minimal_reveal_camera(&frame, camera, zoom, self.get_usable_area(), 0.0);
+        (reveal.x - camera.x).abs() * zoom <= IN_VIEW_NOISE
+            && (reveal.y - camera.y).abs() * zoom <= IN_VIEW_NOISE
     }
 
     /// Does the window's snap rect intersect `output`'s usable area at that
@@ -724,42 +868,94 @@ impl DriftWm {
     /// user last saw as the cluster.
     #[allow(clippy::mutable_key_type)]
     pub fn first_spatially_related_in_history(&self, departing: &StageWindow) -> Option<Window> {
-        let destroyed_elem = departing.clone();
         // Only a client has a surface to key the stable-rect cache on; a
         // stand-in's live rect is already its settled one.
         let cached_destroyed_rect = departing
             .client()
             .and_then(|w| w.wl_surface())
             .and_then(|s| self.stable_snap_rects.get(&s.id()).copied());
-        let destroyed_rect =
-            cached_destroyed_rect.or_else(|| self.snap_rect_for(&destroyed_elem))?;
-
-        let mut rects = self.all_windows_with_snap_rects();
-        if cached_destroyed_rect.is_some() {
-            for (w, r) in &mut rects {
-                if w == &destroyed_elem {
-                    *r = destroyed_rect;
-                }
-            }
-        }
-        // Members may traverse through a suspended stand-in, so a client on the
-        // far side of a stand-in it was snapped to still resolves as related.
-        let cluster =
-            driftwm::layout::cluster::cluster_of(&destroyed_elem, &rects, self.config.snap_gap);
+        let destroyed_rect = cached_destroyed_rect.or_else(|| self.snap_rect_for(departing))?;
+        let related = self.spatial_relatives(departing, destroyed_rect);
 
         self.stage
             .focus_history()
             .iter()
             .filter_map(|w| w.client())
-            .filter(|w| destroyed_elem != **w)
-            .find(|w| {
-                let elem = StageWindow::Client((*w).clone());
-                cluster.contains(&elem)
-                    || self
-                        .snap_rect_for(&elem)
-                        .is_some_and(|r| destroyed_rect.overlaps(&r))
-            })
+            .filter(|w| *departing != **w)
+            .find(|w| related.contains(&StageWindow::Client((*w).clone())))
             .cloned()
+    }
+
+    /// Whether `target` is spatially related to the focused element, at their
+    /// live frames. Nothing focused, or a focused element with no canvas frame
+    /// (pinned), relates to nothing.
+    ///
+    /// `left_fullscreen` is a window this action took out of fullscreen. Until
+    /// its client answers the exit it still commits the fullscreen size, so
+    /// while the exit's recenter is owed it is measured at the size the exit
+    /// configured instead, as `map_window_to_rule_point` does.
+    pub fn related_to_focus(&self, target: &StageWindow, left_fullscreen: Option<&Window>) -> bool {
+        let Some(focused) = self.focused_anchor_element() else {
+            return false;
+        };
+        let Some(live) = self.snap_rect_for(&focused) else {
+            return false;
+        };
+        let exit_unanswered = left_fullscreen.is_some_and(|w| {
+            focused == *w
+                && w.wl_surface()
+                    .is_some_and(|s| self.pending_recenter.contains_key(&s.id()))
+        });
+        let frame = if exit_unanswered {
+            self.reveal_frame(&focused).unwrap_or(live)
+        } else {
+            live
+        };
+        self.spatial_relatives(&focused, frame).contains(target)
+    }
+
+    /// The elements spatially related to `of` with its frame at `frame`: the
+    /// members of its snap cluster and every element overlapping `frame`, `of`
+    /// itself included.
+    #[allow(clippy::mutable_key_type)]
+    fn spatial_relatives(&self, of: &StageWindow, frame: SnapRect) -> HashSet<StageWindow> {
+        let mut rects = self.all_windows_with_snap_rects();
+        for (w, r) in &mut rects {
+            if w == of {
+                *r = frame;
+            }
+        }
+        // Members may traverse through a suspended stand-in, so a client on the
+        // far side of a stand-in it was snapped to still resolves as related.
+        let mut related = driftwm::layout::cluster::cluster_of(of, &rects, self.config.snap_gap);
+        related.extend(
+            rects
+                .into_iter()
+                .filter(|(_, r)| frame.overlaps(r))
+                .map(|(w, _)| w),
+        );
+        related
+    }
+
+    /// One Alt-Tab step: select the next window in the cycle and reveal it,
+    /// leaving the session open. `false` when there is no window to step to.
+    pub fn step_cycle(&mut self, backward: bool) -> bool {
+        let anchor = self.cycle_anchor();
+        let Some(window) = self
+            .stage
+            .cycle_step(backward, anchor.as_ref())
+            .as_ref()
+            .and_then(|w| w.client())
+            .cloned()
+        else {
+            return false;
+        };
+        // Mark the focus change this navigate causes as cycle-initiated so
+        // `focus_changed` freezes the history instead of committing.
+        self.cycle_navigating = true;
+        self.reveal_element(&StageWindow::Client(window), RevealPan::Park(NavZoom::Keep));
+        self.cycle_navigating = false;
+        true
     }
 
     /// End Alt-Tab cycling: commit the selected window to focus history.

@@ -6,15 +6,16 @@
 //!
 //! The `windows=` line is a JSON array of objects with fields `id` (stable
 //! per-session window handle), `app_id`, `title`, `position` ([x, y]), `size`
-//! ([w, h]), and booleans `is_focused`/`is_widget`. Position/size match the
-//! window-rules format in config.toml: both describe the **visual frame**
-//! (content plus SSD title bar and border — see [`driftwm::canvas::Chrome`]),
-//! with position its **center** in the **Y-up** convention.
+//! ([w, h]), booleans `is_focused`/`is_widget`, and the client `pid` when there
+//! is one. Position/size match the window-rules format in config.toml: both
+//! describe the **visual frame** (content plus SSD title bar and border — see
+//! [`driftwm::canvas::Chrome`]), with position its **center** in the **Y-up**
+//! convention.
 //!
 //! `windows=` is canvas-space only. Screen-space windows are reported under
 //! their owning output instead: `outputs.{name}.fullscreen` is a JSON
-//! `{id, app_id, title}` object, and `outputs.{name}.pinned` a JSON array of
-//! `{id, app_id, title, position, size}`. Like `windows=`, a pinned entry's
+//! `{id, app_id, title, pid}` object, and `outputs.{name}.pinned` a JSON array of
+//! `{id, app_id, title, position, size, pid}`. Like `windows=`, a pinned entry's
 //! `position` is the frame **center** in the rule convention (Y-up), but
 //! relative to the **output center** rather than the canvas origin, so the
 //! numbers paste straight into a `pinned_to_screen` rule's `position`.
@@ -65,6 +66,8 @@ struct FullscreenInfo {
     id: u64,
     app_id: String,
     title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
 }
 
 /// A screen-pinned window in the state file's per-output section. `position` is
@@ -78,6 +81,8 @@ struct PinnedInfo {
     title: String,
     position: [i32; 2],
     size: [i32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pid: Option<u32>,
 }
 
 /// `(app_id, title)` for a toplevel surface; empty strings when unavailable.
@@ -113,6 +118,7 @@ fn window_list_changed(a: &[WindowInfo], b: &[WindowInfo]) -> bool {
                 || x.is_widget != y.is_widget
                 || x.suspended != y.suspended
                 || x.mode != y.mode
+                || x.pid != y.pid
         })
 }
 
@@ -139,11 +145,8 @@ impl DriftWm {
         }
     }
 
-    /// The canvas window inventory in the shared [`WindowInfo`] shape (the
-    /// visual frame: position = its center, Y-up), focused window first. Single
-    /// source of truth for both the state file and the IPC `state` response, so
-    /// the two can't drift.
-    /// An XWayland window reports Xwayland's PID, its client.
+    /// The PID of the process that opened `surface`'s Wayland connection. Every
+    /// X11 window reports xwayland-satellite's, its client.
     fn client_pid(
         &self,
         surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -156,6 +159,10 @@ impl DriftWm {
         u32::try_from(credentials.pid).ok()
     }
 
+    /// The canvas window inventory in the shared [`WindowInfo`] shape (the
+    /// visual frame: position = its center, Y-up), focused window first. Single
+    /// source of truth for both the state file and the IPC `state` response, so
+    /// the two can't drift.
     pub fn window_inventory(&self) -> Vec<WindowInfo> {
         let focused = self.focused_window();
         let focused_suspended = self.gated_suspended_focus();
@@ -305,6 +312,7 @@ impl DriftWm {
                         output: output.clone(),
                         app_id,
                         title,
+                        pid: self.client_pid(&surface),
                     });
                 }
             }
@@ -339,6 +347,7 @@ impl DriftWm {
                 title,
                 position: [rx, ry],
                 size: [size.w, size.h],
+                pid: self.client_pid(&surface),
             });
         }
         pinned.sort_by(|a, b| (&a.output, a.position).cmp(&(&b.output, b.position)));
@@ -428,6 +437,7 @@ impl DriftWm {
                     title,
                     position: [rx, ry],
                     size: [size.w, size.h],
+                    pid: self.client_pid(&surface),
                 });
         }
 
@@ -447,6 +457,7 @@ impl DriftWm {
                             id: id.0,
                             app_id,
                             title,
+                            pid: self.client_pid(&surface),
                         },
                     );
                 }
@@ -781,6 +792,17 @@ mod tests {
         let a = vec![win(1, "one")];
         let mut b = a.clone();
         b[0].mode = WindowMode::Fill;
+        assert!(window_list_changed(&a, &b));
+    }
+
+    #[test]
+    fn list_changed_detects_pid_only_diff() {
+        // A live client's pid never changes, but a dead client's unreaped
+        // window loses it.
+        let mut a = vec![win(1, "one")];
+        a[0].pid = Some(4242);
+        let mut b = a.clone();
+        b[0].pid = None;
         assert!(window_list_changed(&a, &b));
     }
 }

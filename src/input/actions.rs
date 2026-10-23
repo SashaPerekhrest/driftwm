@@ -1,22 +1,162 @@
 use smithay::{
+    desktop::Window,
     input::keyboard::Layout,
     utils::{Logical, Point, Size},
     wayland::seat::WaylandFocus,
 };
 
-use crate::state::{DriftWm, HomeReturn, NavZoom, StageWindow};
+use crate::state::{DriftWm, HomeReturn, NavZoom, RevealPan, StageWindow};
 use driftwm::canvas::{self};
-use driftwm::config::{Action, LayoutSwitch, Modifiers, SendEvents, TrackpadState};
+use driftwm::config::{Action, Direction, LayoutSwitch, Modifiers, SendEvents, TrackpadState};
 use driftwm::window_ext::WindowExt;
 
 /// Use the focused window as the cone-search origin only when it's fully
-/// inside the viewport. Any clipping → search from viewport center instead
-/// (cone can still return the focused window if it's the nearest in that
-/// direction, which is useful for snapping back to a partially-visible
-/// focused window).
-const CENTER_NEAREST_ANCHOR_THRESHOLD: f64 = 1.0;
+/// inside the viewport (or, too big for that, shown as fully as it fits). Any
+/// other clipping → search from viewport center instead (cone can still return
+/// the focused window if it's the nearest in that direction, which is useful
+/// for snapping back to a partially-visible focused window).
+const NEAREST_ANCHOR_THRESHOLD: f64 = 1.0;
+
+/// A directional-search hit: a canvas element, or a bare `navigation.anchors`
+/// point.
+#[derive(Clone, PartialEq)]
+enum NavTarget {
+    Window(StageWindow),
+    Anchor(Point<f64, Logical>),
+}
 
 impl DriftWm {
+    /// The cone search shared by `center-nearest` and `focus-nearest`: the
+    /// nearest canvas element or `navigation.anchors` point in `dir`, searched
+    /// from the focused element when in view, else the viewport center — both
+    /// judged where the view lands.
+    fn nearest_in_direction(
+        &self,
+        dir: &Direction,
+        was_fullscreen: Option<&Window>,
+    ) -> Option<NavTarget> {
+        // Focus intent, not seat focus: a focused stand-in holds no
+        // keyboard focus but anchors the search like any other element.
+        let focused = self.focused_anchor_element().filter(|e| !self.is_pinned(e));
+
+        // A step taken while the last one's pan is under way searches from
+        // where that pan lands: at the frame it is on, the window it is
+        // revealing is still clipped and would be found again.
+        let (camera, zoom) = self.landing_view();
+
+        // Anchor the directional search to the just-exited fullscreen
+        // window (wherever the restored view placed it) — otherwise the
+        // anchor falls back to a corner/offscreen spot and the swipe
+        // finds nothing.
+        let anchor = was_fullscreen
+            .cloned()
+            .map(StageWindow::Client)
+            .or_else(|| {
+                // A window too big for the view never reads as fully visible;
+                // searched for from the viewport center it would be the
+                // nearest hit again and again.
+                focused.filter(|e| {
+                    self.window_visible_at_least_at(e, camera, zoom, NEAREST_ANCHOR_THRESHOLD)
+                        || self.window_shown_as_fully_at(e, camera, zoom)
+                })
+            });
+
+        let (origin, skip) = if let Some(ref elem) = anchor {
+            (self.nav_center(elem), Some(NavTarget::Window(elem.clone())))
+        } else {
+            let vc = self.usable_center_screen();
+            (
+                Point::from((camera.x + vc.x / zoom, camera.y + vc.y / zoom)),
+                None,
+            )
+        };
+
+        // Candidates are every canvas element, stand-ins included, so a
+        // directional swipe can land on one and Enter relaunches it.
+        let windows = self
+            .stage
+            .windows()
+            .filter(|w| self.is_canvas_window(*w))
+            .map(|w| {
+                let closest = self.element_closest_point(origin, w);
+                // A directional search needs a direction vector, and a
+                // point sitting on the origin has none.
+                let point = if closest == origin {
+                    self.nav_center(w)
+                } else {
+                    closest
+                };
+                (NavTarget::Window(w.clone()), point)
+            });
+
+        let anchors = self
+            .config
+            .nav_anchors
+            .iter()
+            .map(|&p| (NavTarget::Anchor(p), p));
+
+        canvas::find_nearest(origin, dir, windows.chain(anchors), skip.as_ref())
+    }
+
+    /// Land the camera on a bare anchor point. Unfocuses so the next
+    /// directional step searches from the viewport center — which is now the
+    /// anchor.
+    fn center_on_anchor(&mut self, p: Point<f64, Logical>) {
+        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+        self.set_window_focus(None, serial);
+        // As the window arms do: otherwise the pull hands focus to whatever the
+        // pan leaves under the resting cursor, undoing the unfocus above.
+        self.hover_follows_camera = false;
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        // Through the anchor, not a bare `camera_target`: the anchor of a
+        // flight still under way would steer the camera back every tick.
+        let vc = self.usable_center_screen_on(&output);
+        let zoom = self.navigation_target_zoom(&output, false);
+        self.set_camera_anchor(&output, p, vc, zoom);
+    }
+
+    fn center_window(&mut self) {
+        match self.focused_element() {
+            Some(StageWindow::Client(w)) if self.is_canvas_window(&w) => {
+                self.navigate_to_element(&StageWindow::Client(w), NavZoom::RestoreFillElseReset);
+            }
+            // A focused stand-in holds no seat focus, so `focused_window`
+            // never sees it — center it like any other focused element.
+            Some(StageWindow::Suspended(s)) => {
+                self.navigate_to_element(&StageWindow::Suspended(s), NavZoom::RestoreFillElseReset);
+            }
+            // Nothing focused, or a focused non-canvas (pinned/fullscreen)
+            // client: center the nearest canvas element to the viewport
+            // center — stand-ins included, so the user can land on one and
+            // press Enter to relaunch.
+            _ => {
+                let center = self.viewport_center_canvas();
+                let closest = self
+                    .stage
+                    .windows()
+                    .filter(|w| self.is_canvas_window(*w))
+                    .min_by(|a, b| {
+                        let dist = |w: &StageWindow| {
+                            let c = self.nav_center(w);
+                            let dx = c.x - center.x;
+                            let dy = c.y - center.y;
+                            dx * dx + dy * dy
+                        };
+                        dist(a).total_cmp(&dist(b))
+                    })
+                    .cloned();
+                if let Some(elem) = closest {
+                    // Restores here too: the camera is traveling to this
+                    // window regardless, and centering a filled one is
+                    // wrong for the same reason it's wrong when focused.
+                    self.navigate_to_element(&elem, NavZoom::RestoreFillElseReset);
+                }
+            }
+        }
+    }
+
     /// Spawn a command and reveal the cursor briefly so the launched app is
     /// easy to find.
     fn exec_command(&mut self, cmd: &str) {
@@ -88,26 +228,19 @@ impl DriftWm {
                 if let Some(element) = self.focused_element().filter(|e| self.is_canvas_window(e))
                     && let Some(loc) = self.stage.position_of(&element)
                 {
-                    // Nudging re-anchors the window, invalidating any fill restore point.
-                    self.stage.clear_fill(&element);
                     let step = self.config.nudge_step;
                     let (ux, uy) = dir.to_unit_vec();
                     let offset = (
                         (ux * step as f64).round() as i32,
                         (uy * step as f64).round() as i32,
                     );
-                    let new_loc = loc + Point::from(offset);
-                    // The nudge is the window's new position.
-                    self.drop_owed_recenter(&element);
-                    self.map_window(element.clone(), new_loc, false);
-                    self.animate_element_move_from(&element, loc, None);
-                    // The element's canvas position is durable — persist the
-                    // nudge on the session-store debounce.
-                    self.session_store_mark_dirty();
+                    self.keyboard_move_element(&element, loc, loc + Point::from(offset));
                 }
             }
+            Action::MoveToSnap(dir) => self.move_to_snap_focused(dir),
             Action::GrowWindow(dir) => self.step_resize_focused(dir, self.config.resize_step),
             Action::ShrinkWindow(dir) => self.step_resize_focused(dir, -self.config.resize_step),
+            Action::ResizeToSnap(dir) => self.resize_to_snap_focused(dir),
             Action::PanViewport(dir) => {
                 self.user_moved_camera();
                 let Some(zoom) = self.with_output_state(|os| {
@@ -127,114 +260,31 @@ impl DriftWm {
                 let target = self.camera_target().unwrap_or_else(|| self.camera()) + delta;
                 self.set_camera_target(Some(target));
             }
-            Action::CenterWindow => match self.focused_element() {
-                Some(StageWindow::Client(w)) if self.is_canvas_window(&w) => {
-                    self.navigate_to_element(
-                        &StageWindow::Client(w),
-                        NavZoom::RestoreFillElseReset,
-                    );
-                }
-                // A focused stand-in holds no seat focus, so `focused_window`
-                // never sees it — center it like any other focused element.
-                Some(StageWindow::Suspended(s)) => {
-                    self.navigate_to_element(
-                        &StageWindow::Suspended(s),
-                        NavZoom::RestoreFillElseReset,
-                    );
-                }
-                // Nothing focused, or a focused non-canvas (pinned/fullscreen)
-                // client: center the nearest canvas element to the viewport
-                // center — stand-ins included, so the user can land on one and
-                // press Enter to relaunch.
-                _ => {
-                    let center = self.viewport_center_canvas();
-                    let closest = self
-                        .stage
-                        .windows()
-                        .filter(|w| self.is_canvas_window(*w))
-                        .min_by(|a, b| {
-                            let dist = |w: &StageWindow| {
-                                let c = self.nav_center(w);
-                                let dx = c.x - center.x;
-                                let dy = c.y - center.y;
-                                dx * dx + dy * dy
-                            };
-                            dist(a).total_cmp(&dist(b))
-                        })
-                        .cloned();
-                    if let Some(elem) = closest {
-                        // Restores here too: the camera is traveling to this
-                        // window regardless, and centering a filled one is
-                        // wrong for the same reason it's wrong when focused.
-                        self.navigate_to_element(&elem, NavZoom::RestoreFillElseReset);
-                    }
-                }
-            },
+            Action::CenterWindow => self.center_window(),
             Action::FocusCenter => {
-                let pointer = self.seat.get_pointer().unwrap();
-                let pos = pointer.current_location();
-                // Chrome counts as part of its window, and a stand-in is
-                // centered by its own visual frame rather than the client hidden
-                // beneath it. Pinned windows live in screen space (no canvas
-                // position to center the camera on) — the walk skips them.
-                if let Some((element, _)) = self.topmost_under(pos, |_, _| true) {
+                let pos = self.seat.get_pointer().unwrap().current_location();
+                let screen_pos =
+                    canvas::canvas_to_screen(canvas::CanvasPos(pos), self.camera(), self.zoom()).0;
+                // A pin lives in screen space, with no canvas position to center
+                // the camera on, and the canvas walk below passes through it to
+                // the window it covers.
+                if let Some(pin) = self.pinned_owner_under(screen_pos) {
+                    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+                    self.raise_and_focus(&pin, serial);
+                    // Hover skips a pin's resize band for the window behind
+                    // it, so a flight under way would take this focus back.
+                    self.hover_follows_camera = false;
+                } else if let Some((element, _)) = self.topmost_under(pos, |_, _| true) {
+                    // Chrome counts as part of its window, and a stand-in is
+                    // centered by its own visual frame rather than the client
+                    // hidden beneath it.
                     self.navigate_to_element(&element, NavZoom::RestoreFillElseReset);
+                } else {
+                    self.center_window();
                 }
             }
             Action::CenterNearest(dir) => {
-                #[derive(Clone, PartialEq)]
-                enum NavTarget {
-                    Window(StageWindow),
-                    Anchor(Point<f64, smithay::utils::Logical>),
-                }
-
-                // Focus intent, not seat focus: a focused stand-in holds no
-                // keyboard focus but anchors the search like any other element.
-                let focused = self.focused_anchor_element().filter(|e| !self.is_pinned(e));
-
-                // Anchor the directional search to the just-exited fullscreen
-                // window (wherever the restored view placed it) — otherwise the
-                // anchor falls back to a corner/offscreen spot and the swipe
-                // finds nothing.
-                let anchor = was_fullscreen.clone().map(StageWindow::Client).or_else(|| {
-                    focused.filter(|e| {
-                        self.window_visible_at_least(e, CENTER_NEAREST_ANCHOR_THRESHOLD)
-                    })
-                });
-
-                let (origin, skip) = if let Some(ref elem) = anchor {
-                    (self.nav_center(elem), Some(NavTarget::Window(elem.clone())))
-                } else {
-                    (self.viewport_center_canvas(), None)
-                };
-
-                // Candidates are every canvas element, stand-ins included, so a
-                // directional swipe can land on one and Enter relaunches it.
-                let windows = self
-                    .stage
-                    .windows()
-                    .filter(|w| self.is_canvas_window(*w))
-                    .map(|w| {
-                        let closest = self.element_closest_point(origin, w);
-                        // A directional search needs a direction vector, and a
-                        // point sitting on the origin has none.
-                        let point = if closest == origin {
-                            self.nav_center(w)
-                        } else {
-                            closest
-                        };
-                        (NavTarget::Window(w.clone()), point)
-                    });
-
-                let anchors = self
-                    .config
-                    .nav_anchors
-                    .iter()
-                    .map(|&p| (NavTarget::Anchor(p), p));
-
-                let nearest =
-                    canvas::find_nearest(origin, dir, windows.chain(anchors), skip.as_ref());
-                match nearest {
+                match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
                     Some(NavTarget::Window(elem)) => {
                         // No fill-view restore here, unlike every other centering
                         // path: those land at a definite zoom anyway (1.0 when
@@ -245,27 +295,22 @@ impl DriftWm {
                         // inherits the zoom it left behind.
                         self.navigate_to_element(&elem, NavZoom::Keep);
                     }
-                    Some(NavTarget::Anchor(p)) => {
-                        // Unfocus so next CenterNearest searches from viewport center (= this anchor)
-                        let serial = smithay::utils::SERIAL_COUNTER.next_serial();
-                        self.set_window_focus(None, serial);
-                        // The sibling arm navigates to a window and parks the
-                        // hover pull for it; this one has to park it too, or a
-                        // cursor left over a window on the way would take the
-                        // keyboard right back and the two halves of one command
-                        // would disagree.
-                        self.hover_follows_camera = false;
-                        self.with_output_state(|os| {
-                            os.overview_return = None;
-                            os.momentum.stop();
-                        });
-                        let vc = self.usable_center_screen();
-                        let zoom = self.zoom();
-                        self.set_camera_target(Some(Point::from((
-                            p.x - vc.x / zoom,
-                            p.y - vc.y / zoom,
-                        ))));
+                    Some(NavTarget::Anchor(p)) => self.center_on_anchor(p),
+                    None => {}
+                }
+            }
+            Action::FocusNearest(dir) => {
+                match self.nearest_in_direction(dir, was_fullscreen.as_ref()) {
+                    Some(NavTarget::Window(elem)) => {
+                        // A step to an unrelated window is a jump, and jumps park.
+                        let pan = if self.related_to_focus(&elem, was_fullscreen.as_ref()) {
+                            RevealPan::Minimal
+                        } else {
+                            RevealPan::Park(NavZoom::Keep)
+                        };
+                        self.reveal_element(&elem, pan);
                     }
+                    Some(NavTarget::Anchor(p)) => self.center_on_anchor(p),
                     None => {}
                 }
             }
@@ -274,21 +319,9 @@ impl DriftWm {
                 // allowlisted), so any fullscreen entry the stage skips is on
                 // another output — shown only on its own monitor, never a
                 // target here.
-                let anchor = self.cycle_anchor();
-                let Some(window) = self
-                    .stage
-                    .cycle_step(*backward, anchor.as_ref())
-                    .as_ref()
-                    .and_then(|w| w.client())
-                    .cloned()
-                else {
+                if !self.step_cycle(*backward) {
                     return;
-                };
-                // Mark the focus change this navigate causes as cycle-initiated so
-                // `focus_changed` freezes the history instead of committing.
-                self.cycle_navigating = true;
-                self.navigate_to_window(&window, NavZoom::Keep);
-                self.cycle_navigating = false;
+                }
                 // A truly modifier-less fire (gesture, bare wheel, IPC) has no key
                 // release to end the session, so each fire is a single step with a
                 // fresh anchor and commits now. If any real modifier is physically
@@ -400,11 +433,10 @@ impl DriftWm {
             }
             Action::SetBookmark(name) => {
                 let vc = self.usable_center_screen();
-                let zoom = self.zoom();
                 // Capture the destination of an in-flight animation, not a
                 // mid-flight frame, so set → go-to-bookmark round-trips exactly.
                 // This is the exact inverse of `go_to_canvas_point`'s camera math.
-                let cam = self.camera_target().unwrap_or_else(|| self.camera());
+                let (cam, zoom) = self.landing_view();
                 let x = cam.x + vc.x / zoom;
                 let y = -(cam.y + vc.y / zoom);
                 self.bookmarks.insert(name.clone(), [x, y]);
@@ -729,15 +761,19 @@ impl DriftWm {
     }
 
     /// Jump the camera so the viewport centers on canvas point `(x, y)` (Y-up),
-    /// panel-aware (`usable_center_screen`). `SetBookmark` captures the exact
-    /// inverse, so set → go-to-bookmark round-trips. Zoom is untouched.
+    /// panel-aware (`usable_center_screen_on`). `SetBookmark` captures the exact
+    /// inverse, so set → go-to-bookmark round-trips. Keeps the zoom the view is
+    /// heading to.
     fn go_to_canvas_point(&mut self, x: f64, y: f64) {
         self.user_moved_camera();
-        let vc = self.usable_center_screen();
-        let zoom = self.zoom();
-        let target_camera = Point::from((x - vc.x / zoom, -y - vc.y / zoom));
-        self.set_overview_return(None);
-        self.set_camera_target(Some(target_camera));
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        // Through the anchor, not a bare `camera_target`: the anchor of a
+        // flight still under way would steer the camera back every tick.
+        let vc = self.usable_center_screen_on(&output);
+        let zoom = self.navigation_target_zoom(&output, false);
+        self.set_camera_anchor(&output, Point::from((x, -y)), vc, zoom);
     }
 
     /// Toggle screen-pinning of the focused window. Pin/unpin keeps the window

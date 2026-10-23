@@ -24,6 +24,10 @@ use wayland_client::globals::Global;
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_callback::{self, WlCallback};
 use wayland_client::protocol::wl_compositor::WlCompositor;
+use wayland_client::protocol::wl_data_device::{self, WlDataDevice};
+use wayland_client::protocol::wl_data_device_manager::WlDataDeviceManager;
+use wayland_client::protocol::wl_data_offer::WlDataOffer;
+use wayland_client::protocol::wl_data_source::WlDataSource;
 use wayland_client::protocol::wl_display::WlDisplay;
 use wayland_client::protocol::wl_keyboard::{self, WlKeyboard};
 use wayland_client::protocol::wl_output::{self, WlOutput};
@@ -128,6 +132,9 @@ pub struct State {
     pub idle_notifier: Option<ExtIdleNotifierV1>,
     pub virtual_keyboard_manager: Option<ZwpVirtualKeyboardManagerV1>,
     pub tablet_manager: Option<ZwpTabletManagerV2>,
+    pub data_device_manager: Option<WlDataDeviceManager>,
+    /// Created by [`Client::get_data_device`], not at bind time.
+    pub data_device: Option<WlDataDevice>,
 
     pub windows: Vec<Window>,
     pub layers: Vec<LayerSurface>,
@@ -138,6 +145,9 @@ pub struct State {
     /// Every `idled`/`resumed` this client's idle notifications have received,
     /// oldest first.
     pub idle_events: Vec<IdleEvent>,
+    /// Every `locked`/`unlocked`/`confined`/`unconfined` this client's pointer
+    /// constraints have received, oldest first.
+    pub constraint_events: Vec<ConstraintEvent>,
     /// Surface-local position carried by every `wl_pointer` enter/motion this
     /// client has received, oldest first.
     pub pointer_positions: Vec<(f64, f64)>,
@@ -163,6 +173,15 @@ pub struct State {
     /// Every tablet announced to or withdrawn from this client's tablet seat,
     /// oldest first. Empty until [`Client::get_tablet_seat`] runs.
     pub tablet_events: Vec<TabletEvent>,
+    /// Serial of the most recent `zwp_tablet_tool_v2.down`, the one a tablet
+    /// client cites to start an interactive move, resize or drag.
+    pub tablet_down_serial: Option<u32>,
+    /// Serial of the most recent `wl_pointer.enter`, the one a client cites to
+    /// set its own cursor.
+    pub pointer_enter_serial: Option<u32>,
+    /// Every `wl_data_device` enter, leave and drop this client's data device
+    /// has received, oldest first.
+    pub data_device_events: Vec<DataDeviceEvent>,
 
     /// The token string from the most recent `xdg_activation_token_v1.done`.
     pub activation_token: Option<String>,
@@ -318,6 +337,14 @@ pub enum IdleEvent {
     Resumed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConstraintEvent {
+    Locked,
+    Unlocked,
+    Confined,
+    Unconfined,
+}
+
 /// A `wl_touch` event, recorded without its payload — these scenarios only
 /// care which events arrived, not their coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -340,6 +367,14 @@ pub enum KeyboardEvent {
     Modifiers {
         mods_depressed: u32,
     },
+}
+
+/// A `wl_data_device` event that marks a drag-and-drop reaching this client.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataDeviceEvent {
+    Enter { surface: WlSurface },
+    Leave,
+    Drop,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,12 +584,15 @@ impl Client {
             idle_notifier: None,
             virtual_keyboard_manager: None,
             tablet_manager: None,
+            data_device_manager: None,
+            data_device: None,
             windows: Vec::new(),
             layers: Vec::new(),
             popups: Vec::new(),
             session_locks: Vec::new(),
             touch_events: Vec::new(),
             idle_events: Vec::new(),
+            constraint_events: Vec::new(),
             pointer_positions: Vec::new(),
             pointer_frames: 0,
             pointer_buttons: Vec::new(),
@@ -562,6 +600,9 @@ impl Client {
             keyboard_events: Vec::new(),
             tablet_tool_events: Vec::new(),
             tablet_events: Vec::new(),
+            tablet_down_serial: None,
+            pointer_enter_serial: None,
+            data_device_events: Vec::new(),
             activation_token: None,
             ext_workspace: ExtWorkspace::default(),
         };
@@ -656,6 +697,25 @@ impl Client {
 
     pub fn window(&mut self, surface: &WlSurface) -> &mut Window {
         self.state.window(surface)
+    }
+
+    pub fn create_subsurface(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> WlSurface {
+        self.state.create_subsurface(parent, position, size)
+    }
+
+    pub fn create_subsurface_with_role(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> (WlSurface, WlSubsurface) {
+        self.state
+            .create_subsurface_with_role(parent, position, size)
     }
 
     pub fn set_opaque_region(&mut self, surface: &WlSurface, rects: &[(i32, i32, i32, i32)]) {
@@ -811,14 +871,6 @@ impl Client {
         self.state.create_lock_surface(output)
     }
 
-    pub fn create_surface(&mut self) -> WlSurface {
-        self.state.create_surface()
-    }
-
-    pub fn create_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) -> WlSubsurface {
-        self.state.create_subsurface(surface, parent)
-    }
-
     /// Destroy this client's most recent [`Lock`] object without unlocking, and
     /// without disconnecting the client. Legal only while the lock is
     /// unconfirmed — smithay posts `invalid_destroy` once the locker has been
@@ -897,6 +949,37 @@ impl Client {
         let tablet_seat = manager.get_tablet_seat(seat, &self.qh, ());
         self.connection.flush().unwrap();
         tablet_seat
+    }
+
+    /// `wl_data_device_manager.get_data_device` on this client's seat, from
+    /// which point drag-and-drop events reach [`State::data_device_events`].
+    pub fn get_data_device(&mut self) {
+        let manager = self.state.data_device_manager.as_ref().unwrap();
+        let seat = self.state.seat.as_ref().unwrap();
+        self.state.data_device = Some(manager.get_data_device(seat, &self.qh, ()));
+        self.connection.flush().unwrap();
+    }
+
+    /// Start dragging a `text/plain` source out of `origin`, citing `serial`.
+    pub fn start_drag(&mut self, origin: &WlSurface, serial: u32) {
+        let manager = self.state.data_device_manager.as_ref().unwrap();
+        let source = manager.create_data_source(&self.qh, ());
+        source.offer("text/plain".to_owned());
+        let device = self.state.data_device.as_ref().unwrap();
+        device.start_drag(Some(&source), origin, None, serial);
+        self.connection.flush().unwrap();
+    }
+
+    /// `wl_pointer.set_cursor` with no surface — the client hides the cursor —
+    /// citing its latest `wl_pointer.enter` serial.
+    pub fn hide_pointer_cursor(&mut self) {
+        let serial = self.state.pointer_enter_serial.unwrap();
+        self.state
+            .pointer
+            .as_ref()
+            .unwrap()
+            .set_cursor(serial, None, 0, 0);
+        self.connection.flush().unwrap();
     }
 
     /// Take the log, so the tool announce and any hover before the stroke a
@@ -995,6 +1078,43 @@ impl State {
             .iter_mut()
             .find(|w| w.surface == *surface)
             .unwrap()
+    }
+
+    /// Give `parent` a subsurface of `size` at surface-local `position`. A new
+    /// subsurface is synchronized, so its own commit only caches its state and
+    /// the parent's commit here is what applies it.
+    pub fn create_subsurface(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> WlSurface {
+        self.create_subsurface_with_role(parent, position, size).0
+    }
+
+    /// [`Self::create_subsurface`], also returning the `wl_subsurface` role
+    /// object, which a client can destroy apart from the surface to detach it.
+    pub fn create_subsurface_with_role(
+        &mut self,
+        parent: &WlSurface,
+        position: (i32, i32),
+        size: (u16, u16),
+    ) -> (WlSurface, WlSubsurface) {
+        let compositor = self.compositor.as_ref().unwrap();
+        let subcompositor = self.subcompositor.as_ref().unwrap();
+        let viewporter = self.viewporter.as_ref().unwrap();
+        let spbm = self.spbm.as_ref().unwrap();
+
+        let surface = compositor.create_surface(&self.qh, ());
+        let subsurface = subcompositor.get_subsurface(&surface, parent, &self.qh, ());
+        subsurface.set_position(position.0, position.1);
+        let viewport = viewporter.get_viewport(&surface, &self.qh, ());
+        viewport.set_destination(i32::from(size.0), i32::from(size.1));
+        let buffer = spbm.create_u32_rgba_buffer(0, 0, 0, 0, &self.qh, ());
+        surface.attach(Some(&buffer), 0, 0);
+        surface.commit();
+        parent.commit();
+        (surface, subsurface)
     }
 
     /// Set `surface`'s pending opaque region to the union of `rects`
@@ -1276,16 +1396,6 @@ impl State {
         confine
     }
 
-    pub fn create_surface(&mut self) -> WlSurface {
-        let compositor = self.compositor.as_ref().unwrap();
-        compositor.create_surface(&self.qh, ())
-    }
-
-    pub fn create_subsurface(&mut self, surface: &WlSurface, parent: &WlSurface) -> WlSubsurface {
-        let subcompositor = self.subcompositor.as_ref().unwrap();
-        subcompositor.get_subsurface(surface, parent, &self.qh, ())
-    }
-
     pub fn set_confine_region(
         &mut self,
         confine: &ZwpConfinedPointerV1,
@@ -1513,9 +1623,15 @@ impl Window {
         self.xdg_toplevel.unset_maximized();
     }
 
+    /// Ask the compositor to move this window, as a CSD client does when the
+    /// user drags its title bar.
+    pub fn move_(&self, serial: u32) {
+        self.xdg_toplevel._move(&self.seat, serial);
+    }
+
     /// Ask the compositor to resize this window from `edges`, as a CSD client
-    /// does when the user drags its own border. The serial isn't validated —
-    /// the compositor gates the request on the seat's pointer grab instead.
+    /// does when the user drags its own border. A mouse press is matched on
+    /// the seat's pointer grab, a pen tip's on `serial`.
     pub fn resize(&self, edges: xdg_toplevel::ResizeEdge, serial: u32) {
         self.xdg_toplevel.resize(&self.seat, serial, edges);
     }
@@ -1833,6 +1949,9 @@ impl Dispatch<WlRegistry, ()> for State {
                 } else if interface == ZwpVirtualKeyboardManagerV1::interface().name {
                     let version = min(version, ZwpVirtualKeyboardManagerV1::interface().version);
                     state.virtual_keyboard_manager = Some(registry.bind(name, version, qh, ()));
+                } else if interface == WlDataDeviceManager::interface().name {
+                    let version = min(version, WlDataDeviceManager::interface().version);
+                    state.data_device_manager = Some(registry.bind(name, version, qh, ()));
                 } else if interface == ZwpTabletManagerV2::interface().name {
                     let version = min(version, ZwpTabletManagerV2::interface().version);
                     state.tablet_manager = Some(registry.bind(name, version, qh, ()));
@@ -2329,6 +2448,9 @@ impl Dispatch<WlPointer, ()> for State {
         _conn: &Connection,
         _qhandle: &QueueHandle<Self>,
     ) {
+        if let wl_pointer::Event::Enter { serial, .. } = &event {
+            state.pointer_enter_serial = Some(*serial);
+        }
         // `enter` carries a position too, so a regression that dropped focus and
         // re-entered instead of re-motioning would still land one on the client.
         match event {
@@ -2406,7 +2528,7 @@ impl Dispatch<ZwpPointerConstraintsV1, ()> for State {
 
 impl Dispatch<ZwpLockedPointerV1, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &ZwpLockedPointerV1,
         event: <ZwpLockedPointerV1 as wayland_client::Proxy>::Event,
         _data: &(),
@@ -2414,8 +2536,12 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            zwp_locked_pointer_v1::Event::Locked => (),
-            zwp_locked_pointer_v1::Event::Unlocked => (),
+            zwp_locked_pointer_v1::Event::Locked => {
+                state.constraint_events.push(ConstraintEvent::Locked)
+            }
+            zwp_locked_pointer_v1::Event::Unlocked => {
+                state.constraint_events.push(ConstraintEvent::Unlocked)
+            }
             _ => unreachable!(),
         }
     }
@@ -2423,7 +2549,7 @@ impl Dispatch<ZwpLockedPointerV1, ()> for State {
 
 impl Dispatch<ZwpConfinedPointerV1, ()> for State {
     fn event(
-        _state: &mut Self,
+        state: &mut Self,
         _proxy: &ZwpConfinedPointerV1,
         event: <ZwpConfinedPointerV1 as wayland_client::Proxy>::Event,
         _data: &(),
@@ -2431,8 +2557,12 @@ impl Dispatch<ZwpConfinedPointerV1, ()> for State {
         _qhandle: &QueueHandle<Self>,
     ) {
         match event {
-            zwp_confined_pointer_v1::Event::Confined => (),
-            zwp_confined_pointer_v1::Event::Unconfined => (),
+            zwp_confined_pointer_v1::Event::Confined => {
+                state.constraint_events.push(ConstraintEvent::Confined)
+            }
+            zwp_confined_pointer_v1::Event::Unconfined => {
+                state.constraint_events.push(ConstraintEvent::Unconfined)
+            }
             _ => unreachable!(),
         }
     }
@@ -2722,7 +2852,10 @@ impl Dispatch<ZwpTabletToolV2, ()> for State {
                 TabletToolEvent::ProximityIn { surface }
             }
             zwp_tablet_tool_v2::Event::ProximityOut => TabletToolEvent::ProximityOut,
-            zwp_tablet_tool_v2::Event::Down { .. } => TabletToolEvent::Down,
+            zwp_tablet_tool_v2::Event::Down { serial } => {
+                state.tablet_down_serial = Some(serial);
+                TabletToolEvent::Down
+            }
             zwp_tablet_tool_v2::Event::Up => TabletToolEvent::Up,
             zwp_tablet_tool_v2::Event::Motion { x, y } => TabletToolEvent::Motion { x, y },
             zwp_tablet_tool_v2::Event::Pressure { pressure } => TabletToolEvent::Pressure(pressure),
@@ -2761,4 +2894,66 @@ impl Dispatch<ZwpTabletPadV2, ()> for State {
         // Bound only so `pad_added` has a target; the compositor exposes no
         // pads and no scenario reads one.
     }
+}
+
+impl Dispatch<WlDataDeviceManager, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlDataDeviceManager,
+        _event: <WlDataDeviceManager as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WlDataSource, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlDataSource,
+        _event: <WlDataSource as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WlDataOffer, ()> for State {
+    fn event(
+        _state: &mut Self,
+        _proxy: &WlDataOffer,
+        _event: <WlDataOffer as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<WlDataDevice, ()> for State {
+    fn event(
+        state: &mut Self,
+        _proxy: &WlDataDevice,
+        event: <WlDataDevice as wayland_client::Proxy>::Event,
+        _data: &(),
+        _conn: &Connection,
+        _qhandle: &QueueHandle<Self>,
+    ) {
+        match event {
+            wl_data_device::Event::Enter { surface, .. } => {
+                state
+                    .data_device_events
+                    .push(DataDeviceEvent::Enter { surface });
+            }
+            wl_data_device::Event::Leave => state.data_device_events.push(DataDeviceEvent::Leave),
+            wl_data_device::Event::Drop => state.data_device_events.push(DataDeviceEvent::Drop),
+            _ => (),
+        }
+    }
+
+    wayland_client::event_created_child!(State, WlDataDevice, [
+        wl_data_device::EVT_DATA_OFFER_OPCODE => (WlDataOffer, ()),
+    ]);
 }

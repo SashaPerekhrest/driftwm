@@ -13,13 +13,13 @@ use smithay::desktop::Window;
 use smithay::utils::{Logical, Point};
 
 use crate::grabs::{MoveGrab, PanGrab, ResizeGrab};
-use crate::state::DriftWm;
+use crate::state::{DriftWm, StageWindow};
 
 use super::client::ClientId;
 use super::input_backend::{
     FakeDevice, key_press, pointer_to, press, release, trackpad_scroll, wheel_notch_down,
 };
-use super::{Fixture, config, give_ssd, map_window, motion, window_by_app_id};
+use super::{Fixture, config, give_ssd, map_window, motion, to_canvas, window_by_app_id};
 
 /// evdev codes, the space `key_press` reports in. Super is the default
 /// `mod_key`, so it is what a `mod+…` binding needs held.
@@ -99,6 +99,21 @@ const PIN_AND_CLAIM: &str = r#"
 app_id = "app"
 pinned_to_screen = true
 size = [400, 300]
+pass_mouse = ["alt+left"]
+"#;
+
+/// A pin with an inert margin, beside a canvas window that claims `alt+left`.
+const PIN_BESIDE_CLAIM_NO_BORDER_RESIZE: &str = r#"
+[mouse]
+resize_on_border = false
+
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [400, 300]
+
+[[window_rules]]
+app_id = "app"
 pass_mouse = ["alt+left"]
 "#;
 
@@ -528,6 +543,56 @@ fn an_unclaimed_press_on_a_pinned_window_drags_it() {
         f.state().stage.pin_of(&window).unwrap().screen_pos,
         before,
         "alt+left is the pinned move binding when nothing claims it"
+    );
+}
+
+/// With `resize_on_border` off a pin's margin is inert chrome: still the pin's,
+/// and never `pass_mouse`'s to give. A claiming window drawn behind the margin
+/// must not take the binding away from the pin.
+#[test]
+fn a_claim_behind_a_pins_inert_margin_leaves_the_binding_to_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_BESIDE_CLAIM_NO_BORDER_RESIZE));
+    f.add_output(1, (1920, 1080));
+    let pin_id = f.add_client();
+    map_window(&mut f, pin_id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+    let margin = to_canvas(
+        &mut f,
+        Point::from((site.x as f64 - 4.0, site.y as f64 + 150.0)),
+    );
+
+    let app_id = f.add_client();
+    map_window(&mut f, app_id, "app", (400, 300));
+    let app = window_by_app_id(&mut f, "app").unwrap();
+    let origin = Point::from((margin.x as i32 - 80, margin.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(app.clone()), origin, false);
+    assert!(
+        f.state()
+            .element_under(margin)
+            .is_some_and(|(w, _)| *w == app),
+        "precondition: the claiming window's content must sit behind the margin"
+    );
+
+    aim_and_hold(&mut f, KEY_LEFTALT, margin);
+    press(&mut f, &FakeDevice::mouse(), BTN_LEFT);
+    motion(&mut f, margin + Point::from((60.0, 40.0)));
+
+    assert_ne!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        site,
+        "alt+left on the pin's own margin is the pin's move binding"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&app),
+        Some(origin),
+        "the window drawn behind the pin stays put"
+    );
+    assert_eq!(
+        client_buttons(&mut f, app_id),
+        Vec::new(),
+        "the claiming window behind the pin never sees the press"
     );
 }
 

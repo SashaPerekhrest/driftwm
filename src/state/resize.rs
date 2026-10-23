@@ -81,9 +81,9 @@ impl PendingResize {
 /// The rect a `grow-window` / `shrink-window` step starts from: where the window
 /// sits once the part of the last step's placement the client refused is taken
 /// back, and the size that placement assumes.
-struct StepStart {
-    loc: Point<i32, Logical>,
-    size: Size<i32, Logical>,
+pub(super) struct StepStart {
+    pub(super) loc: Point<i32, Logical>,
+    pub(super) size: Size<i32, Logical>,
 }
 
 /// Whether the client still owes an ack for a size we sent: a pending configure
@@ -159,7 +159,7 @@ impl DriftWm {
     /// offer it declined. The two halves have to answer alike — measuring from the
     /// offer while correcting toward the commit inflates the anchor edge once per
     /// repeat.
-    fn placed_element_size(&self, element: &StageWindow) -> Size<i32, Logical> {
+    pub(super) fn placed_element_size(&self, element: &StageWindow) -> Size<i32, Logical> {
         match element {
             // A stand-in's size cell is written synchronously, so its placement
             // never assumes anything the compositor is not already drawing.
@@ -357,19 +357,38 @@ impl DriftWm {
     /// of that is taken back by [`Self::step_start_rect`] before the next step
     /// measures anything.
     pub(crate) fn step_resize_focused(&mut self, dir: &Direction, step: i32) {
-        let Some(element) = self.focused_element().filter(|e| self.is_canvas_window(e)) else {
+        let Some((element, start)) = self.step_target() else {
             return;
         };
+        self.step_resize(&element, start, dir, step);
+    }
+
+    /// The focused canvas element and the rect a step on it starts from.
+    pub(super) fn step_target(&self) -> Option<(StageWindow, StepStart)> {
+        let element = self
+            .focused_element()
+            .filter(|e| self.is_canvas_window(e))?;
         // A grab recomputes the rect absolutely from its own start anchors on
         // every motion tick, so a step landing mid-drag is erased by the next
         // one — and the settling tail still owes a top/left compensation this
         // would strip the witnesses for.
         if self.element_under_interactive_grab(&element) {
-            return;
+            return None;
         }
-        let Some(StepStart { loc, size: current }) = self.step_start_rect(&element) else {
-            return;
-        };
+        let start = self.step_start_rect(&element)?;
+        Some((element, start))
+    }
+
+    /// The step itself, from the rect [`Self::step_target`] resolved: the
+    /// `dir` edge of `element` walks by `step` px, the opposite edge holds.
+    pub(super) fn step_resize(
+        &mut self,
+        element: &StageWindow,
+        start: StepStart,
+        dir: &Direction,
+        step: i32,
+    ) {
+        let StepStart { loc, size: current } = start;
 
         // `to_unit_vec` is Y-down, the convention stage positions use, so a
         // negative component names the edge that sits lower in coordinate order:
@@ -377,7 +396,7 @@ impl DriftWm {
         let (ux, uy) = dir.to_unit_vec();
         let dw = (ux.abs() * step as f64).round() as i32;
         let dh = (uy.abs() * step as f64).round() as i32;
-        let clamped = resize_constraints(&element, self.element_chrome(&element))
+        let clamped = resize_constraints(element, self.element_chrome(element))
             .clamp(current.w.saturating_add(dw), current.h.saturating_add(dh));
         // An axis the step leaves alone keeps its size, clamp included: a client
         // is free to declare a `max_size` its current size already violates
@@ -403,7 +422,7 @@ impl DriftWm {
                 loc.y
             },
         ));
-        self.resize_element_to(&element, size, loc, true, Some((ux < 0.0, uy < 0.0)));
+        self.resize_element_to(element, size, loc, true, Some((ux < 0.0, uy < 0.0)));
     }
 
     /// Where the next step starts from: the size the element's placement assumes,

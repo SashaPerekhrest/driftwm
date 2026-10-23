@@ -14,6 +14,10 @@ use driftwm::canvas::{CanvasPos, ScreenPos, canvas_to_screen, screen_to_canvas};
 /// "click" (deselect) rather than a "drag" (pan). 5px → 25.
 const CLICK_THRESHOLD_SQ: f64 = 25.0;
 
+/// Screen px of float noise a warp's canvas round trip leaves on a cursor that
+/// held still — far below any motion a device reports.
+const WARP_NOISE: f64 = 1e-6;
+
 /// Pointer grab that pans the viewport camera with momentum. Triggered by
 /// Super+left-click or left-click on empty canvas; accumulates momentum so
 /// the viewport coasts on release.
@@ -76,16 +80,24 @@ impl PointerGrab<DriftWm> for PanGrab {
         let screen_delta = current_screen_pos - self.last_screen_pos;
 
         let mouse_speed = data.config.mouse_speed;
+        // A cursor that kept its screen spot (a camera or zoom tick's own warp,
+        // or a push against the clamp) is no drag, and even a zero pan would end
+        // whatever animation is running.
+        let held_still = screen_delta.x.abs() < WARP_NOISE && screen_delta.y.abs() < WARP_NOISE;
         // drift_pan_on returns zero while fullscreen locks the camera; the grab
         // stays live regardless, so a fullscreen exit mid-drag resumes without a jump.
-        let camera_delta = data.drift_pan_on(
-            Point::from((
-                -screen_delta.x * mouse_speed / zoom,
-                -screen_delta.y * mouse_speed / zoom,
-            )),
-            event.time,
-            &self.output,
-        );
+        let camera_delta = if held_still {
+            Point::from((0.0, 0.0))
+        } else {
+            data.drift_pan_on(
+                Point::from((
+                    -screen_delta.x * mouse_speed / zoom,
+                    -screen_delta.y * mouse_speed / zoom,
+                )),
+                event.time,
+                &self.output,
+            )
+        };
         self.last_screen_pos = current_screen_pos;
 
         if !self.dragged {

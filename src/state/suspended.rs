@@ -154,26 +154,6 @@ impl DriftWm {
         self.set_suspended_focus(id, serial);
     }
 
-    /// Focus + raise a suspended window and, if it isn't already fully on
-    /// screen, pan the active output's camera to bring it to the
-    /// `focus_placement` point (no zoom change). Backs `msg focus <id>` on a
-    /// suspended window — the centering actions want `center_on_suspended`
-    /// instead, which pans unconditionally.
-    pub fn reveal_suspended(&mut self, id: SuspendedId) {
-        self.focus_and_raise_suspended(id);
-        let Some(s) = self.find_suspended(id) else {
-            return;
-        };
-        if self.window_fully_in_viewport(&StageWindow::Suspended(s.clone())) {
-            return;
-        }
-        let Some(output) = self.active_output() else {
-            return;
-        };
-        let zoom = crate::state::output_state(&output).zoom;
-        self.center_camera_on_suspended(&s, &output, zoom);
-    }
-
     /// Focus + raise a suspended window and pan the active output's camera to
     /// bring it to the `focus_placement` point unconditionally — the stand-in
     /// counterpart of `navigate_to_window`; `reset_zoom` is that call's
@@ -183,6 +163,8 @@ impl DriftWm {
         let Some(s) = self.find_suspended(id) else {
             return;
         };
+        // As in `navigate_to_window_on`.
+        self.hover_follows_camera = false;
         let Some(output) = self.active_output() else {
             return;
         };
@@ -200,9 +182,6 @@ impl DriftWm {
         let center = self.nav_center(&element);
         let align = self.align_point_on(output, self.suspended_chrome(), s.size.get(), target_zoom);
         self.set_camera_anchor(output, center, align, target_zoom);
-        // Both callers focused the stand-in this pans to — see
-        // `navigate_to_window_on`'s tail, which this mirrors.
-        self.hover_follows_camera = false;
     }
 
     /// Relaunch the app behind a suspended window: resolve its `Exec=`, mint a
@@ -621,12 +600,14 @@ impl DriftWm {
         } else if fit {
             // The fit configures its own size, so a stable rect the adopt is
             // still owed — payable only on a commit at the adopted size — would
-            // never come due, and `decoration_fit` writes none of its own: the
-            // window would end up with no settled footprint at all. Pay it here
-            // against the slot the adopt put it in, which is exactly the pre-fit
-            // rect a fit means to keep as the window's cluster identity. A
-            // fullscreen needs no such payment — its exit configures the adopted
-            // size back and the debt settles then, at a rect that exists again.
+            // never come due, and a plain fit writes none of its own: the window
+            // would end up with no settled footprint at all. Pay it here against
+            // the slot the adopt put it in, which is exactly the pre-fit rect a
+            // plain fit means to keep as the window's cluster identity (a
+            // snapped fit then caches its fitted rect over it).
+            // A fullscreen needs no such payment — its exit configures the
+            // adopted size back and the debt settles then, at a rect that exists
+            // again.
             self.settle_owed_adopt_rect(&window, root);
             self.decoration_fit(&window);
         }
@@ -1052,6 +1033,8 @@ impl DriftWm {
             match follow {
                 Some(target) if self.window_fully_in_viewport(&target) => {
                     self.raise_and_focus(&target, serial);
+                    // As a real close's follow does.
+                    self.hover_follows_camera = false;
                 }
                 Some(target) => self.navigate_to_window(&target, NavZoom::Keep),
                 None => {
@@ -1072,7 +1055,10 @@ impl DriftWm {
                         (None, _) => None,
                     };
                     match target {
-                        Some(target) => self.raise_and_focus(&target, serial),
+                        Some(target) => {
+                            self.raise_and_focus(&target, serial);
+                            self.hover_follows_camera = false;
+                        }
                         None => self.set_window_focus(None, serial),
                     }
                 }

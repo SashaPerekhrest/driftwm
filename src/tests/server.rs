@@ -83,6 +83,12 @@ impl Server {
         self.state.verify_stage_invariants();
     }
 
+    /// Dispatch client requests without the rest of a loop iteration, so input
+    /// can land between a request and the pull after it.
+    pub fn dispatch_clients(&mut self) {
+        self.display.dispatch_clients(&mut self.state).ok();
+    }
+
     pub fn insert_client(&mut self, stream: UnixStream) {
         self.state
             .display_handle

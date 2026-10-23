@@ -191,9 +191,9 @@ fn two_finger_spread_on_canvas_zooms() {
 
 #[test]
 fn four_finger_swipe_fires_exactly_one_threshold() {
-    // Default `swipe = 4` fingers is the one-shot navigate (`center-nearest`); the
+    // Default `swipe = 4` fingers is the one-shot navigate (`focus-nearest`); the
     // 3-finger tier pans continuously. Fingers move left → inverted nav vector
-    // points right → `CenterNearest(Right)`.
+    // points right → `FocusNearest(Right)`.
     let cfg = cfg_default();
     let mut seq = vec![
         down(0, 400.0, 500.0, false, 0),
@@ -218,9 +218,31 @@ fn four_finger_swipe_fires_exactly_one_threshold() {
     assert!(
         decs.iter().any(|d| matches!(
             d,
-            Decision::FireThreshold(Action::CenterNearest(Direction::Right))
+            Decision::FireThreshold(Action::FocusNearest(Direction::Right))
         )),
-        "expected CenterNearest(Right), got {decs:?}"
+        "expected FocusNearest(Right), got {decs:?}"
+    );
+}
+
+#[test]
+fn bare_focus_nearest_takes_the_swipe_direction_like_center_nearest() {
+    let cfg =
+        Config::from_toml("[touch.anywhere]\n\"4-finger-swipe\" = \"focus-nearest\"\n").unwrap();
+    let seq = four_finger_nav(
+        [400.0, 500.0, 600.0, 700.0],
+        &[
+            [360.0, 460.0, 560.0, 660.0],
+            [320.0, 420.0, 520.0, 620.0],
+            [280.0, 380.0, 480.0, 580.0],
+        ],
+    );
+    let decs = run_all(&cfg, &seq);
+    assert!(
+        decs.iter().any(|d| matches!(
+            d,
+            Decision::FireThreshold(Action::FocusNearest(Direction::Right))
+        )),
+        "fingers left must fire FocusNearest(Right), got {decs:?}"
     );
 }
 
@@ -851,7 +873,7 @@ fn configured_swipe_threshold_makes_a_firing_swipe_inert() {
     assert!(
         decs.iter().any(|d| matches!(
             d,
-            Decision::FireThreshold(Action::CenterNearest(Direction::Right))
+            Decision::FireThreshold(Action::FocusNearest(Direction::Right))
         )),
         "the default threshold must fire the swipe, got {decs:?}"
     );

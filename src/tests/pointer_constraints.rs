@@ -22,8 +22,8 @@ use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_confined_pointe
 use wayland_protocols::wp::pointer_constraints::zv1::client::zwp_locked_pointer_v1::ZwpLockedPointerV1;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
-use super::client::ClientId;
-use super::input_backend::{FakeDevice, pointer_relative_motion, pointer_to};
+use super::client::{ClientId, ConstraintEvent};
+use super::input_backend::{FakeDevice, pointer_relative_motion, pointer_to, trackpad_scroll};
 use super::{Fixture, map_top_layer, map_window, window_by_app_id};
 
 const SHADOW: Point<i32, Logical> = Point::new(26, 23);
@@ -298,9 +298,6 @@ fn fullscreening_a_confined_client_sends_it_the_motion() {
 /// unrelated refresh. `fullscreening_a_confined_client_sends_it_the_motion`
 /// above doesn't exercise this because its client never changes geometry —
 /// this one does, the way GTK drops its CSD margin on fullscreen.
-///
-/// Subsurface coverage is dropped: the fixture client never binds
-/// `wl_subcompositor` and has no subsurface API to exercise.
 #[test]
 fn a_csd_client_dropping_its_shadow_on_fullscreen_is_corrected_on_its_own_commit() {
     let mut f = Fixture::new();
@@ -612,23 +609,9 @@ fn a_locked_window_with_subsurface_delivers_relative_motion_only() {
 
     let (surface, surface_origin) = shadowed_window(&mut f, id);
 
-    let client = f.client(id);
-    let sub_surf = client.create_surface();
-    let sub = client.create_subsurface(&sub_surf, &surface);
-    let viewporter = client.state.viewporter.as_ref().unwrap();
-    let viewport = viewporter.get_viewport(&sub_surf, &client.qh, ());
-    viewport.set_destination(400, 300);
-    let buffer =
-        client
-            .state
-            .spbm
-            .as_ref()
-            .unwrap()
-            .create_u32_rgba_buffer(0, 0, 0, 0, &client.qh, ());
-    sub_surf.attach(Some(&buffer), 0, 0);
-    sub.set_position(100, 100);
-    sub_surf.commit();
-    f.client(id).window(&surface).commit();
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
     f.double_roundtrip(id);
 
     // Position cursor over the subsurface (offset 150, 150 from surface origin)
@@ -711,5 +694,532 @@ fn a_locked_window_with_subsurface_delivers_relative_motion_only() {
         f.client(id).state.pointer_positions,
         Vec::new(),
         "further motion must remain strictly relative"
+    );
+}
+
+/// Cover the game's whole surface with a subsurface, the way a game drawing
+/// into one does, and lock the pointer to the toplevel with the cursor over it.
+/// The surface under the cursor is then never the one holding the lock, and the
+/// cursor leaves the window straight from the subsurface.
+fn lock_over_a_subsurface(
+    f: &mut Fixture,
+    id: ClientId,
+    surface: &WlSurface,
+) -> ZwpLockedPointerV1 {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let size = (
+        (GEOMETRY.0 + SHADOW.x * 2) as u16,
+        (GEOMETRY.1 + SHADOW.y * 2) as u16,
+    );
+    let sub_surf = f.client(id).create_subsurface(surface, (0, 0), size);
+    f.double_roundtrip(id);
+    point_at_window_center(f, id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "the cursor must be over the subsurface, or this scenario tests nothing"
+    );
+
+    let lock = f.client(id).lock_pointer(surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Locked),
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+    lock
+}
+
+/// Fullscreening another window under a cursor locked over a subsurface still
+/// has to release the lock, or the game is never told it ended.
+#[test]
+fn fullscreening_another_window_releases_a_lock_held_over_a_subsurface() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    let other_id = f.add_client();
+    let game_id = f.add_client();
+
+    // Mapped first, so the game's map leaves the camera on the game.
+    map_window(&mut f, other_id, "other", (400, 300));
+    let (surface, _) = shadowed_window(&mut f, game_id);
+    let _lock = lock_over_a_subsurface(&mut f, game_id, &surface);
+
+    let other = window_by_app_id(&mut f, "other").unwrap();
+    f.state().enter_fullscreen(&other, Some(output));
+    f.double_roundtrip(game_id);
+    f.double_roundtrip(other_id);
+
+    assert_eq!(
+        f.client(game_id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "the game must be told its lock ended once another window takes the cursor"
+    );
+}
+
+/// The session lock takes the cursor from every window, and a lock held over a
+/// subsurface has to go with it: smithay's leave releases only a constraint on
+/// the surface it leaves.
+#[test]
+fn locking_the_session_releases_a_lock_held_over_a_subsurface() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let game_id = f.add_client();
+    let locker_id = f.add_client();
+
+    let (surface, _) = shadowed_window(&mut f, game_id);
+    let _lock = lock_over_a_subsurface(&mut f, game_id, &surface);
+
+    f.client(locker_id).lock_session();
+    f.roundtrip(locker_id);
+    f.double_roundtrip(game_id);
+    assert!(
+        f.state().session_lock.is_locked(),
+        "the session must lock, or this scenario tests nothing"
+    );
+
+    assert_eq!(
+        f.client(game_id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "the game must be told its lock ended once the session lock takes the cursor"
+    );
+}
+
+/// A pan dispatches straight to whatever slides under the cursor. Carrying the
+/// cursor off a game locked over a subsurface has to end the lock, or the
+/// game's next cursor hint pulls the freed cursor back onto it.
+#[test]
+fn panning_off_a_game_releases_a_lock_held_over_a_subsurface() {
+    let mut f = Fixture::with_config(super::config(
+        "[mouse.on-window]\n\"trackpad-scroll\" = \"pan-viewport\"\n",
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (surface, _) = shadowed_window(&mut f, id);
+    let lock = lock_over_a_subsurface(&mut f, id, &surface);
+
+    let trackpad = FakeDevice::touchpad();
+    for _ in 0..80 {
+        trackpad_scroll(&mut f, &trackpad);
+        f.double_roundtrip(id);
+    }
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .current_focus()
+            .is_none(),
+        "the pan must carry the cursor off the game, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "a pan that carries the cursor off the game must end its lock"
+    );
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "an ended lock's cursor hint must not move the cursor"
+    );
+}
+
+/// A cursor crossing from a subsurface onto its own toplevel has not left the
+/// window, so a confine held over the subsurface stays in force without so much
+/// as a flap.
+#[test]
+fn a_confine_held_over_a_subsurface_survives_crossing_onto_the_toplevel() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    f.client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let _confine = f.client(id).confine_pointer(&surface);
+    f.double_roundtrip(id);
+    assert!(
+        f.state().pointer_constraint_active(),
+        "the confine must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    pointer_relative_motion(&mut f, &FakeDevice::mouse(), Point::from((-100.0, -100.0)));
+    f.double_roundtrip(id);
+
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(surface.id().protocol_id()),
+        "the cursor must have crossed onto the toplevel, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.constraint_events,
+        vec![ConstraintEvent::Confined],
+        "the confine must hold across the window's own surfaces"
+    );
+}
+
+/// A destroyed subsurface is cut from its parent first, so nothing can walk up
+/// from it to the toplevel's lock. The lock still has to end once the cursor
+/// is left over bare canvas, or the game's next cursor hint pulls the free
+/// cursor back.
+#[test]
+fn destroying_the_subsurface_under_a_locked_cursor_releases_the_lock() {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let surface = map_window(&mut f, id, "game", (800, 600));
+    let window = window_by_app_id(&mut f, "game").unwrap();
+    // Overhangs the toplevel's right edge, so its destruction leaves the
+    // cursor over nothing.
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (700, 100), (300, 100));
+    f.double_roundtrip(id);
+    let position = f.state().stage.position_of(&window).unwrap().to_f64();
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        position + Point::from((850.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "the cursor must be over the overhanging subsurface, or this scenario \
+         tests nothing"
+    );
+    let lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Locked),
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    sub_surf.destroy();
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .current_focus()
+            .is_none(),
+        "the cursor must be left over bare canvas, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "the lock must end once the cursor is off the window"
+    );
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "an ended lock's cursor hint must not move the cursor"
+    );
+}
+
+/// A subsurface destroyed inside the window leaves the cursor over the
+/// toplevel, so the lock must hold without so much as a flap — a oneshot lock
+/// would not come back.
+#[test]
+fn destroying_a_subsurface_inside_a_locked_window_keeps_the_lock() {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let _lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.constraint_events,
+        vec![ConstraintEvent::Locked],
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    sub_surf.destroy();
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(surface.id().protocol_id()),
+        "the cursor must be left over the toplevel, or this scenario tests nothing"
+    );
+    assert_eq!(
+        f.client(id).state.constraint_events,
+        vec![ConstraintEvent::Locked],
+        "the cursor never left the window, so the lock must not be released"
+    );
+}
+
+/// A window may lock its toplevel and then one of its subsurfaces too. Only the
+/// nearer lock applies, and once the cursor leaves the window every lock the
+/// game was given must have ended, or a forgotten one keeps taking its hints.
+#[test]
+fn every_nested_lock_ends_once_the_cursor_leaves_the_window() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let _window_lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    let _sub_lock = f.client(id).lock_pointer(&sub_surf);
+    f.double_roundtrip(id);
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "the locks must arm, or this scenario tests nothing"
+    );
+
+    f.state()
+        .warp_pointer(surface_origin - Point::from((100.0, 100.0)));
+    f.double_roundtrip(id);
+    assert!(
+        f.state()
+            .seat
+            .get_pointer()
+            .unwrap()
+            .current_focus()
+            .is_none(),
+        "the cursor must be off the window, or this scenario tests nothing"
+    );
+
+    let events = &f.client(id).state.constraint_events;
+    let count = |kind| events.iter().filter(|&&event| event == kind).count();
+    assert_eq!(
+        count(ConstraintEvent::Unlocked),
+        count(ConstraintEvent::Locked),
+        "every lock that armed must have ended ({events:?})"
+    );
+}
+
+/// A held button pins focus to the surface it pressed, even one the client has
+/// detached from the window by destroying only its subsurface role. The cursor
+/// never left the window, so the lock must not end under the click.
+#[test]
+fn a_held_click_over_a_detached_subsurface_keeps_the_lock() {
+    use super::input_backend::{press, release};
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, _) = shadowed_window(&mut f, id);
+    let size = (
+        (GEOMETRY.0 + SHADOW.x * 2) as u16,
+        (GEOMETRY.1 + SHADOW.y * 2) as u16,
+    );
+    let (sub_surf, role) = f
+        .client(id)
+        .create_subsurface_with_role(&surface, (0, 0), size);
+    f.double_roundtrip(id);
+    point_at_window_center(&mut f, id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "the cursor must be over the subsurface, or this scenario tests nothing"
+    );
+    let _lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+
+    let mouse = FakeDevice::mouse();
+    press(&mut f, &mouse, driftwm::config::BTN_LEFT);
+    f.double_roundtrip(id);
+    role.destroy();
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    let during_click = f.client(id).state.constraint_events.clone();
+    release(&mut f, &mouse, driftwm::config::BTN_LEFT);
+    f.double_roundtrip(id);
+
+    assert_eq!(
+        during_click,
+        vec![ConstraintEvent::Locked],
+        "the lock must hold while the click pins the cursor inside the window"
+    );
+}
+
+/// A pan or a session lock moves focus outside the pull, and the lock it
+/// strands stays active until the pull that follows. A hint arriving in that
+/// gap must not drag the cursor back onto the game.
+#[test]
+fn a_hint_arriving_before_the_pull_does_not_move_a_released_cursor() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, _) = shadowed_window(&mut f, id);
+    let lock = lock_over_a_subsurface(&mut f, id, &surface);
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    let serial = smithay::utils::SERIAL_COUNTER.next_serial();
+    f.state().dispatch_pointer_motion(None, cursor, serial, 0);
+    let pointer = f.state().seat.get_pointer().unwrap();
+    pointer.frame(f.state());
+
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "a hint from a lock the cursor has left must not move the cursor"
+    );
+}
+
+/// A hint sent in the same batch as the destruction of the subsurface under the
+/// cursor reaches the compositor before the pull has re-seated focus on the
+/// toplevel. The lock holds through that, so its hint has to apply too.
+#[test]
+fn a_hint_batched_with_destroying_an_inner_subsurface_applies() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (surface, surface_origin) = shadowed_window(&mut f, id);
+    let sub_surf = f
+        .client(id)
+        .create_subsurface(&surface, (100, 100), (400, 300));
+    f.double_roundtrip(id);
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        surface_origin + Point::from((150.0, 150.0)),
+    );
+    f.double_roundtrip(id);
+    let lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.client(id).state.constraint_events,
+        vec![ConstraintEvent::Locked],
+        "the lock must arm over the subsurface, or this scenario tests nothing"
+    );
+
+    sub_surf.destroy();
+    lock.set_cursor_position_hint(300.0, 200.0);
+    f.client(id).window(&surface).commit();
+    f.double_roundtrip(id);
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        surface_origin + Point::from((300.0, 200.0)),
+        "a lock that still holds must take its hint"
+    );
+}
+
+/// A press handled after a session lock request but before the pull that
+/// follows starts a click grab on nothing. The lock screen still takes the
+/// game's lock, and the game's hints must not move a cursor the lock screen
+/// keeps in screen space.
+#[test]
+fn a_click_racing_the_session_lock_does_not_keep_the_game_lock() {
+    use super::input_backend::{press, release};
+
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    let game_id = f.add_client();
+    let locker_id = f.add_client();
+    let (surface, _) = shadowed_window(&mut f, game_id);
+    let lock = lock_over_a_subsurface(&mut f, game_id, &surface);
+
+    f.client(locker_id).lock_session();
+    f.client(locker_id).flush();
+    f.state.server.dispatch_clients();
+    assert!(
+        f.state().session_lock.is_locked(),
+        "the session must lock before the press, or this scenario tests nothing"
+    );
+    let mouse = FakeDevice::mouse();
+    press(&mut f, &mouse, driftwm::config::BTN_LEFT);
+    f.double_roundtrip(game_id);
+
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    lock.set_cursor_position_hint(5.0, 5.0);
+    f.client(game_id).window(&surface).commit();
+    f.double_roundtrip(game_id);
+
+    assert_eq!(
+        f.client(game_id).state.constraint_events.last(),
+        Some(&ConstraintEvent::Unlocked),
+        "the lock screen must take the game's lock even under a held click"
+    );
+    assert_eq!(
+        f.state().seat.get_pointer().unwrap().current_location(),
+        cursor,
+        "the game's hint must not move the lock screen's cursor"
+    );
+    release(&mut f, &mouse, driftwm::config::BTN_LEFT);
+}
+
+/// Relative motion under a lock skips the blanket redraw mark, since the
+/// cursor is frozen and the game redraws through its own commits. A lock the
+/// toplevel holds is the same lock when the cursor is over its subsurface.
+#[test]
+fn relative_motion_under_a_lock_held_over_a_subsurface_marks_no_output_dirty() {
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    // `mark_all_dirty` copies `active_outputs`, which only the udev backend
+    // populates, so without this no motion could mark anything.
+    f.state().active_outputs.insert(output);
+    let id = f.add_client();
+
+    let (surface, _) = shadowed_window(&mut f, id);
+    let _lock = lock_over_a_subsurface(&mut f, id, &surface);
+
+    f.state().redraws_needed.clear();
+    pointer_relative_motion(&mut f, &FakeDevice::mouse(), Point::from((40.0, 25.0)));
+
+    assert!(
+        f.state().redraws_needed.is_empty(),
+        "relative motion under a lock must not mark the outputs dirty"
     );
 }

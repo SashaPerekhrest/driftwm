@@ -514,11 +514,11 @@ fn focus_reaches_canvas_content_in_pick_mode() {
     );
 }
 
-/// The `0.0` default disables the feature: even at an extreme zoom-out a
+/// `interact_min = 0` disables the feature: even at an extreme zoom-out a
 /// press behaves as above-threshold and focus is not suppressed.
 #[test]
-fn default_zero_disables_pick_mode() {
-    let mut f = Fixture::new();
+fn zero_disables_pick_mode() {
+    let mut f = Fixture::with_config(Config::from_toml("[zoom]\ninteract_min = 0.0\n").unwrap());
     f.add_output(1, (1920, 1080));
     let _window = map_client_at(&mut f, "w", (400, 300), (500, 400));
     f.state().set_zoom(0.001);
@@ -651,7 +651,7 @@ fn left_press_records_swallowed_button() {
         .try_pick_button(&pointer, pt(700.0, 550.0), BTN_LEFT, serial, mods());
 
     assert!(
-        f.state().pick_swallowed_buttons.contains(&BTN_LEFT),
+        f.state().swallowed_buttons.contains(&BTN_LEFT),
         "the swallowed press is recorded so its release is swallowed too"
     );
 }
@@ -674,7 +674,7 @@ fn non_left_press_is_swallowed_without_arming() {
 
     assert!(consumed, "a right press over a window is consumed too");
     assert!(
-        f.state().pick_swallowed_buttons.contains(&BTN_RIGHT),
+        f.state().swallowed_buttons.contains(&BTN_RIGHT),
         "the right press is recorded for release suppression"
     );
     assert!(

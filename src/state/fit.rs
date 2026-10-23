@@ -8,7 +8,7 @@ use smithay::{
 use super::{DriftWm, PendingView, StageWindow, ZoomAnimationAnchor, output_state};
 use driftwm::canvas::Chrome;
 use driftwm::config;
-use driftwm::stage::ElementId;
+use driftwm::stage::{ElementId, FitPush};
 use driftwm::window_ext::WindowExt;
 
 /// Build a `SnapRect` from a hypothetical canvas position, size, SSD
@@ -42,8 +42,7 @@ pub(super) fn snap_rect_at(
 /// right now. Shared between `fit_window` (which applies it) and
 /// `fit_window_snapped` (which feeds the post-fit rect into the cluster-shift
 /// helper — the camera term lands on a whole pixel, so that rect is the one the
-/// window settles on, up to the truncation a fractional inset still leaves in
-/// `new_loc`).
+/// window settles on).
 struct FitGeometry {
     new_loc: Point<i32, Logical>,
     target_size: Size<i32, Logical>,
@@ -55,18 +54,13 @@ struct FitGeometry {
 }
 
 impl DriftWm {
-    /// Content size a fit fills: the usable area minus the outer gap, with the
-    /// window's own chrome taken out.
+    /// Content size a fit fills edge-to-edge, with the window's own chrome
+    /// taken out. `outer_gap` applies to fill, not fit.
     pub(crate) fn fit_target_size(&self, chrome: Chrome) -> Size<i32, Logical> {
         let usable = self.get_usable_area();
-        // The inset measures to the bar/content edge, not to the frame, so the
-        // frame sits one border further out than the inset — past the usable
-        // area once `outer_gap` is under the border width, flush with it at 0
-        // with no border — and the content inside gives up the whole chrome.
-        let inset = self.config.outer_frame_inset(chrome.border);
         chrome.content_size(Size::from((
-            usable.size.w - (2.0 * inset) as i32,
-            usable.size.h - (2.0 * inset) as i32,
+            usable.size.w + 2 * chrome.border,
+            usable.size.h + 2 * chrome.border,
         )))
     }
 
@@ -84,7 +78,7 @@ impl DriftWm {
     fn compute_fit_geometry(&self, window: &Window) -> FitGeometry {
         let usable = self.get_usable_area();
         let chrome = self.element_chrome(window);
-        let inset = self.config.outer_frame_inset(chrome.border);
+        let border = chrome.border;
         let target_size = self.fit_target_size(chrome);
         let usable_center_x = usable.loc.x as f64 + usable.size.w as f64 / 2.0;
         let usable_center_y = usable.loc.y as f64 + usable.size.h as f64 / 2.0;
@@ -94,15 +88,15 @@ impl DriftWm {
         let visual_center = self.window_visual_center(window).unwrap_or_default();
         // Both centers are half-integers, so an unrounded camera can leave the
         // fitted frame half a pixel inside the usable edge, which the render
-        // pass then rounds to a full one — a wallpaper line along two edges at
-        // `outer_gap = 0`. The window's own center moves by at most half a pixel.
+        // pass then rounds to a full one — a wallpaper line along two edges.
+        // The window's own center moves by at most half a pixel.
         let target_camera = Point::from((
             (visual_center.x - usable_center_x).round(),
             (visual_center.y - usable_center_y).round(),
         ));
         let new_loc = chrome.content_loc(Point::from((
-            target_camera.x as i32 + usable.loc.x + inset as i32,
-            target_camera.y as i32 + usable.loc.y + inset as i32,
+            target_camera.x as i32 + usable.loc.x - border,
+            target_camera.y as i32 + usable.loc.y - border,
         )));
         FitGeometry {
             new_loc,
@@ -168,6 +162,8 @@ impl DriftWm {
         // Raise, focus, animate camera + zoom to 1.0
         let serial = smithay::utils::SERIAL_COUNTER.next_serial();
         self.raise_and_focus(window, serial);
+        // As in `navigate_to_window_on`.
+        self.hover_follows_camera = false;
         self.set_overview_return(None);
         let anchor = ZoomAnimationAnchor {
             canvas: anchor_canvas,
@@ -371,26 +367,16 @@ impl DriftWm {
         let fit = self.compute_fit_geometry(window);
         let old_rect = snap_rect_at(old_loc, old_size, bar, bw);
         let new_rect = snap_rect_at(fit.new_loc, fit.target_size, bar, bw);
-        let primary = StageWindow::Client(window.clone());
-        // Capture the cluster before shifting — members' caches must follow
-        // their new live positions, or close-time `cluster_of` sees stale
-        // cache vs shifted live and can't reconstruct the cluster.
-        #[allow(clippy::mutable_key_type)]
-        let cluster_members: Vec<StageWindow> = {
-            let rects = self.snap_rects_with_primary(&primary, old_rect);
-            driftwm::layout::cluster::cluster_of(&primary, &rects, self.config.snap_gap)
-                .into_iter()
-                .filter(|w| w != window)
-                .collect()
-        };
         let primary_id = self.stage.id_of(window);
-        let old_member_locs = self.cluster_member_positions(&cluster_members);
-        self.shift_cluster_around_primary(window, old_rect, new_rect);
-        self.animate_cluster_shift(old_member_locs, primary_id);
+        self.shift_fit_cluster(window, old_rect, new_rect, primary_id);
         self.fit_window(window);
-        for member in &cluster_members {
-            self.refresh_stable_snap_rect(member);
-        }
+        self.stage.set_fit_push(
+            window,
+            FitPush {
+                fitted: new_rect,
+                home: old_rect,
+            },
+        );
         // Insert the primary's post-fit rect explicitly: `geometry().size`
         // is still pre-fit until the client acks the configure, so
         // `refresh_stable_snap_rect` would cache wrong dimensions.
@@ -419,27 +405,49 @@ impl DriftWm {
         let new_loc = super::frame_loc_for_center(center, saved_size, bar);
         let old_rect = snap_rect_at(old_loc, old_size, bar, bw);
         let new_rect = snap_rect_at(new_loc, saved_size, bar, bw);
+        let primary_id = self.stage.id_of(window);
+        self.shift_fit_cluster(window, old_rect, new_rect, primary_id);
+        self.unfit_window(window);
+        // Primary's cache is refreshed by `establish_exit_placement` when the
+        // exit size is unchanged, otherwise by the pending_recenter completion
+        // in `handlers/compositor.rs` once the client acks the exit configure.
+    }
+
+    /// Put back the cluster a snapped fit pushed aside, for a fit window that is
+    /// closing — the unfit that would have done it never runs.
+    pub(crate) fn release_fit_push(&mut self, window: &Window) {
+        if let Some(push) = self.stage.fit_push(window) {
+            self.shift_fit_cluster(window, push.fitted, push.home, None);
+        }
+    }
+
+    /// Move `window`'s snap cluster, found around `from`, so it sits around `to`
+    /// instead, the members' slide waiting on `waits_for`'s resize.
+    fn shift_fit_cluster(
+        &mut self,
+        window: &Window,
+        from: driftwm::layout::snap::SnapRect,
+        to: driftwm::layout::snap::SnapRect,
+        waits_for: Option<ElementId>,
+    ) {
         let primary = StageWindow::Client(window.clone());
-        // See `fit_window_snapped` for why we refresh member caches here.
+        // Capture the cluster before shifting — members' caches must follow
+        // their new live positions, or close-time `cluster_of` sees stale
+        // cache vs shifted live and can't reconstruct the cluster.
         #[allow(clippy::mutable_key_type)]
         let cluster_members: Vec<StageWindow> = {
-            let rects = self.snap_rects_with_primary(&primary, old_rect);
+            let rects = self.snap_rects_with_primary(&primary, from);
             driftwm::layout::cluster::cluster_of(&primary, &rects, self.config.snap_gap)
                 .into_iter()
                 .filter(|w| w != window)
                 .collect()
         };
-        let primary_id = self.stage.id_of(window);
         let old_member_locs = self.cluster_member_positions(&cluster_members);
-        self.shift_cluster_around_primary(window, old_rect, new_rect);
-        self.animate_cluster_shift(old_member_locs, primary_id);
-        self.unfit_window(window);
+        self.shift_cluster_around_primary(window, from, to);
+        self.animate_cluster_shift(old_member_locs, waits_for);
         for member in &cluster_members {
             self.refresh_stable_snap_rect(member);
         }
-        // Primary's cache is refreshed by `establish_exit_placement` when the
-        // exit size is unchanged, otherwise by the pending_recenter completion
-        // in `handlers/compositor.rs` once the client acks the exit configure.
     }
 
     /// Snapshot each cluster member's pre-shift canvas position, so the shift

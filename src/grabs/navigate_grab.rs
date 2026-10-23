@@ -10,14 +10,14 @@ use smithay::{
 use crate::input::gestures::direction_from_vector;
 use crate::state::{DriftWm, output_state};
 use driftwm::canvas::{CanvasPos, canvas_to_screen};
-use driftwm::config::Action;
+use driftwm::config::{Action, Direction};
 
 /// Squared pixel threshold before a direction is chosen (same as 4-finger swipe).
 const THRESHOLD_SQ: f64 = 16.0 * 16.0;
 
 /// Pointer grab that accumulates drag delta to navigate to the nearest window.
-/// Uses "natural" direction: drag right → navigate right (negated screen delta,
-/// matching 4-finger swipe convention).
+/// Uses the pan sense: drag right → navigate left, as if the drag pulled the
+/// canvas (negated screen delta, matching the 4-finger swipe).
 pub struct NavigateGrab {
     pub start_data: GrabStartData<DriftWm>,
     last_screen_pos: Point<f64, Logical>,
@@ -25,6 +25,9 @@ pub struct NavigateGrab {
     fired: bool,
     /// Output this grab is pinned to (uses its camera/zoom throughout).
     pub output: Output,
+    /// The directional action the drag fires: `Action::CenterNearest` or
+    /// `Action::FocusNearest`.
+    action: fn(Direction) -> Action,
 }
 
 impl NavigateGrab {
@@ -32,6 +35,7 @@ impl NavigateGrab {
         start_data: GrabStartData<DriftWm>,
         screen_pos: Point<f64, Logical>,
         output: Output,
+        action: fn(Direction) -> Action,
     ) -> Self {
         Self {
             start_data,
@@ -39,6 +43,7 @@ impl NavigateGrab {
             cumulative: Point::from((0.0, 0.0)),
             fired: false,
             output,
+            action,
         }
     }
 }
@@ -60,19 +65,19 @@ impl PointerGrab<DriftWm> for NavigateGrab {
         self.last_screen_pos = current_screen;
 
         if !self.fired {
-            // Natural direction: negate delta (drag right → navigate right)
+            // Pan sense: negate delta (drag right → navigate left)
             self.cumulative -= screen_delta;
 
             let mag_sq =
                 self.cumulative.x * self.cumulative.x + self.cumulative.y * self.cumulative.y;
 
             if mag_sq >= THRESHOLD_SQ {
-                let dir = direction_from_vector(self.cumulative);
+                let action = (self.action)(direction_from_vector(self.cumulative));
                 // Deferred: the action can exit fullscreen, which warps the
                 // pointer — outer pointer calls from inside this grab callback
                 // would deadlock on the pointer mutex.
                 data.loop_handle.insert_idle(move |data| {
-                    data.execute_action(&Action::CenterNearest(dir));
+                    data.execute_action(&action);
                 });
                 self.fired = true;
             }

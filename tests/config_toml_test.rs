@@ -337,7 +337,7 @@ fn toml_disable_defaults_keys_clears_default_keybindings_only() {
     assert!(
         matches!(
             config.mouse_button_lookup_ctx(&alt(), BTN_RIGHT, BindingContext::OnWindow),
-            Some(MouseAction::ResizeWindow)
+            Some(MouseAction::ResizeWindowSnapped)
         ),
         "mouse defaults should survive disabling keys defaults"
     );
@@ -461,7 +461,7 @@ fn toml_disable_defaults_touch_clears_default_touch_bindings_only() {
     assert!(
         matches!(
             config.mouse_button_lookup_ctx(&alt(), BTN_RIGHT, BindingContext::OnWindow),
-            Some(MouseAction::ResizeWindow)
+            Some(MouseAction::ResizeWindowSnapped)
         ),
         "mouse defaults should survive disabling touch defaults"
     );
@@ -594,8 +594,8 @@ fn toml_snap_renamed_keys_are_migration_errors_not_fatal() {
         "rest of the config should still apply"
     );
     assert!(
-        !config.snap_corners && !config.snap_centers,
-        "corners/centers fall back to default (off)"
+        config.snap_corners && !config.snap_centers,
+        "corners/centers fall back to their defaults (corners on, centers off)"
     );
     assert!(
         warnings
@@ -612,13 +612,13 @@ fn toml_snap_renamed_keys_are_migration_errors_not_fatal() {
 }
 
 #[test]
-fn toml_outer_gap_omitted_defaults_to_zero_not_gap() {
+fn toml_outer_gap_omitted_defaults_to_12_not_gap() {
     let toml = r#"
         [snap]
         gap = 20.0
     "#;
     let config = Config::from_toml(toml).unwrap();
-    assert_eq!(config.snap_outer_gap, 0.0);
+    assert_eq!(config.snap_outer_gap, 12.0);
 }
 
 #[test]
@@ -647,31 +647,31 @@ fn toml_outer_gap_negative_clamps_to_zero_with_warning() {
 }
 
 #[test]
-fn toml_zoom_reset_policies_default_true() {
+fn toml_zoom_reset_policies_defaults() {
     let config = Config::from_toml("").unwrap();
-    assert!(config.zoom_reset_on_new_window);
-    assert!(config.zoom_reset_on_activation);
-}
-
-#[test]
-fn toml_zoom_reset_policies_can_be_disabled_independently() {
-    let toml = r#"
-        [zoom]
-        reset_on_new_window = false
-        reset_on_activation = true
-    "#;
-    let config = Config::from_toml(toml).unwrap();
     assert!(!config.zoom_reset_on_new_window);
     assert!(config.zoom_reset_on_activation);
 }
 
 #[test]
-fn toml_zoom_interact_min_defaults_off_without_warning() {
+fn toml_zoom_reset_policies_can_be_set_independently() {
+    let toml = r#"
+        [zoom]
+        reset_on_new_window = true
+        reset_on_activation = false
+    "#;
+    let config = Config::from_toml(toml).unwrap();
+    assert!(config.zoom_reset_on_new_window);
+    assert!(!config.zoom_reset_on_activation);
+}
+
+#[test]
+fn toml_zoom_interact_min_defaults_to_half_without_warning() {
     let (config, warnings) = Config::from_toml_collect("").unwrap();
-    assert_eq!(config.zoom_interact_min, 0.0);
+    assert_eq!(config.zoom_interact_min, 0.5);
     assert!(
         !warnings.iter().any(|w| w.contains("interact_min")),
-        "the default (feature off) must parse warning-free, got {warnings:?}"
+        "the default must parse warning-free, got {warnings:?}"
     );
 }
 

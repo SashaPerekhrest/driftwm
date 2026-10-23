@@ -20,6 +20,7 @@ mod focus;
 mod fullscreen;
 mod init;
 mod keyboard_focus;
+mod keyboard_snap;
 mod layers;
 mod membership;
 mod navigation;
@@ -51,7 +52,7 @@ pub use errors::ErrorSource;
 pub use focus::{FocusIntent, FocusTarget};
 pub use layers::CanvasLayer;
 pub(crate) use navigation::CLICK_NAVIGATE_SLOP;
-pub use navigation::NavZoom;
+pub use navigation::{NavZoom, RevealPan};
 pub use persistence::{read_all_per_output_state, remove_state_file};
 pub use render_cache::{BorderCacheEntry, RenderCache, ShadowCacheEntry};
 pub(crate) use resize::{owes_a_configured_size, resize_constraints};
@@ -167,7 +168,8 @@ pub struct PendingMiddleClick {
 
 /// A click armed for auto-navigate: a normal window was pressed with
 /// `auto_navigate_on_click` enabled. On release — if the pointer barely moved
-/// and the window is still clipped — the camera pans to it like activation does.
+/// and the window is still clipped — the camera scrolls it just into view, as a
+/// focus-nearest walk does.
 pub struct PendingClickNavigate {
     pub window: Window,
     /// Press position in screen space, so the click/drag slop is measured in
@@ -750,6 +752,11 @@ pub struct DriftWm {
     /// Last pointer hit-test landed on a screen-space target — a wlr layer or a
     /// screen-pinned window (both live in screen coords, unlike canvas windows).
     pub pointer_over_screen_space: bool,
+    /// The pen that owns the seat pointer: the last device to move it, still
+    /// in proximity. While set, a client with the tool bound is withheld from
+    /// `wl_pointer` (see [`DriftWm::wl_pointer_under`]). Mouse motion clears
+    /// it, or a pen and a mouse used together would flap the client's focus.
+    pub pointer_pen: Option<smithay::backend::input::TabletToolDescriptor>,
     pub canvas_layers: Vec<CanvasLayer>,
 
     pub config: Config,
@@ -908,12 +915,12 @@ pub struct DriftWm {
     /// pause alongside `suppressed_keys`.
     pub held_buttons: HashSet<u32>,
 
-    /// Buttons whose press pick mode swallowed (below `zoom_interact_min`), so
-    /// their release is swallowed too rather than forwarded to a client that
-    /// never saw the press. Drained in `track_held_button` (not on the release
-    /// path) so a release missed while locked or after an output drop can't
-    /// leave a stale entry that suppresses a later real release.
-    pub pick_swallowed_buttons: HashSet<u32>,
+    /// Buttons whose press was swallowed, so their release is swallowed too
+    /// rather than forwarded to a client that never saw the press. Drained in
+    /// `track_held_button` (not on the release path) so a release missed while
+    /// locked or after an output drop can't leave a stale entry that suppresses
+    /// a later real release.
+    pub swallowed_buttons: HashSet<u32>,
 
     pub gesture_state: Option<GestureState>,
     pub pending_middle_click: Option<PendingMiddleClick>,
@@ -1005,23 +1012,28 @@ pub struct DriftWm {
     /// from. `relative_motion` sets that too, but with the same focus, so the
     /// shadow stays exact.
     pub last_pointer_under: Option<(FocusTarget, Point<f64, Logical>)>,
+    /// The surface whose constraint [`DriftWm::maybe_activate_pointer_constraint`]
+    /// last armed, for the pull to release. Recorded rather than found by
+    /// walking up from focus: a destroyed subsurface is cut from its parent first.
+    pub armed_constraint: Option<WlSurface>,
     /// The viewport `(camera, zoom)` sloppy focus was last evaluated at, on the
     /// active output. Written by [`DriftWm::maybe_hover_focus`] on every path
-    /// through it, read by [`DriftWm::refresh_pointer_focus`] to tell a viewport
+    /// through it, and by the pull while [`Self::hover_follows_camera`] holds
+    /// it back; read by [`DriftWm::refresh_pointer_focus`] to tell a viewport
     /// that has moved — the case where a different window slides under a cursor
     /// that never does — from a scene change that left the one under it alone.
     pub hover_viewport: Option<(Point<f64, Logical>, f64)>,
     /// Whether a camera move may still hand sloppy focus to whatever slides
     /// under the cursor — the viewport gate's other half, beside
-    /// [`Self::hover_viewport`]. `true` by default; a navigation that focuses
-    /// the very window it pans the camera to drops it, so the pan that carries
-    /// the viewport to an Alt-Tab target, an activation, a `center-nearest`, a
-    /// `focus-center` or a `msg focus` does not then hand the keyboard to
-    /// whatever slid under the resting cursor on the way — which is the bug the
-    /// pull fixes, read backwards. Any camera move the user drives brings it
-    /// back, since then the viewport is where they are looking and sloppy focus
-    /// owes them the window it lands on. Real pointer motion never reads it: a
-    /// hover the user steered to with the cursor is unaffected.
+    /// [`Self::hover_viewport`]. `true` by default; a focus-setting action (an
+    /// Alt-Tab, an activation, a `center-nearest`, a `focus-center`, a `msg
+    /// focus`) drops it where it sets focus, so neither its own pan nor a
+    /// flight still under way hands the keyboard to whatever slides under the
+    /// resting cursor — which is the bug the pull fixes, read backwards. Any
+    /// camera move the user drives brings it back, since then the viewport is
+    /// where they are looking and sloppy focus owes them the window it lands
+    /// on. Real pointer motion never reads it: a hover the user steered to with
+    /// the cursor is unaffected.
     pub hover_follows_camera: bool,
     /// wl_surface commits since the last rendered frame. Tracy diagnostic
     /// counter (plotted as `frame.commits`); sampled and reset on every

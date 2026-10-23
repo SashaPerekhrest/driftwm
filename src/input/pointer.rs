@@ -10,7 +10,7 @@ use smithay::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_protocols::xdg::shell::server::xdg_toplevel,
     },
-    utils::{Point, SERIAL_COUNTER},
+    utils::{Point, SERIAL_COUNTER, Serial},
 };
 
 use smithay::wayland::seat::WaylandFocus;
@@ -25,7 +25,7 @@ use crate::state::{
     PendingMiddleClick, PickTarget, StageWindow, SuspendedWindow, ZoomAnimationAnchor,
 };
 use driftwm::canvas::{self, CanvasPos, canvas_to_screen};
-use driftwm::config::{self, BindingContext, MouseAction};
+use driftwm::config::{self, Action, BindingContext, Direction, MouseAction};
 use driftwm::window_ext::WindowExt;
 use smithay::reexports::wayland_server::Resource;
 
@@ -47,7 +47,8 @@ impl DriftWm {
             let screen_pos = canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
             self.pinned_window_under(screen_pos, pos).is_some()
                 || !matches!(self.pinned_decoration_under(screen_pos), PinnedChrome::Miss)
-                || (!self.config.resize_on_border && self.pinned_resize_margin_under(screen_pos))
+                || (!self.config.resize_on_border
+                    && self.pinned_resize_margin_under(screen_pos).is_some())
         };
         // SSD chrome and the CSD resize margin sit outside the surface bbox, so
         // `element_under` misses them; count them as OnWindow so on-window bindings
@@ -119,6 +120,11 @@ impl DriftWm {
             match self.pinned_decoration_under(screen_pos) {
                 PinnedChrome::Hit(..) => return None,
                 PinnedChrome::Covered => return self.pinned_element_under(screen_pos),
+                // An inert margin is chrome too, and the canvas walk below
+                // would answer for the window drawn behind the pin.
+                PinnedChrome::Miss if self.pinned_resize_margin_under(screen_pos).is_some() => {
+                    return None;
+                }
                 PinnedChrome::Miss => {}
             }
         }
@@ -175,12 +181,12 @@ impl DriftWm {
     }
 
     /// Keep `held_buttons` in sync with a button event, and drain the
-    /// pick-swallowed set on release. Must run for every button event on every
+    /// swallowed set on release. Must run for every button event on every
     /// dispatch path (including the locked-session one), or a release missed
     /// while locked leaves a stuck entry that suppresses hot corners until the
-    /// button is pressed and released again — and, for the pick set, suppresses
-    /// a later real release. Returns `true` when this release lifts a button
-    /// whose press pick mode swallowed, so the caller suppresses the client
+    /// button is pressed and released again — and, for the swallowed set,
+    /// suppresses a later real release. Returns `true` when this release lifts
+    /// a button whose press was swallowed, so the caller suppresses the client
     /// forward too.
     pub(super) fn track_held_button(&mut self, button: u32, state: ButtonState) -> bool {
         if state == ButtonState::Pressed {
@@ -188,7 +194,7 @@ impl DriftWm {
             false
         } else {
             self.held_buttons.remove(&button);
-            self.pick_swallowed_buttons.remove(&button)
+            self.swallowed_buttons.remove(&button)
         }
     }
 
@@ -196,13 +202,19 @@ impl DriftWm {
     /// 1. Configured mouse bindings (move, resize, pan, etc.)
     /// 2. Normal click on window → focus + raise + forward to client
     /// 3. Left-click on empty canvas → pan canvas
+    ///
+    /// `forward_serial` is the serial another stream already announced this
+    /// press with. Only a press forwarded to a client, and the implicit grab it
+    /// installs, carries it: a binding's grab gets its own, or a client holding
+    /// the other stream's serial could cite it to replace that grab.
     pub(super) fn on_pointer_button<I: InputBackend, E: PointerButtonEvent<I>>(
         &mut self,
         event: E,
+        forward_serial: Option<Serial>,
     ) {
         let button = event.button_code();
         let button_state = event.state();
-        let released_pick_swallow = self.track_held_button(button, button_state);
+        let released_swallowed = self.track_held_button(button, button_state);
 
         // Outputs can transiently disappear (cable unplug, GPU resume race);
         // bail out so downstream active_output() / position lookups can't panic.
@@ -214,6 +226,7 @@ impl DriftWm {
         // and focus, which are only as fresh as the last pull.
         self.refresh_pointer_focus();
         let serial = SERIAL_COUNTER.next_serial();
+        let forward_serial = forward_serial.unwrap_or(serial);
         let pointer = self.seat.get_pointer().unwrap();
 
         // Buffer BTN_MIDDLE release while a pending click is waiting
@@ -236,6 +249,29 @@ impl DriftWm {
             self.cancel_pick();
             self.set_last_scroll_pan(None);
             self.with_output_state(|os| os.momentum.stop());
+
+            // A pen withholds `wl_pointer` focus from a client with the tool
+            // bound, so where its press landed is read off the pick wherever
+            // the mouse path reads it off that focus.
+            let pen_pick = self.pointer_pen.is_some().then(|| {
+                let pos = pointer.current_location();
+                let screen_pos = canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
+                self.pointer_focus_under_pick(screen_pos, pos)
+                    .map(|(focus, _)| focus.0)
+            });
+            // smithay's popup grab dismisses the menu on a press whose
+            // `wl_pointer` focus is not the popup's client — which a tap on the
+            // menu of a withheld client never has. That client already has the
+            // tap on tablet-v2; a tap elsewhere falls through and dismisses.
+            if let Some(pick) = &pen_pick
+                && pointer.current_focus().is_none()
+                && let Some(popup) = self.popup_grab.as_ref().and_then(|g| g.grab.current_grab())
+                && pick
+                    .as_ref()
+                    .is_some_and(|s| s.id().same_client_as(&popup.0.id()))
+            {
+                return;
+            }
 
             // A 3-finger tap (LRM button map) generates BTN_MIDDLE.
             // Buffer it — if a 3-finger swipe follows within 300ms, suppress
@@ -286,15 +322,21 @@ impl DriftWm {
             // keybindings (execute_action's guard exits when needed); unbound
             // clicks forward to the app.
             if self.is_fullscreen() {
-                let mut fs_lookup = self
-                    .config
-                    .mouse_button_lookup_ctx(&mods, button, BindingContext::OnWindow)
-                    .cloned();
+                // An Overlay layer still renders over the window, and only what
+                // the layer branch below runs applies over it.
+                let mut fs_lookup = if self.pointer_over_layer {
+                    self.layer_button_binding(&pointer, &mods, button)
+                } else {
+                    self.config
+                        .mouse_button_lookup_ctx(&mods, button, BindingContext::OnWindow)
+                        .cloned()
+                };
                 // A `pass_mouse` claim becomes "no binding", so the `None` arm
                 // below reclaims keyboard focus and forwards to the client. It
                 // needs its own gate here: the `Action(_)` arm falls through
                 // without returning.
                 if fs_lookup.is_some()
+                    && !self.pointer_over_layer
                     && self.fullscreen_claims(&mods, config::MouseTrigger::Button(button))
                 {
                     fs_lookup = None;
@@ -333,7 +375,7 @@ impl DriftWm {
                             &ButtonEvent {
                                 button,
                                 state: button_state,
-                                serial,
+                                serial: forward_serial,
                                 time: Event::time_msec(&event),
                             },
                         );
@@ -343,20 +385,23 @@ impl DriftWm {
                 }
             }
 
-            // Layer surfaces: just forward (no compositor grabs). A press grants
-            // keyboard focus to an `OnDemand` layer under the pointer.
+            // A press grants keyboard focus to an `OnDemand` layer under the
+            // pointer.
             if self.pointer_over_layer {
+                if self.try_layer_button(&pointer, pos, button, serial, &mods) {
+                    return;
+                }
                 if button_state == ButtonState::Pressed {
-                    let layer = pointer.current_focus().map(|f| f.0);
+                    let layer = pen_pick.unwrap_or_else(|| pointer.current_focus().map(|f| f.0));
                     self.focus_layer_if_on_demand(layer, serial);
-                    self.maybe_grab_screen_space_click(&pointer, button, serial);
+                    self.maybe_grab_screen_space_click(&pointer, button, forward_serial);
                 }
                 pointer.button(
                     self,
                     &ButtonEvent {
                         button,
                         state: button_state,
-                        serial,
+                        serial: forward_serial,
                         time: Event::time_msec(&event),
                     },
                 );
@@ -373,6 +418,7 @@ impl DriftWm {
                 button,
                 button_state,
                 serial,
+                forward_serial,
                 mods,
                 Event::time_msec(&event),
             ) {
@@ -595,27 +641,28 @@ impl DriftWm {
                         // Empty canvas or a widget — fall through
                     }
                     MouseAction::PanViewport => {
-                        self.set_panning(true);
                         let from_empty = context == BindingContext::OnCanvas;
-                        let Some(grab) = self.make_pan_grab(pos, button, from_empty) else {
-                            return;
-                        };
-                        pointer.set_grab(self, grab, serial, Focus::Clear);
+                        self.start_pan_grab(&pointer, pos, button, serial, from_empty);
                         return;
                     }
                     MouseAction::CenterNearest => {
-                        let Some(output) = self.active_output() else {
-                            return;
-                        };
-                        let screen_pos =
-                            canvas_to_screen(CanvasPos(pos), self.camera(), self.zoom()).0;
-                        let start_data = GrabStartData {
-                            focus: None,
+                        self.start_navigate_grab(
+                            &pointer,
+                            pos,
                             button,
-                            location: pos,
-                        };
-                        let grab = NavigateGrab::new(start_data, screen_pos, output);
-                        pointer.set_grab(self, grab, serial, Focus::Clear);
+                            serial,
+                            Action::CenterNearest,
+                        );
+                        return;
+                    }
+                    MouseAction::FocusNearest => {
+                        self.start_navigate_grab(
+                            &pointer,
+                            pos,
+                            button,
+                            serial,
+                            Action::FocusNearest,
+                        );
                         return;
                     }
                     MouseAction::Action(ref action) => {
@@ -670,15 +717,15 @@ impl DriftWm {
             }
         }
 
-        // A pick-mode press was swallowed; its release resolves the pick and is
-        // itself swallowed (never forwarded to a client that never saw the
-        // press). Resolve *before* the forward below, because that forward tears
+        // A swallowed press has its release swallowed too (never forwarded to a
+        // client that never saw the press), and a pick-mode release resolves
+        // the pick. Resolve *before* the forward below, because that forward tears
         // down any active grab and resolve's is_grabbed() guard must still see a
         // gesture/edge-pan grab. A promoted move grab, though, must still receive
         // the release to self-terminate, so only suppress the forward when no
         // grab is active.
         let released = button_state == ButtonState::Released;
-        let suppress_forward = released && released_pick_swallow && !pointer.is_grabbed();
+        let suppress_forward = released && released_swallowed && !pointer.is_grabbed();
         if released {
             self.resolve_pick(button);
         }
@@ -689,7 +736,7 @@ impl DriftWm {
                 &ButtonEvent {
                     button,
                     state: button_state,
-                    serial,
+                    serial: forward_serial,
                     time: Event::time_msec(&event),
                 },
             );
@@ -751,6 +798,67 @@ impl DriftWm {
             screen_loc,
         };
         pointer.set_grab(self, grab, serial, smithay::input::pointer::Focus::Keep);
+    }
+
+    /// The binding a press over a screen-space layer surface runs: an
+    /// `anywhere` one, since on-window and on-canvas bindings never apply there
+    /// (`pointer_context` would read the canvas beneath the layer). A window
+    /// binding has no window to act on over a layer, so it counts as unbound.
+    /// So does everything while a grab owns the pointer: a layer's open popup
+    /// or a click held on it keeps routing the press, and a binding's grab
+    /// would replace it, orphaning the popup.
+    fn layer_button_binding(
+        &self,
+        pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
+        mods: &smithay::input::keyboard::ModifiersState,
+        button: u32,
+    ) -> Option<MouseAction> {
+        if pointer.is_grabbed() {
+            return None;
+        }
+        self.config
+            .mouse_button_lookup_ctx(mods, button, BindingContext::Anywhere)
+            .filter(|b| {
+                matches!(
+                    b,
+                    MouseAction::PanViewport
+                        | MouseAction::CenterNearest
+                        | MouseAction::FocusNearest
+                        | MouseAction::Action(_)
+                )
+            })
+            .cloned()
+    }
+
+    /// Run [`Self::layer_button_binding`] for a press over a layer. Returns
+    /// `true` when the press is consumed; the layer then sees neither it nor
+    /// its release.
+    fn try_layer_button(
+        &mut self,
+        pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
+        pos: Point<f64, smithay::utils::Logical>,
+        button: u32,
+        serial: Serial,
+        mods: &smithay::input::keyboard::ModifiersState,
+    ) -> bool {
+        match self.layer_button_binding(pointer, mods, button) {
+            Some(MouseAction::PanViewport) => {
+                self.start_pan_grab(pointer, pos, button, serial, false);
+            }
+            Some(MouseAction::CenterNearest) => {
+                self.start_navigate_grab(pointer, pos, button, serial, Action::CenterNearest);
+            }
+            Some(MouseAction::FocusNearest) => {
+                self.start_navigate_grab(pointer, pos, button, serial, Action::FocusNearest);
+            }
+            Some(MouseAction::Action(action)) => {
+                // No grab is left to take the release.
+                self.swallowed_buttons.insert(button);
+                self.execute_action(&action);
+            }
+            _ => return false,
+        }
+        true
     }
 
     /// Dispatch a button press over a suspended window. Suspended windows are
@@ -885,7 +993,7 @@ impl DriftWm {
         // Record the swallowed press so its release is swallowed too (drained in
         // track_held_button). Focus + raise like the suspended-tail precedent; a
         // left press also arms the center to fire on release.
-        self.pick_swallowed_buttons.insert(button);
+        self.swallowed_buttons.insert(button);
         match &target {
             PickTarget::Client(window) => self.raise_and_focus(window, serial),
             PickTarget::Suspended(id) => self.focus_and_raise_suspended(*id),
@@ -1108,6 +1216,7 @@ impl DriftWm {
         button: u32,
         button_state: ButtonState,
         serial: smithay::utils::Serial,
+        forward_serial: smithay::utils::Serial,
         mods: smithay::input::keyboard::ModifiersState,
         time: u32,
     ) -> bool {
@@ -1120,9 +1229,9 @@ impl DriftWm {
         let (mut binding, mut modifier_binding) =
             self.modifier_button_binding(&mods, button, BindingContext::OnWindow);
 
-        // `pass_mouse` resolves its subject here rather than reusing the
-        // `pinned_window_under` below: the chrome arm in between deliberately
-        // hits outside the surface, and clearing `modifier_binding` has to reach it.
+        // `pass_mouse` resolves its subject here rather than reusing the owner
+        // lookup below: the chrome arm in between deliberately hits outside the
+        // surface, and clearing `modifier_binding` has to reach it.
         if binding.is_some() && self.target_claims(pos, &mods, config::MouseTrigger::Button(button))
         {
             binding = None;
@@ -1164,65 +1273,68 @@ impl DriftWm {
             return true;
         }
 
-        let Some((focus, _)) = self.pinned_window_under(screen_pos, pos) else {
+        // Any press the bare-left chrome arm above did not consume is still the
+        // pin's over its chrome or resize margin: a bound action acts on it, an
+        // unbound press focuses it. Neither band gives pointer focus, so the
+        // forward below reaches no client, but it still installs the implicit
+        // grab that keeps focus off a client until release.
+        let Some(window) = self.pinned_owner_under(screen_pos) else {
             return false;
         };
-        let pinned_window = self.window_for_surface(&focus.0);
         if let Some(action) = binding
-            && let Some(ref window) = pinned_window
             && !window.is_widget()
         {
             match action {
                 MouseAction::MoveWindow | MouseAction::MoveSnappedWindows => {
-                    self.raise_and_focus(window, serial);
-                    self.start_pinned_move(pointer, window, pos, button, serial);
+                    self.raise_and_focus(&window, serial);
+                    self.start_pinned_move(pointer, &window, pos, button, serial);
                     return true;
                 }
                 MouseAction::ResizeWindow | MouseAction::ResizeWindowSnapped => {
-                    self.raise_and_focus(window, serial);
+                    self.raise_and_focus(&window, serial);
                     // Infer the edge in screen space against the pinned rect.
                     let edge = self
                         .stage
-                        .pin_of(window)
+                        .pin_of(&window)
                         .map(|site| site.screen_pos)
                         .map(|sp| edges_from_position(screen_pos, sp, window.geometry().size));
                     self.start_compositor_resize_with_edge(
-                        pointer, window, pos, button, serial, edge, false,
+                        pointer, &window, pos, button, serial, edge, false,
                     );
                     return true;
                 }
                 MouseAction::Action(ref a) => {
-                    self.raise_and_focus(window, serial);
+                    self.raise_and_focus(&window, serial);
                     let a = a.clone();
                     self.execute_action(&a);
                     return true;
                 }
                 // Viewport actions aren't pinned-specific — defer to normal dispatch.
-                MouseAction::PanViewport | MouseAction::CenterNearest => return false,
+                MouseAction::PanViewport
+                | MouseAction::CenterNearest
+                | MouseAction::FocusNearest => return false,
                 _ => {}
             }
         }
-        if let Some(ref window) = pinned_window {
-            // Same policy as the unpinned click branch: a widget takes keyboard
-            // focus without a raise (or MRU entry).
-            if window.is_widget() {
-                self.set_window_focus(
-                    window.wl_surface().map(|s| FocusTarget(s.into_owned())),
-                    serial,
-                );
-            } else {
-                self.raise_and_focus(window, serial);
-            }
+        // Same policy as the unpinned click branch: a widget takes keyboard
+        // focus without a raise (or MRU entry).
+        if window.is_widget() {
+            self.set_window_focus(
+                window.wl_surface().map(|s| FocusTarget(s.into_owned())),
+                serial,
+            );
+        } else {
+            self.raise_and_focus(&window, serial);
         }
         if button_state == ButtonState::Pressed {
-            self.maybe_grab_screen_space_click(pointer, button, serial);
+            self.maybe_grab_screen_space_click(pointer, button, forward_serial);
         }
         pointer.button(
             self,
             &ButtonEvent {
                 button,
                 state: button_state,
-                serial,
+                serial: forward_serial,
                 time,
             },
         );
@@ -1414,14 +1526,10 @@ impl DriftWm {
         // A scene change and this scroll can share one dispatch, and the
         // routing below is only as fresh as the last pull.
         self.refresh_pointer_focus();
-        // When pointer is over a layer surface, forward scroll directly (no pan/zoom)
-        if self.pointer_over_layer {
-            let pointer = self.seat.get_pointer().unwrap();
-            let frame = build_client_axis_frame::<I>(&event);
-            pointer.axis(self, frame);
-            pointer.frame(self);
-            return;
-        }
+        // Over a layer surface only `anywhere` bindings apply, and what they
+        // leave unbound is the layer's scroll. The canvas-space hit tests below
+        // read what lies beneath the layer, so each one skips it.
+        let over_layer = self.pointer_over_layer;
 
         let keyboard = self.seat.get_keyboard().unwrap();
         let mods = keyboard.modifier_state();
@@ -1440,7 +1548,9 @@ impl DriftWm {
                 .map(|v| v / 120.0)
                 .or_else(|| event.amount(Axis::Vertical).map(|v| v / 15.0))
                 .unwrap_or(0.0);
-            let notch_context = if self.is_fullscreen() {
+            let notch_context = if over_layer {
+                BindingContext::Anywhere
+            } else if self.is_fullscreen() {
                 // The fullscreen window fills the screen.
                 BindingContext::OnWindow
             } else {
@@ -1451,7 +1561,7 @@ impl DriftWm {
                     .config
                     .mouse_wheel_step_lookup_ctx(&mods, v < 0.0, notch_context)
                     .cloned()
-                && !self.pass_mouse_claims_notch(pos, &mods, v < 0.0, notch_context)
+                && (over_layer || !self.pass_mouse_claims_notch(pos, &mods, v < 0.0, notch_context))
             {
                 // High-resolution wheels emit sub-notch v120 deltas;
                 // accumulate to whole notches so a flick fires the action
@@ -1480,11 +1590,18 @@ impl DriftWm {
         // them on the restored canvas; any other bound scroll falls through
         // unexited (a no-op below); unbound scroll forwards to the app.
         if self.is_fullscreen() {
+            // An Overlay layer still renders over the window.
+            let fs_context = if over_layer {
+                BindingContext::Anywhere
+            } else {
+                BindingContext::OnWindow
+            };
             let mut fs_scroll = self
                 .config
-                .mouse_scroll_lookup_ctx(&mods, source, BindingContext::OnWindow)
+                .mouse_scroll_lookup_ctx(&mods, source, fs_context)
                 .cloned();
             if fs_scroll.is_some()
+                && !over_layer
                 && self.fullscreen_claims(&mods, config::MouseTrigger::for_axis_source(source))
             {
                 fs_scroll = None;
@@ -1511,7 +1628,9 @@ impl DriftWm {
         let recent_pan = self.last_scroll_pan().is_some_and(|t: std::time::Instant| {
             t.elapsed() < std::time::Duration::from_millis(150)
         });
-        let context = if recent_pan {
+        let context = if over_layer {
+            BindingContext::Anywhere
+        } else if recent_pan {
             BindingContext::OnCanvas
         } else {
             self.pointer_context(pos)
@@ -1541,7 +1660,11 @@ impl DriftWm {
         // the pointer (the same surface-tree test pick mode suppresses on), so
         // widget / canvas-layer scroll stays interactive and still reaches the
         // client.
-        if action.is_none() && self.pick_mode() && self.pick_target_under(pos).is_some() {
+        if action.is_none()
+            && !over_layer
+            && self.pick_mode()
+            && self.pick_target_under(pos).is_some()
+        {
             action = self
                 .config
                 .mouse_scroll_lookup_ctx(&mods, source, BindingContext::OnCanvas)
@@ -1604,6 +1727,7 @@ impl DriftWm {
                             (base_zoom * factor).clamp(self.min_zoom(), canvas::MAX_ZOOM);
 
                         if target_zoom != base_zoom {
+                            self.user_moved_camera();
                             let screen_pos =
                                 canvas_to_screen(CanvasPos(pos), self.camera(), cur_zoom).0;
                             self.with_output_state(|os| {
@@ -1636,10 +1760,12 @@ impl DriftWm {
         // swallow lives at the tail, not ahead of the binding lookup, so a
         // bound scroll (an `anywhere` alt+wheel zoom, mod+wheel pan) still
         // fires over a stand-in like over any window.
-        if matches!(
-            self.decoration_under(pos),
-            Some((DecoTarget::Suspended(_), _))
-        ) {
+        if !over_layer
+            && matches!(
+                self.decoration_under(pos),
+                Some((DecoTarget::Suspended(_), _))
+            )
+        {
             let frame = AxisFrame::new(Event::time_msec(&event));
             pointer.axis(self, frame);
             pointer.frame(self);
@@ -1650,15 +1776,21 @@ impl DriftWm {
         pointer.frame(self);
     }
 
-    /// Build a PanGrab for click-drag viewport panning.
-    fn make_pan_grab(
-        &self,
+    /// Start a PanGrab for click-drag viewport panning.
+    fn start_pan_grab(
+        &mut self,
+        pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
         canvas_pos: Point<f64, smithay::utils::Logical>,
         button: u32,
+        serial: Serial,
         from_empty_canvas: bool,
-    ) -> Option<PanGrab> {
+    ) {
+        self.set_panning(true);
+        let Some(output) = self.active_output() else {
+            return;
+        };
         let screen_pos = canvas_to_screen(CanvasPos(canvas_pos), self.camera(), self.zoom()).0;
-        Some(PanGrab {
+        let grab = PanGrab {
             start_data: GrabStartData {
                 focus: None,
                 button,
@@ -1668,9 +1800,34 @@ impl DriftWm {
             start_screen_pos: screen_pos,
             from_empty_canvas,
             dragged: false,
-            output: self.active_output()?,
+            output,
             last_clamped_location: canvas_pos,
-        })
+        };
+        // The grab ignores the warps a flight sends it, so a
+        // flight left running would fly on under the hand.
+        self.cancel_animations_on(&grab.output);
+        pointer.set_grab(self, grab, serial, Focus::Clear);
+    }
+
+    fn start_navigate_grab(
+        &mut self,
+        pointer: &smithay::input::pointer::PointerHandle<DriftWm>,
+        canvas_pos: Point<f64, smithay::utils::Logical>,
+        button: u32,
+        serial: Serial,
+        action: fn(Direction) -> Action,
+    ) {
+        let Some(output) = self.active_output() else {
+            return;
+        };
+        let screen_pos = canvas_to_screen(CanvasPos(canvas_pos), self.camera(), self.zoom()).0;
+        let start_data = GrabStartData {
+            focus: None,
+            button,
+            location: canvas_pos,
+        };
+        let grab = NavigateGrab::new(start_data, screen_pos, output, action);
+        pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 }
 

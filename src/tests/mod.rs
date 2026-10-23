@@ -30,6 +30,9 @@ mod config_reload;
 mod configure_sequences;
 mod cycle_windows;
 mod ext_workspace;
+mod fit_close;
+mod focus_center;
+mod focus_nearest;
 mod focus_placement;
 mod focus_timing;
 mod frame_space;
@@ -43,6 +46,9 @@ mod hotplug;
 mod hover_focus;
 mod input_dispatch;
 mod interact_min;
+mod ipc_cursor;
+mod ipc_focus;
+mod layer_bindings;
 mod layer_destroy_focus;
 mod layer_frame_gating;
 mod layer_popup_focus;
@@ -65,6 +71,7 @@ mod resize_parity;
 mod send_to_output;
 mod session_lock;
 mod session_restore;
+mod snap_actions;
 mod soak;
 mod stand_in_parity;
 mod suspend_flows;
@@ -76,6 +83,7 @@ mod virtual_keyboard;
 mod window_animation;
 mod window_mode;
 mod window_opening;
+mod window_pid;
 mod window_rules;
 mod zones;
 mod zoom_to_fit;
@@ -288,6 +296,22 @@ fn adopt_last_configure(
     f.double_roundtrip(id);
 }
 
+/// Ack the configure and commit `size` instead of the one asked for — a
+/// cell-snapping terminal rounding to a whole character cell.
+fn ack_with_size(
+    f: &mut Fixture,
+    id: client::ClientId,
+    surface: &wayland_client::protocol::wl_surface::WlSurface,
+    size: (u16, u16),
+) {
+    f.double_roundtrip(id);
+    let window = f.client(id).window(surface);
+    window.set_size(size.0, size.1);
+    window.attach_new_buffer();
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+}
+
 /// Ack the configure and commit without taking the size that came with it — a
 /// fixed-size dialog's answer. smithay drops the pending configure at *ack*, so
 /// afterwards the compositor sees no outstanding configure and a committed
@@ -441,6 +465,12 @@ fn window_by_app_id(f: &mut Fixture, app_id: &str) -> Option<Window> {
 /// The server-side `WlSurface` backing a stage window.
 fn server_surface(window: &Window) -> WlSurface {
     window.wl_surface().unwrap().into_owned()
+}
+
+/// Canvas-space point that maps to output-relative screen position `screen`.
+fn to_canvas(f: &mut Fixture, screen: Point<f64, Logical>) -> Point<f64, Logical> {
+    let (camera, zoom) = (f.state().camera(), f.state().zoom());
+    driftwm::canvas::screen_to_canvas(driftwm::canvas::ScreenPos(screen), camera, zoom).0
 }
 
 /// Register an SSD title bar for `window`, exactly as the compositor does on the

@@ -17,12 +17,19 @@ use super::{
     window_by_app_id,
 };
 
-/// The inset fit and fill keep from the usable area is zero by default, which
-/// collapses these tests' arithmetic into the output rect. They set it
-/// explicitly so the inset stays visible in what the client is configured with.
+/// Pins fill's inset at 12, so the sizes these tests expect configured don't
+/// track the default.
 fn config_outer_gap() -> Config {
     let mut config = Config::default();
     config.snap_outer_gap = 12.0;
+    config
+}
+
+/// No inset at all, so a lone window's fill rect is the fit rect: the
+/// usable area edge to edge.
+fn config_no_outer_gap() -> Config {
+    let mut config = Config::default();
+    config.snap_outer_gap = 0.0;
     config
 }
 
@@ -385,7 +392,7 @@ fn fast_fit_unfit_does_not_teleport_window_on_next_resize() {
 /// pre-exit center and discarding the drag in between.
 #[test]
 fn unfit_after_fullscreen_exit_drops_the_stale_recenter_so_the_next_resize_does_not_teleport() {
-    let mut f = Fixture::with_config(config_outer_gap());
+    let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
     // Fullscreen below moves the camera, which seeds a per-output blur
     // generation that only clears on output disconnect, so it can never
@@ -393,6 +400,9 @@ fn unfit_after_fullscreen_exit_drops_the_stale_recenter_so_the_next_resize_does_
     f.skip_baseline_check();
     origin_view(&mut f);
     let id = f.add_client();
+    // A fit covers the usable area, so a panel keeps the fit size apart from
+    // the fullscreen one — the exit below has to owe a differing-size recenter.
+    map_top_panel(&mut f, id, 100);
 
     // Mapped at exactly the output's logical size — what makes the fit's
     // saved (pre-fit) size and the fullscreen-sized geometry coincide later.
@@ -1263,10 +1273,13 @@ fn fullscreen_exit_restores_the_filled_rect_when_it_beats_the_fill_ack() {
 /// position would hand the exit a rect the window never held.
 #[test]
 fn fullscreen_exit_restores_the_fit_rect_when_it_beats_the_fit_ack() {
-    let mut f = Fixture::with_config(config_outer_gap());
+    let mut f = Fixture::new();
     let output = f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
+    // Keeps the fit rect apart from the fullscreen one, so an exit that kept
+    // the fullscreen size can't pass for the fit's.
+    map_top_panel(&mut f, id, 100);
 
     let surface = map_settled(&mut f, id, "a", (800, 600));
     let window = window_by_app_id(&mut f, "a").unwrap();
@@ -1291,14 +1304,14 @@ fn fullscreen_exit_restores_the_fit_rect_when_it_beats_the_fit_ack() {
     f.double_roundtrip(id);
     adopt_last_configure(&mut f, id, &surface);
 
-    // Usable 1920×1080 minus a 12px gap on every side, no SSD bar or border on a
+    // The 1920×980 usable area below the panel, no SSD bar or border on a
     // default CSD window — the same rect the fit configured.
     assert_eq!(
         (
             f.state().stage.position_of(&window).unwrap(),
             window.geometry().size
         ),
-        (fit_loc, Size::from((1896, 1056))),
+        (fit_loc, Size::from((1920, 980))),
         "the exit restores the fit rect the fit configured, not the size the client still had"
     );
     assert!(
@@ -1472,7 +1485,7 @@ fn fit_and_settle(
 /// overlap instead of refusing to touch a fit (maximized) window.
 #[test]
 fn fill_on_fit_window_with_a_neighbor_fires() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1530,16 +1543,16 @@ fn fill_on_fit_window_with_a_neighbor_fires() {
     );
 }
 
-/// With nothing else in view, and the camera genuinely settled on the fit's
-/// own target (not merely animating toward it), a fit window already fills
-/// its usable space — fill must leave it untouched.
+/// With nothing else in view, no outer gap, and the camera genuinely settled
+/// on the fit's own target (not merely animating toward it), a fit window
+/// already fills its usable space — fill must leave it untouched.
 ///
 /// The exact no-op needs the fit's canvas rect and its camera to land on the
 /// same integers, which `compute_fit_geometry` gets by rounding the camera.
 /// The sibling below repeats the check with an odd pre-fit size.
 #[test]
 fn fill_on_lone_fit_window_with_settled_camera_is_inert() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1578,7 +1591,7 @@ fn fill_on_lone_fit_window_with_settled_camera_is_inert() {
 /// on whole pixels too, so fill has nothing to close there either.
 #[test]
 fn fill_on_lone_odd_fit_window_with_settled_camera_is_inert() {
-    let mut f = Fixture::new();
+    let mut f = Fixture::with_config(config_no_outer_gap());
     f.add_output(1, (1920, 1080));
     f.skip_baseline_check();
     let id = f.add_client();
@@ -1628,7 +1641,8 @@ fn unfill_after_fill_on_fit_restores_the_pre_fit_rect() {
     let fit_loc = f.state().stage.position_of(&a).unwrap();
     f.client(id).window(&a_surface).format_recent_configures();
 
-    // A neighbor inside the fit rect forces a real (non-no-op) fill.
+    // A neighbor inside the fit rect forces a real (non-no-op) fill, whatever
+    // the outer gap.
     let _b_surface = map_settled(&mut f, id, "b", (300, 800));
     let b = window_by_app_id(&mut f, "b").unwrap();
     f.state().map_window(
@@ -1758,7 +1772,7 @@ fn config_ssd() -> Config {
     config.decorations.default_mode = DecorationMode::Server;
     config.decorations.border_width = 5;
     // A non-zero outer gap is what makes the border's own contribution to the
-    // inset legible below; at the default 0 the two are indistinguishable.
+    // inset legible below; at 0 the two are indistinguishable.
     config.snap_outer_gap = 12.0;
     config
 }
@@ -1801,10 +1815,10 @@ fn fill_on_ssd_window_round_trips_bar_and_border() {
     assert!(f.state().stage.is_fill(&window));
 }
 
-/// A fit insets the usable area to the window's bar/content edge — `outer_gap`
-/// less the border, which the frame then hangs back over — and the content
-/// inside gives up the whole chrome: deflating by the bar alone would leave the
-/// content overflowing by `2 × border_width` per axis.
+/// A fit lands the window's bar/content edge on the usable area's, the border
+/// hanging past it, and the content inside gives up the whole chrome: deflating
+/// by the bar alone would leave the content overflowing by `2 × border_width`
+/// per axis.
 #[test]
 fn fit_on_ssd_window_subtracts_the_border_from_the_target_size() {
     let mut f = Fixture::with_config(config_ssd());
@@ -1822,21 +1836,18 @@ fn fit_on_ssd_window_subtracts_the_border_from_the_target_size() {
     f.state().fit_window(&window);
     f.double_roundtrip(id);
 
-    // Usable area is the full 1920×1080 output; inset by 7 (the 12px outer gap
-    // less the 5px border, which hangs outside it) gives a 1906×1066 frame
-    // budget. The content inside it gives up the whole chrome (25px bar + 5px
-    // border on every side): 1906 - 2×5 = 1896 wide, 1066 - 25 - 2×5 = 1031
-    // tall — the same numbers `fill_on_ssd_window_round_trips_bar_and_border`
-    // lands on, since a lone window's fit and fill both target the whole usable
-    // area.
+    // Usable area is the full 1920×1080 output, and the 5px border hangs past
+    // it on every side: a 1930×1090 frame, whatever the 12px outer gap. The
+    // content inside it gives up the whole chrome (25px bar + 5px border on
+    // every side): 1930 - 2×5 = 1920 wide, 1090 - 25 - 2×5 = 1055 tall.
     let configures = f.client(id).window(&surface).format_recent_configures();
     assert!(
-        configures.contains("size: 1896 × 1031"),
+        configures.contains("size: 1920 × 1055"),
         "fit must deflate the target by border and bar, got:\n{configures}"
     );
     assert_eq!(
         f.state().stage.position_of(&window),
-        Some(Point::from((-148, 85))),
+        Some(Point::from((-160, 73))),
         "fit loc must offset the content by border and bar"
     );
 }

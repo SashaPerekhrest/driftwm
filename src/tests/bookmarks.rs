@@ -5,12 +5,12 @@
 
 use std::collections::BTreeMap;
 
-use driftwm::config::{Action, parse_action};
+use driftwm::config::{Action, Direction, parse_action};
 use driftwm::session::{self, SessionEnvelope};
 use smithay::utils::{Logical, Point};
 
 use super::real::TempDir;
-use super::{Fixture, adopt_last_configure, config, map_window, window_by_app_id};
+use super::{Fixture, TICK, adopt_last_configure, config, map_window, settle, window_by_app_id};
 use crate::ipc::dispatch;
 use crate::ipc::protocol::{Request, Response};
 
@@ -22,20 +22,17 @@ fn bookmark_request(name: Option<&str>, to: Option<(f64, f64)>, delete: bool) ->
     }
 }
 
-/// Seed `name` at `(x, y)`, jump to it, and return the resulting camera target.
+/// Seed `name` at `(x, y)`, jump to it, and return where the camera lands.
 /// Pass a point the camera isn't already heading to, so a bookmark lookup that
-/// silently missed can't hide behind a stale target from an earlier jump.
+/// silently missed can't hide behind a stale destination from an earlier jump.
 fn jump_to(f: &mut Fixture, name: &str, x: f64, y: f64) -> Point<f64, Logical> {
-    let before = f.state().camera_target();
+    let before = f.state().landing_view().0;
     f.state().bookmarks.insert(name.to_string(), [x, y]);
     f.state()
         .execute_action(&Action::GoToBookmark(name.to_string()));
-    let target = f
-        .state()
-        .camera_target()
-        .expect("go-to-bookmark sets a camera target");
-    assert_ne!(Some(target), before, "the jump to '{name}' was a no-op");
-    target
+    let landing = f.state().landing_view().0;
+    assert_ne!(landing, before, "the jump to '{name}' was a no-op");
+    landing
 }
 
 #[test]
@@ -50,18 +47,13 @@ fn set_bookmark_then_go_to_round_trips_the_camera() {
     f.state().execute_action(&Action::SetBookmark("a".into()));
     assert_eq!(f.state().bookmarks["a"], [500.0, -300.0]);
 
-    // Move the target elsewhere, then jump back through the bookmark.
+    // Move the destination elsewhere, then jump back through the bookmark.
     jump_to(&mut f, "away", -2000.0, 1000.0);
     f.state().execute_action(&Action::GoToBookmark("a".into()));
 
-    let restored = f
-        .state()
-        .camera_target()
-        .expect("go-to-bookmark sets a target");
+    let restored = f.state().landing_view().0;
     assert!((restored.x - dest.x).abs() < 1e-6);
     assert!((restored.y - dest.y).abs() < 1e-6);
-    // Bookmarks never touch zoom.
-    assert!(f.state().zoom_target().is_none());
 }
 
 #[test]
@@ -79,14 +71,11 @@ fn set_bookmark_then_go_to_round_trips_at_nondefault_zoom() {
     jump_to(&mut f, "away", -2000.0, 1000.0);
     f.state().execute_action(&Action::GoToBookmark("z".into()));
 
-    let restored = f
-        .state()
-        .camera_target()
-        .expect("go-to-bookmark sets a target");
+    let (restored, landing_zoom) = f.state().landing_view();
     assert!((restored.x - dest.x).abs() < 1e-6);
     assert!((restored.y - dest.y).abs() < 1e-6);
     // The round trip never touches zoom.
-    assert_eq!(f.state().zoom(), 2.5);
+    assert_eq!(landing_zoom, 2.5);
 }
 
 #[test]
@@ -100,7 +89,7 @@ fn set_bookmark_captures_pending_target_not_a_stale_camera() {
     jump_to(&mut f, "dest", 500.0, -300.0);
     assert_ne!(
         f.state().camera(),
-        f.state().camera_target().unwrap(),
+        f.state().landing_view().0,
         "the destination and the per-tick camera must differ for this test to be meaningful"
     );
 
@@ -108,6 +97,94 @@ fn set_bookmark_captures_pending_target_not_a_stale_camera() {
     // The bookmark captures the animation's destination, not the stale
     // mid-flight camera.
     assert_eq!(f.state().bookmarks["mid"], [500.0, -300.0]);
+}
+
+/// One frame into a navigation, the zoom anchor steering it has already
+/// cleared `camera_target`; set-bookmark still captures where the view lands.
+#[test]
+fn set_bookmark_one_frame_into_an_anchor_step_captures_the_anchor() {
+    let mut f = Fixture::with_config(config("[navigation]\nanchors = [[2000, -400]]\n"));
+    f.add_output(1, (1920, 1080));
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((0.0, 0.0));
+        os.camera_target = None;
+        os.zoom = 1.0;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+
+    f.state()
+        .execute_action(&Action::CenterNearest(Direction::Right));
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().camera_target().is_none(),
+        "precondition: the anchor alone says where the camera lands"
+    );
+
+    f.state().execute_action(&Action::SetBookmark("mid".into()));
+    assert_eq!(f.state().bookmarks["mid"], [2000.0, -400.0]);
+}
+
+/// A go-to-bookmark one frame into a navigation lands on the bookmark: the
+/// anchor steering that flight would otherwise pull the camera back to the
+/// navigation's destination every tick.
+#[test]
+fn go_to_bookmark_one_frame_into_an_anchor_step_lands_on_the_bookmark() {
+    let mut f = Fixture::with_config(config("[navigation]\nanchors = [[2000, -400]]\n"));
+    f.add_output(1, (1920, 1080));
+    f.state().with_output_state(|os| {
+        os.camera = Point::from((0.0, 0.0));
+        os.camera_target = None;
+        os.zoom = 1.0;
+        os.zoom_target = None;
+        os.zoom_animation_anchor = None;
+    });
+    f.state().bookmarks.insert("b".into(), [500.0, -300.0]);
+
+    f.state()
+        .execute_action(&Action::CenterNearest(Direction::Right));
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    f.state().execute_action(&Action::GoToBookmark("b".into()));
+    settle(&mut f);
+
+    // The bookmark is Y-up; the view center is the canvas's Y-down.
+    let center = f.state().viewport_center_canvas();
+    assert!(
+        (center.x - 500.0).abs() < 1e-6 && (center.y - 300.0).abs() < 1e-6,
+        "the view must center on the bookmark, got {center:?}"
+    );
+}
+
+/// A go-to-bookmark one frame into a zoom animation keeps the zoom it is
+/// heading to: armed at the live zoom, the jump would stop the zoom where this
+/// frame caught it.
+#[test]
+fn go_to_bookmark_during_a_zoom_animation_lets_the_zoom_land() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.state().bookmarks.insert("b".into(), [500.0, -300.0]);
+
+    assert_eq!(
+        dispatch(Request::Zoom(Some(0.5)), f.state()),
+        Ok(Response::Zoom(0.5))
+    );
+    f.state().apply_zoom_animation(TICK);
+    f.state().apply_camera_animation(TICK);
+    assert!(
+        f.state().zoom() > 0.5,
+        "precondition: the zoom is under way"
+    );
+    f.state().execute_action(&Action::GoToBookmark("b".into()));
+    settle(&mut f);
+
+    assert_eq!(f.state().zoom(), 0.5, "the zoom must land");
+    let center = f.state().viewport_center_canvas();
+    assert!(
+        (center.x - 500.0).abs() < 1e-6 && (center.y - 300.0).abs() < 1e-6,
+        "the view must center on the bookmark, got {center:?}"
+    );
 }
 
 #[test]
@@ -122,7 +199,7 @@ fn bookmark_names_containing_spaces_work_through_parse_and_registry() {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
 
-    jump_to(&mut f, "elsewhere", 0.0, 0.0);
+    jump_to(&mut f, "elsewhere", -500.0, 250.0);
     jump_to(&mut f, "my spot", 80.0, -40.0);
 
     // Re-capturing the camera center recovers the spaced name's exact point.
@@ -137,10 +214,10 @@ fn go_to_bookmark_unset_name_is_a_no_op() {
     f.add_output(1, (1920, 1080));
 
     jump_to(&mut f, "dest", 100.0, 100.0);
-    let before = f.state().camera_target();
+    let before = f.state().landing_view();
     f.state()
         .execute_action(&Action::GoToBookmark("nope".into()));
-    assert_eq!(f.state().camera_target(), before);
+    assert_eq!(f.state().landing_view(), before);
 }
 
 #[test]

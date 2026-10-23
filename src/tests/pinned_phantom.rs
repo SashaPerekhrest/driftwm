@@ -24,12 +24,15 @@
 //! `decoration_under`, which skips pins and would answer for a canvas window
 //! drawn behind the one actually there.
 
-use driftwm::canvas::{CanvasPos, ScreenPos, canvas_to_screen, screen_to_canvas};
-use driftwm::config::{BTN_LEFT, BindingContext};
+use driftwm::canvas::{CanvasPos, canvas_to_screen};
+use driftwm::config::{BTN_LEFT, BTN_RIGHT, BindingContext};
+use driftwm::stage::PinnedSite;
 use smithay::desktop::Window;
+use smithay::input::keyboard::ModifiersState;
 use smithay::input::pointer::{CursorIcon, CursorImageStatus};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER};
+use smithay::wayland::compositor::get_parent;
 use wayland_client::protocol::wl_surface::WlSurface;
 
 use crate::decorations::DecorationHit;
@@ -38,12 +41,13 @@ use crate::state::StageWindow;
 
 use super::client::ClientId;
 use super::input_backend::{
-    FakeDevice, click, pointer_to, press, release, touch_down, touch_motion, touch_up,
+    FakeDevice, click, key_press, key_release, pointer_to, press, release, touch_down,
+    touch_motion, touch_up,
 };
 use super::popups::grow_popup;
 use super::{
-    Fixture, config, give_ssd, is_activated, map_popup, map_window, server_surface,
-    window_by_app_id,
+    Fixture, adopt_last_configure, config, end_grab, give_ssd, is_activated, map_popup, map_window,
+    motion, server_surface, to_canvas, window_by_app_id,
 };
 
 /// Every window here is 400x300 so a rect test needs only its origin.
@@ -68,6 +72,21 @@ size = [400, 300]
 [touch.anywhere]
 "1-finger-tap" = "center-window"
 "#;
+
+/// The pin rule plus a one-finger drag bound to window move. On-canvas, because
+/// a finger landing on chrome holds no surface and so starts in that context.
+const PIN_RULE_WITH_TOUCH_MOVE: &str = r#"
+[[window_rules]]
+app_id = "pin"
+pinned_to_screen = true
+size = [400, 300]
+
+[touch.on-canvas]
+"1-finger-swipe" = "move-window"
+"#;
+
+/// evdev code, the space `key_press` reports in.
+const KEY_LEFTALT: u32 = 56;
 
 /// The pin rule with the invisible resize border switched off, leaving the
 /// margin around every window inert.
@@ -104,11 +123,6 @@ fn in_rect(origin: Point<i32, Logical>, p: Point<f64, Logical>) -> bool {
 fn to_screen(f: &mut Fixture, canvas: Point<f64, Logical>) -> Point<f64, Logical> {
     let (camera, zoom) = (f.state().camera(), f.state().zoom());
     canvas_to_screen(CanvasPos(canvas), camera, zoom).0
-}
-
-fn to_canvas(f: &mut Fixture, screen: Point<f64, Logical>) -> Point<f64, Logical> {
-    let (camera, zoom) = (f.state().camera(), f.state().zoom());
-    screen_to_canvas(ScreenPos(screen), camera, zoom).0
 }
 
 /// A pinned window on a 1920x1080 output, then zoom 2 without a pan. Returns
@@ -537,6 +551,229 @@ fn a_click_on_a_pinned_window_as_drawn_targets_it() {
     assert!(!is_activated(&beneath));
 }
 
+/// With `resize_on_border` off the margin around a pinned window is inert
+/// chrome rather than a live border, but it still belongs to the pin — a click
+/// there must not fall through to the canvas window drawn behind the pin.
+#[test]
+fn a_click_in_a_pinned_windows_inert_margin_targets_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_RULE_NO_BORDER_RESIZE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert!(
+        f.state()
+            .pointer_focus_under(margin_screen, margin_canvas)
+            .is_none(),
+        "precondition: the inert margin is chrome, so it yields no client pointer focus"
+    );
+    assert_eq!(
+        f.state().pointer_context(margin_canvas),
+        BindingContext::OnWindow,
+        "precondition: the margin still belongs to the pin"
+    );
+
+    // Behind the pin's margin: the only thing the canvas walk can find there.
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((margin_canvas.x as i32 - 80, margin_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, margin_canvas),
+        "precondition: the canvas window covers the click point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the click's"
+    );
+
+    click(&mut f, &FakeDevice::mouse(), margin_canvas, BTN_LEFT);
+    f.double_roundtrip(id);
+
+    assert!(
+        is_activated(&pin),
+        "a click in the pin's own inert margin belongs to the pin"
+    );
+    assert!(!is_activated(&beneath));
+}
+
+/// A press other than a bare left one on a pin's live border starts no resize,
+/// but the border is still the pin's — the press must not fall through to the
+/// canvas window drawn behind the pin either.
+#[test]
+fn a_right_press_on_a_pinned_windows_border_targets_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(margin_screen),
+            PinnedChrome::Hit(_, DecorationHit::ResizeBorder(_))
+        ),
+        "precondition: the probe point must land on the pin's live resize border"
+    );
+    assert!(
+        f.state()
+            .config
+            .mouse_button_lookup_ctx(
+                &ModifiersState::default(),
+                BTN_RIGHT,
+                BindingContext::OnWindow
+            )
+            .is_none(),
+        "precondition: no default binding claims a bare right press on-window, \
+         or this scenario would be exercising that binding instead"
+    );
+
+    // Behind the pin's border: the only thing the canvas walk can find there.
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((margin_canvas.x as i32 - 80, margin_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, margin_canvas),
+        "precondition: the canvas window covers the click point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the click's"
+    );
+
+    click(&mut f, &FakeDevice::mouse(), margin_canvas, BTN_RIGHT);
+    f.double_roundtrip(id);
+
+    assert!(
+        is_activated(&pin),
+        "a right press on the pin's own border belongs to the pin"
+    );
+    assert!(!is_activated(&beneath));
+}
+
+/// A held modifier keeps a press off the title bar's own chrome arm, so the
+/// bound move has to find its window some other way — and the bar, giving no
+/// pointer focus, must still resolve to the pin rather than to the canvas
+/// window drawn behind it.
+#[test]
+fn alt_left_on_a_pins_title_bar_moves_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    give_ssd(&mut f, &pin);
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let bar = f.state().config.decorations.title_bar_height as f64;
+    let bar_screen = pt(site.x as f64 + 200.0, site.y as f64 - bar / 2.0);
+    let bar_canvas = to_canvas(&mut f, bar_screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(bar_screen),
+            PinnedChrome::Hit(_, DecorationHit::TitleBar)
+        ),
+        "precondition: the probe point must land on the pin's title bar"
+    );
+
+    // Behind the pin's bar: the only thing the canvas walk can find there.
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((bar_canvas.x as i32 - 80, bar_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, bar_canvas),
+        "precondition: the canvas window covers the press point"
+    );
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTALT);
+    pointer_to(&mut f, &mouse, bar_canvas);
+    press(&mut f, &mouse, BTN_LEFT);
+    pointer_to(&mut f, &mouse, bar_canvas + pt(60.0, 40.0));
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTALT);
+
+    assert_ne!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        site,
+        "alt+left on the pin's own title bar drags the pin"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&beneath),
+        Some(origin),
+        "the window drawn behind the pin stays put"
+    );
+}
+
+/// A subsurface is part of the pin as drawn, but it is not the toplevel's own
+/// surface — a lookup that matches only that one finds no window for it.
+#[test]
+fn a_click_on_a_pins_subsurface_targets_the_pin() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let pin_surface = map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+    f.client(id)
+        .create_subsurface(&pin_surface, (100, 80), (120, 90));
+    f.double_roundtrip(id);
+
+    let child_screen = pt(site.x as f64 + 150.0, site.y as f64 + 120.0);
+    let child_canvas = to_canvas(&mut f, child_screen);
+    let focus = f
+        .state()
+        .pointer_focus_under(child_screen, child_canvas)
+        .map(|(t, _)| t.0);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|s| *s != server_surface(&pin) && get_parent(s).is_some()),
+        "precondition: the probe point must land on the pin's subsurface, got {focus:?}"
+    );
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((child_canvas.x as i32 - 80, child_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, child_canvas),
+        "precondition: the canvas window covers the click point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the click's"
+    );
+
+    click(&mut f, &FakeDevice::mouse(), child_canvas, BTN_LEFT);
+    f.double_roundtrip(id);
+
+    assert!(
+        is_activated(&pin),
+        "a click on the pin's subsurface belongs to the pin"
+    );
+    assert!(!is_activated(&beneath));
+}
+
 /// A tap in the phantom band lands on empty canvas, so it must leave focus
 /// alone — the pin is nowhere near the finger.
 #[test]
@@ -636,6 +873,120 @@ fn a_tap_on_a_pinned_window_as_drawn_targets_it() {
         "the tap belongs to the pinned window drawn under the finger"
     );
     assert!(!is_activated(&beneath));
+}
+
+/// The tap path's chrome half: a finger on a pin's border holds no surface, so
+/// the touch-down focuses nothing and the tap has to resolve the pin itself —
+/// not the canvas window drawn behind it.
+#[test]
+fn a_tap_on_a_pins_border_targets_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(PIN_RULE_WITH_TAP));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let border_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let border_canvas = to_canvas(&mut f, border_screen);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(border_screen),
+            PinnedChrome::Hit(_, DecorationHit::ResizeBorder(_))
+        ),
+        "precondition: the probe point must land on the pin's resize border"
+    );
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((border_canvas.x as i32 - 80, border_canvas.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, border_canvas),
+        "precondition: the canvas window covers the tap point"
+    );
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&beneath, serial);
+    assert!(
+        !is_activated(&pin),
+        "precondition: the pin starts unfocused, so a focus change is the tap's"
+    );
+
+    assert!(
+        f.state().touch_state.last_three_finger_tap.is_none(),
+        "precondition: no tap has been recorded yet"
+    );
+    touch_down(&mut f, border_canvas, 0);
+    touch_up(&mut f, 0);
+    f.double_roundtrip(id);
+
+    assert!(
+        f.state().touch_state.last_three_finger_tap.is_some(),
+        "control: the finger's down/up must have been recognized as a tap"
+    );
+    assert!(
+        is_activated(&pin),
+        "the tap belongs to the pin whose border is under the finger"
+    );
+    assert!(!is_activated(&beneath));
+}
+
+/// The touch gesture grab's move picker over a pin's chrome: a one-finger drag
+/// along the pin's border moves the pin, not the canvas window drawn behind
+/// it. Driven by one finger so it reaches the picker the way a multi-finger
+/// drag does on real hardware — a finger on the bar itself would take the
+/// direct title-bar move instead.
+#[test]
+fn a_touch_move_from_a_pins_border_moves_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(PIN_RULE_WITH_TOUCH_MOVE));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    // Straight down the pin's left border: still in the band once the drag
+    // passes the dead zone and the picker runs.
+    let start_screen = pt(site.x as f64 - 4.0, site.y as f64 + 100.0);
+    let along_screen = start_screen + pt(0.0, 40.0);
+    for probe in [start_screen, along_screen] {
+        assert!(
+            matches!(
+                f.state().pinned_decoration_under(probe),
+                PinnedChrome::Hit(_, DecorationHit::ResizeBorder(_))
+            ),
+            "precondition: {probe:?} must land on the pin's resize border"
+        );
+    }
+    let start = to_canvas(&mut f, start_screen);
+    let along = to_canvas(&mut f, along_screen);
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((start.x as i32 - 80, start.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, start) && in_rect(origin, along),
+        "precondition: the canvas window covers the whole drag"
+    );
+
+    touch_down(&mut f, start, 0);
+    touch_motion(&mut f, along, 0);
+    touch_motion(&mut f, along + pt(60.0, 0.0), 0);
+    touch_up(&mut f, 0);
+
+    assert_ne!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        site,
+        "the drag began on the pin's own border, so the pin moves"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&beneath),
+        Some(origin),
+        "the window drawn behind the pin stays put"
+    );
 }
 
 /// Map P (CSD pin, 200x150 via [`PIN_RULE_SMALL`]) and return its client-side
@@ -779,6 +1130,144 @@ fn a_popup_over_a_pinned_band_does_not_fall_through_either() {
     f.double_roundtrip(id);
 }
 
+/// A pin's popup is part of the pin as drawn — the canvas counts a window's
+/// popups as its own — so a swipe starting on one moves the pin, not the
+/// canvas window behind the popup. The test popup takes no grab, like a
+/// tooltip or an autocomplete list, so nothing else claims the input first.
+#[test]
+fn a_swipe_move_from_a_pins_popup_moves_the_pin_not_the_window_behind() {
+    let mut f = Fixture::with_config(config(PIN_RULE_SMALL));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let (client_surface, site) = map_small_pin(&mut f, id);
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let popup_surface = map_popup(&mut f, id, &client_surface);
+    grow_popup(&mut f, id, &popup_surface, (200, 100));
+
+    // The popup is centered on P's top-left corner, so up and left of it the
+    // popup overhangs clear of P and its margin.
+    let probe = pt(site.x as f64 - 50.0, site.y as f64 - 20.0);
+    let canvas_probe = to_canvas(&mut f, probe);
+
+    map_window(&mut f, id, "beneath", (400, 300));
+    let beneath = window_by_app_id(&mut f, "beneath").unwrap();
+    let origin = Point::from((canvas_probe.x as i32 - 80, canvas_probe.y as i32 - 70));
+    f.state()
+        .map_window(StageWindow::Client(beneath.clone()), origin, false);
+    assert!(
+        in_rect(origin, canvas_probe),
+        "precondition: the canvas window covers the swipe point"
+    );
+    let focus = f
+        .state()
+        .pointer_focus_under(probe, canvas_probe)
+        .map(|(t, _)| t.0);
+    assert!(
+        focus
+            .as_ref()
+            .is_some_and(|s| *s != server_surface(&pin) && get_parent(s).is_none()),
+        "precondition: the probe point must land on the pin's popup, got {focus:?}"
+    );
+
+    assert!(
+        f.state().try_start_gesture_move(canvas_probe, false),
+        "the swipe found something to drag"
+    );
+    motion(&mut f, canvas_probe + pt(50.0, 30.0));
+    end_grab(&mut f);
+
+    assert_ne!(
+        f.state().stage.pin_of(&pin).unwrap().screen_pos,
+        site,
+        "the swipe started on the pin's own popup, so the pin moves"
+    );
+    assert_eq!(
+        f.state().stage.position_of(&beneath),
+        Some(origin),
+        "the window drawn behind the popup stays put"
+    );
+
+    f.client(id).popup(&popup_surface).destroy();
+    f.double_roundtrip(id);
+}
+
+/// An inert margin still belongs to its pin, whatever is drawn beneath it. The
+/// upper pin's margin here lies over the lower pin's title bar: a bound drag
+/// there is the upper pin's, exactly as it is over the lower pin's content.
+#[test]
+fn alt_left_on_a_pins_inert_margin_over_a_lower_pins_bar_moves_the_upper_pin() {
+    let mut f = Fixture::with_config(config(
+        r#"
+[mouse]
+resize_on_border = false
+
+[[window_rules]]
+app_id = "lower"
+pinned_to_screen = true
+size = [400, 300]
+
+[[window_rules]]
+app_id = "upper"
+pinned_to_screen = true
+size = [400, 300]
+"#,
+    ));
+    f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "lower", (400, 300));
+    let lower = window_by_app_id(&mut f, "lower").unwrap();
+    give_ssd(&mut f, &lower);
+    map_window(&mut f, id, "upper", (400, 300));
+    let upper = window_by_app_id(&mut f, "upper").unwrap();
+
+    // The upper pin's bottom edge on the top of the lower pin's bar, so its
+    // 8 px bottom margin covers the bar's top 8 px.
+    let bar = f.state().config.decorations.title_bar_height;
+    let lower_site = f.state().stage.pin_of(&lower).unwrap().clone();
+    let upper_site = PinnedSite {
+        output: lower_site.output.clone(),
+        screen_pos: lower_site.screen_pos - Point::from((0, bar + 300)),
+    };
+    f.state().stage.set_pin(&upper, upper_site.clone());
+
+    let probe = pt(
+        lower_site.screen_pos.x as f64 + 100.0,
+        (lower_site.screen_pos.y - bar) as f64 + 4.0,
+    );
+    let canvas_probe = to_canvas(&mut f, probe);
+    assert!(
+        matches!(
+            f.state().pinned_decoration_under(probe),
+            PinnedChrome::Hit(ref w, DecorationHit::TitleBar) if *w == lower
+        ),
+        "precondition: the lower pin's title bar must be what is drawn here"
+    );
+    assert_eq!(
+        f.state().pinned_resize_margin_under(probe),
+        Some(upper.clone()),
+        "precondition: the upper pin's inert margin must cover the probe point"
+    );
+
+    let mouse = FakeDevice::mouse();
+    key_press(&mut f, KEY_LEFTALT);
+    pointer_to(&mut f, &mouse, canvas_probe);
+    press(&mut f, &mouse, BTN_LEFT);
+    pointer_to(&mut f, &mouse, canvas_probe + pt(60.0, -40.0));
+    release(&mut f, &mouse, BTN_LEFT);
+    key_release(&mut f, KEY_LEFTALT);
+
+    assert_ne!(
+        f.state().stage.pin_of(&upper).unwrap().screen_pos,
+        upper_site.screen_pos,
+        "the margin is the upper pin's, so the drag moves it"
+    );
+    assert_eq!(
+        f.state().stage.pin_of(&lower).unwrap().screen_pos,
+        lower_site.screen_pos,
+        "the lower pin stays put"
+    );
+}
+
 /// The `Miss` non-vacuity guard: a pin exists on the output, but nowhere near
 /// this canvas window's own resize band, so the band must still answer from
 /// the canvas walk. Without this, the whole fix could have been "a pinned
@@ -887,5 +1376,45 @@ fn pinned_bar_right_pad_strip_is_chrome() {
             PinnedChrome::Hit(_, DecorationHit::TitleBar)
         ),
         "the right-pad strip of a pinned SSD window's bar is chrome, not a hole"
+    );
+}
+
+/// A fullscreen window covers a pin on its output entirely: the resize margin
+/// around the pin must yield to it exactly as the pin's content and chrome do.
+#[test]
+fn a_pins_resize_margin_does_not_punch_through_a_fullscreen_window() {
+    let mut f = Fixture::with_config(config(PIN_RULE));
+    let output = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    map_window(&mut f, id, "pin", (400, 300));
+    let pin = window_by_app_id(&mut f, "pin").unwrap();
+    let site = f.state().stage.pin_of(&pin).unwrap().screen_pos;
+
+    let fs_surface = map_window(&mut f, id, "fs", (400, 300));
+    let fs = window_by_app_id(&mut f, "fs").unwrap();
+    f.state().enter_fullscreen(&fs, Some(output));
+    f.double_roundtrip(id);
+    adopt_last_configure(&mut f, id, &fs_surface);
+
+    let content_screen = pt(site.x as f64 + 200.0, site.y as f64 + 150.0);
+    let content_canvas = to_canvas(&mut f, content_screen);
+    assert_eq!(
+        f.state()
+            .pointer_focus_under(content_screen, content_canvas)
+            .map(|(t, _)| t.0),
+        Some(server_surface(&fs)),
+        "precondition: the fullscreen window's surface must cover the pin, \
+         or this scenario proves nothing"
+    );
+
+    let margin_screen = pt(site.x as f64 - 4.0, site.y as f64 + 150.0);
+    let margin_canvas = to_canvas(&mut f, margin_screen);
+    assert_eq!(
+        f.state()
+            .pointer_focus_under(margin_screen, margin_canvas)
+            .map(|(t, _)| t.0),
+        Some(server_surface(&fs)),
+        "a pin's resize margin must not punch a hole through a fullscreen \
+         window covering it"
     );
 }

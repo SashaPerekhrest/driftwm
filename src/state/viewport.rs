@@ -221,8 +221,7 @@ impl DriftWm {
         // this zoom, so a placed window and a filled one share an edge at every
         // zoom. `frame` carries both borders and the inset subtracts one, so the
         // frame's outer edge lands at `outer_gap - border` from the usable edge
-        // and the bar/content edge at `outer_gap` — the edge fit and fill
-        // produce.
+        // and the bar/content edge at `outer_gap` — the edge fill produces.
         let inset = self.config.outer_frame_inset(chrome.border) * zoom;
         let placed = [
             (pull_x, usable.loc.x, usable.size.w, frame.w, center.x),
@@ -277,6 +276,29 @@ impl DriftWm {
         os.zoom_target = Some(zoom);
     }
 
+    /// The active output's camera and zoom once its camera/zoom flight lands
+    /// — the live view when nothing is in flight. Momentum isn't a flight: it
+    /// has no destination.
+    pub(crate) fn landing_view(&self) -> (Point<f64, Logical>, f64) {
+        match self.active_output() {
+            Some(output) => self.landing_view_on(&output),
+            None => (self.camera(), self.zoom()),
+        }
+    }
+
+    /// As `landing_view`, for `output`.
+    pub(crate) fn landing_view_on(&self, output: &Output) -> (Point<f64, Logical>, f64) {
+        let os = output_state(output);
+        let zoom = os.zoom_target.unwrap_or(os.zoom);
+        // The zoom tick steers by the anchor and clears `camera_target`, so
+        // while one is armed it alone says where the camera lands.
+        let camera = match os.zoom_animation_anchor {
+            Some(anchor) => driftwm::canvas::zoom_anchor_camera(anchor.canvas, anchor.screen, zoom),
+            None => os.camera_target.unwrap_or(os.camera),
+        };
+        (camera, zoom)
+    }
+
     pub fn viewport_center_canvas(&self) -> Point<f64, Logical> {
         let vc = self.usable_center_screen();
         let camera = self.camera();
@@ -293,6 +315,31 @@ impl DriftWm {
     {
         self.active_output()
             .is_some_and(|o| self.window_visible_at_least_on(window, &o, threshold))
+    }
+
+    /// As `window_visible_at_least`, at `camera` and `zoom` instead of the
+    /// active output's live view.
+    pub fn window_visible_at_least_at<W>(
+        &self,
+        window: &W,
+        camera: Point<f64, Logical>,
+        zoom: f64,
+        threshold: f64,
+    ) -> bool
+    where
+        W: StageElement,
+        StageWindow: PartialEq<W>,
+    {
+        let Some(loc) = self.stage.position_of(window) else {
+            return false;
+        };
+        driftwm::canvas::visible_fraction(
+            loc,
+            StageElement::size(window),
+            camera,
+            self.get_viewport_size(),
+            zoom,
+        ) >= threshold
     }
 
     /// As `window_visible_at_least`, but against `output`'s viewport instead

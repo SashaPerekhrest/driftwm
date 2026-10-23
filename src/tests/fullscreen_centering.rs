@@ -310,6 +310,67 @@ fn centring_a_locked_game_carries_the_cursor_and_keeps_its_lock() {
     f.state().exit_fullscreen_on(&output);
 }
 
+/// The same carry for a lock set on the window while the cursor is over one of
+/// its subsurfaces, where the surface under the cursor is not the window's own.
+#[test]
+fn centring_a_game_locked_over_a_subsurface_carries_the_cursor() {
+    use smithay::reexports::wayland_server::Resource as _;
+    use wayland_client::Proxy as _;
+
+    let mut f = Fixture::new();
+    let output = f.add_output(1, (1920, 1080));
+    let id = f.add_client();
+    let surface = map_window(&mut f, id, "fs", (800, 600));
+    let window = window_by_app_id(&mut f, "fs").unwrap();
+    let sub_surf = f.client(id).create_subsurface(&surface, (0, 0), (100, 100));
+    f.double_roundtrip(id);
+
+    let position = f.state().stage.position_of(&window).unwrap().to_f64();
+    pointer_to(
+        &mut f,
+        &FakeDevice::mouse(),
+        position + Point::from((20.0, 20.0)),
+    );
+    f.roundtrip(id);
+    let focus = f.state().seat.get_pointer().unwrap().current_focus();
+    assert_eq!(
+        focus.map(|focus| focus.0.id().protocol_id()),
+        Some(sub_surf.id().protocol_id()),
+        "precondition: the cursor must be over the subsurface"
+    );
+    let _lock = f.client(id).lock_pointer(&surface);
+    f.double_roundtrip(id);
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "precondition: the lock must arm, or this scenario tests nothing"
+    );
+
+    f.state().enter_fullscreen(&window, Some(output.clone()));
+    f.double_roundtrip(id);
+    let before = f.state().seat.get_pointer().unwrap().current_location();
+
+    ack_fullscreen_at(&mut f, id, &surface, (400, 300));
+
+    let centred = centred_rect(&mut f, &window);
+    assert!(
+        !centred.contains(before),
+        "precondition: the frozen cursor must start outside the centred rect \
+         (cursor {before:?}, rect {centred:?})"
+    );
+    let cursor = f.state().seat.get_pointer().unwrap().current_location();
+    assert!(
+        centred.contains(cursor),
+        "the frozen cursor is carried along with the picture it is locked to \
+         (cursor {cursor:?}, rect {centred:?})"
+    );
+    assert!(
+        f.state().pointer_constraint_locked(),
+        "so the re-seat finds an unchanged focus and the lock survives it"
+    );
+
+    f.state().exit_fullscreen_on(&output);
+}
+
 /// A confined client takes the same carry. Its cursor really moves, so unlike
 /// the locked one it is told where to — but it has to arrive *inside* the
 /// window, or the re-pick drops the confine exactly as it would a lock.
