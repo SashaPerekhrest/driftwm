@@ -881,12 +881,22 @@ impl DriftWm {
     /// Whether `target` is spatially related to the focused element, at their
     /// live frames. Nothing focused, or a focused element with no canvas frame
     /// (pinned), relates to nothing.
-    pub fn related_to_focus(&self, target: &StageWindow) -> bool {
+    ///
+    /// `left_fullscreen` is a window this dispatch took out of fullscreen. Its
+    /// client still commits the fullscreen size until it acks the exit, so it
+    /// is measured at the size the exit configured instead.
+    pub fn related_to_focus(&self, target: &StageWindow, left_fullscreen: Option<&Window>) -> bool {
         let Some(focused) = self.focused_anchor_element() else {
             return false;
         };
-        self.snap_rect_for(&focused)
-            .is_some_and(|frame| self.spatial_relatives(&focused, frame).contains(target))
+        let Some(live) = self.snap_rect_for(&focused) else {
+            return false;
+        };
+        let frame = match left_fullscreen {
+            Some(w) if focused == *w => self.reveal_frame(&focused).unwrap_or(live),
+            _ => live,
+        };
+        self.spatial_relatives(&focused, frame).contains(target)
     }
 
     /// The elements spatially related to `of` with its frame at `frame`: the

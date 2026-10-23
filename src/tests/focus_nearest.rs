@@ -363,6 +363,79 @@ fn a_step_with_nothing_focused_parks_its_target() {
     assert_near(camera.y, parked.y, "camera y");
 }
 
+/// A clipped target overlapping the focused window is related to it with no
+/// snap gap between them, so the step walks.
+#[test]
+fn a_step_to_a_clipped_window_overlapping_the_focused_one_pans_minimally() {
+    let mut f = Fixture::with_config(config(GAP_CONFIG));
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let (_a, b) = focused_a_and_b(&mut f, (810, 440), (1000, 500), (1000, 200));
+    assert!(
+        !f.state().window_fully_in_viewport(&b),
+        "precondition: b is clipped"
+    );
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert_eq!(f.state().focused_window(), Some(b.clone()));
+    settle(&mut f);
+    let frame = frame_on_screen(&mut f, &StageWindow::Client(b));
+    assert_near(frame.right, 1920.0 - GAP, "b's right edge");
+}
+
+/// `two_clusters` with `b` further out, below-right of `a`, and `a`
+/// fullscreen, its client committed to the fullscreen size.
+fn fullscreen_a_and_another_cluster(f: &mut Fixture) -> Window {
+    let id = f.add_client();
+    let a_surface = map_window(f, id, "a", (300, 200));
+    let a = window_by_app_id(f, "a").unwrap();
+    f.state().map_window(
+        StageWindow::Client(a.clone()),
+        Point::from((810, 440)),
+        false,
+    );
+    window_at(f, id, "a2", (810, 640 + SNAP_GAP));
+    let b = window_at(f, id, "b", (2000, 900));
+    window_at(f, id, "b2", (2300 + SNAP_GAP, 900));
+    origin_view(f);
+    let serial = SERIAL_COUNTER.next_serial();
+    f.state().raise_and_focus(&a, serial);
+    let output = f.state().active_output();
+    f.state().enter_fullscreen(&a, output);
+    f.double_roundtrip(id);
+    super::adopt_last_configure(f, id, &a_surface);
+    assert_eq!(
+        a.geometry().size,
+        Size::from((1920, 1080)),
+        "precondition: a commits the fullscreen size"
+    );
+    b
+}
+
+/// A step out of fullscreen measures the window that left it at the size the
+/// exit restores, not the fullscreen size its client still commits until it
+/// acks: `b` overlaps only that fullscreen-sized frame, so the step parks it.
+#[test]
+fn a_step_out_of_fullscreen_judges_the_cluster_at_the_restored_size() {
+    let mut f = Fixture::new();
+    f.add_output(1, (1920, 1080));
+    f.skip_baseline_check();
+    let b = fullscreen_a_and_another_cluster(&mut f);
+
+    f.state()
+        .execute_action(&Action::FocusNearest(Direction::Right));
+
+    assert!(!f.state().is_fullscreen(), "the step left fullscreen first");
+    assert_eq!(f.state().focused_window(), Some(b));
+    settle(&mut f);
+    let parked = center_nearest_rest(fullscreen_a_and_another_cluster, Direction::Right);
+    let camera = f.state().camera();
+    assert_near(camera.x, parked.x, "camera x");
+    assert_near(camera.y, parked.y, "camera y");
+}
+
 /// `focus_placement` is where jumps land, not walks: a directional step onto
 /// a clipped window under `"left"` still stops as soon as the window is whole
 /// rather than carrying it across to the left edge.

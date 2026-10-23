@@ -304,7 +304,7 @@ impl DriftWm {
                     Some(NavTarget::Window(elem)) => {
                         // A step out of the focused window's cluster is a jump,
                         // and a jump parks rather than walks.
-                        let pan = if self.related_to_focus(&elem) {
+                        let pan = if self.related_to_focus(&elem, was_fullscreen.as_ref()) {
                             RevealPan::Minimal
                         } else {
                             RevealPan::Park(NavZoom::Keep)
