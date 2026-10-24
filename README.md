@@ -354,7 +354,7 @@ Using Flakes:
     homeConfigurations.myHost = home-manager.lib.homeManagerConfiguration {
       pkgs = nixpkgs.legacyPackages.x86_64-linux;
       modules = [
-        driftwm.homeManagerModules.default
+        driftwm.homeModules.default
         ./configuration.nix
       ];
     };
@@ -377,7 +377,7 @@ let
   driftwm-flake = builtins.getFlake "github:malbiruk/driftwm";
 in
 {
-  imports = [ driftwm-flake.homeManagerModules.default ];
+  imports = [ driftwm-flake.homeModules.default ];
   wayland.windowManager.driftwm.enable = true;
 }
 ```
