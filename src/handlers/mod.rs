@@ -873,6 +873,38 @@ impl OutputPowerHandler for DriftWm {
 
 driftwm::delegate_output_power!(DriftWm);
 
+use smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::OrgKdeKwinServerDecoration;
+use smithay::wayland::shell::kde::decoration::{KdeDecorationHandler, KdeDecorationState};
+
+impl KdeDecorationHandler for DriftWm {
+    fn kde_decoration_state(&self) -> &KdeDecorationState {
+        &self.kde_decoration_state
+    }
+
+    fn new_decoration(
+        &mut self,
+        _surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        decoration: &OrgKdeKwinServerDecoration,
+    ) {
+        let mode =
+            driftwm::window_ext::decoration_mode_to_kde(&self.config.decorations.default_mode);
+        decoration.mode(mode);
+    }
+
+    fn request_mode(
+        &mut self,
+        _surface: &smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        decoration: &OrgKdeKwinServerDecoration,
+        mode: smithay::reexports::wayland_server::WEnum<
+            smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::Mode,
+        >,
+    ) {
+        if let smithay::reexports::wayland_server::WEnum::Value(mode) = mode {
+            decoration.mode(mode);
+        }
+    }
+}
+
 use smithay::wayland::foreign_toplevel_list::ForeignToplevelHandle;
 use smithay::wayland::image_capture_source::{
     ImageCaptureSource, ImageCaptureSourceHandler, OutputCaptureSourceHandler,

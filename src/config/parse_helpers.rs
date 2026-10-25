@@ -219,12 +219,14 @@ pub(super) fn parse_decoration_config(
         Some("none") => DecorationMode::None,
         Some("server") => {
             // Reserved for per-window rules. As a global default it's a footgun:
-            // GTK/Electron toolkits ignore xdg-decoration and keep drawing CSD,
-            // producing a double title bar.
+            // many toolkits draw their own anyway, producing a double title bar
+            // (GTK now follows the global default_mode, but per-app decoration rules
+            // still can't change what GTK draws).
             collect_warn(
                 errors,
                 "config: default_mode = \"server\" is not supported globally (many toolkits \
-                 ignore xdg-decoration and draw double titlebars). Use it in [[window_rules]] \
+                 draw double titlebars; GTK now follows the global default_mode, but per-app \
+                 decoration rules still can't change what GTK draws). Use it in [[window_rules]] \
                  for specific apps instead. Falling back to \"client\"."
                     .to_string(),
             );

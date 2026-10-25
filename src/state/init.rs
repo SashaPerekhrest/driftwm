@@ -204,6 +204,13 @@ impl DriftWm {
             smithay::wayland::background_effect::BackgroundEffectState::new::<Self>(&dh);
 
         let (mut config, config_errors) = config;
+        let kde_default_mode =
+            driftwm::window_ext::decoration_mode_to_kde_manager(&config.decorations.default_mode);
+        let kde_decoration_state =
+            smithay::wayland::shell::kde::decoration::KdeDecorationState::new::<Self>(
+                &dh,
+                kde_default_mode,
+            );
         let mut init_errors: BTreeMap<ErrorSource, String> = BTreeMap::new();
         if let Some(msg) = super::errors::summarize_config_errors(&config_errors) {
             init_errors.insert(ErrorSource::Config, msg);
@@ -328,6 +335,7 @@ impl DriftWm {
             screencopy_state,
             output_management_state,
             output_power_state,
+            kde_decoration_state,
             dpms_off_outputs: HashSet::new(),
             pending_dpms: HashMap::new(),
             pending_screencopies: Vec::new(),

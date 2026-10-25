@@ -284,3 +284,44 @@ size = [640, 480]
         "a window mapped after the reload must receive the rule size, got:\n{fresh_configures}"
     );
 }
+
+#[test]
+fn kde_decoration_global_is_announced_without_filter() {
+    let mut f = Fixture::with_config(config(""));
+    let id = f.add_client();
+    f.double_roundtrip(id);
+
+    let announced = f
+        .client(id)
+        .state
+        .globals
+        .iter()
+        .any(|g| g.interface == "org_kde_kwin_server_decoration_manager");
+    assert!(
+        announced,
+        "org_kde_kwin_server_decoration_manager must be announced without client filter"
+    );
+}
+
+#[test]
+fn reload_updates_kde_decoration_mode() {
+    let mut f = Fixture::with_config(config("[decorations]\ndefault_mode = \"client\"\n"));
+    assert_eq!(
+        f.state().config.decorations.default_mode,
+        driftwm::config::DecorationMode::Client
+    );
+
+    f.state()
+        .reload_config_from_contents("[decorations]\ndefault_mode = \"minimal\"\n");
+    assert_eq!(
+        f.state().config.decorations.default_mode,
+        driftwm::config::DecorationMode::Minimal
+    );
+
+    f.state()
+        .reload_config_from_contents("[decorations]\ndefault_mode = \"none\"\n");
+    assert_eq!(
+        f.state().config.decorations.default_mode,
+        driftwm::config::DecorationMode::None
+    );
+}

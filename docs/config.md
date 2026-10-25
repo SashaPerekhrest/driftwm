@@ -579,7 +579,7 @@ Decoration mode for windows without a rule:
 - `"minimal"` — no title bar; driftwm's shadow, corners and border
 - `"none"` — no chrome at all, per-window chrome rules included
 
-"server" (driftwm's title bar) is per window only, via [[window_rules]]: many toolkits draw their own anyway, which would double the title bar.
+"server" (driftwm's title bar) is per window only, via [[window_rules]]: many toolkits draw their own anyway, which would double the title bar (GTK now follows the global default_mode, but per-app decoration rules still can't change what GTK draws).
 
 ### `border_width`
 
