@@ -1,6 +1,8 @@
 //! Config hot-reload behavior: a bad edit must never take down the session,
 //! a good edit applies live.
 
+use wayland_protocols_misc::server_decoration::client::org_kde_kwin_server_decoration_manager::Mode as KdeMode;
+
 use super::{Fixture, config, map_window};
 use crate::state::{ErrorSource, ModeIntent};
 
@@ -285,43 +287,20 @@ size = [640, 480]
     );
 }
 
+/// The KDE manager announces `default_mode` only on bind, so a reload must reach
+/// the clients that bind after it and can't reach the ones already bound.
 #[test]
-fn kde_decoration_global_is_announced_without_filter() {
-    let mut f = Fixture::with_config(config(""));
-    let id = f.add_client();
-    f.double_roundtrip(id);
-
-    let announced = f
-        .client(id)
-        .state
-        .globals
-        .iter()
-        .any(|g| g.interface == "org_kde_kwin_server_decoration_manager");
-    assert!(
-        announced,
-        "org_kde_kwin_server_decoration_manager must be announced without client filter"
-    );
-}
-
-#[test]
-fn reload_updates_kde_decoration_mode() {
+fn reload_kde_default_mode_reaches_new_binds_not_existing() {
     let mut f = Fixture::with_config(config("[decorations]\ndefault_mode = \"client\"\n"));
-    assert_eq!(
-        f.state().config.decorations.default_mode,
-        driftwm::config::DecorationMode::Client
-    );
+    let early = f.add_client();
+    f.roundtrip(early);
 
     f.state()
         .reload_config_from_contents("[decorations]\ndefault_mode = \"minimal\"\n");
-    assert_eq!(
-        f.state().config.decorations.default_mode,
-        driftwm::config::DecorationMode::Minimal
-    );
+    let late = f.add_client();
+    f.roundtrip(late);
+    f.roundtrip(early);
 
-    f.state()
-        .reload_config_from_contents("[decorations]\ndefault_mode = \"none\"\n");
-    assert_eq!(
-        f.state().config.decorations.default_mode,
-        driftwm::config::DecorationMode::None
-    );
+    assert_eq!(f.client(late).state.kde_default_modes, [KdeMode::Server]);
+    assert_eq!(f.client(early).state.kde_default_modes, [KdeMode::Client]);
 }
